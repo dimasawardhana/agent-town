@@ -88,12 +88,7 @@ export class TownScene extends Phaser.Scene {
 
     // Sites.
     for (const s of layout.sites) {
-      const inTest = layout.districts.some(
-        (d) =>
-          d.kind === "test" &&
-          this.overlaps(s, d),
-      );
-      this.drawSite(s, inTest);
+      this.drawSite(s, s.districtKind === "test");
     }
 
     // A canvas smaller than the viewport would let the camera drift into
@@ -185,10 +180,6 @@ export class TownScene extends Phaser.Scene {
     zone.on("pointerup", () => {
       if (this.moved < 5) useTown.getState().select(s);
     });
-  }
-
-  private overlaps(s: Site, d: { x: number; y: number; w: number; h: number }): boolean {
-    return s.x >= d.x && s.y >= d.y && s.x + s.w <= d.x + d.w && s.y + s.h <= d.y + d.h;
   }
 
   /** fitZoom scales the town to the viewport on first load. */

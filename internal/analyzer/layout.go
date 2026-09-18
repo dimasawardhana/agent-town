@@ -17,16 +17,20 @@ const (
 
 // Site is one place a worker can stand, with its position on the map.
 type Site struct {
-	ID       string  `json:"id"`
-	Kind     Place   `json:"kind"`
-	Label    string  `json:"label"`
-	District string  `json:"district,omitempty"`
-	Path     string  `json:"path,omitempty"`
-	Files    int     `json:"files"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	W        float64 `json:"w"`
-	H        float64 `json:"h"`
+	ID       string `json:"id"`
+	Kind     Place  `json:"kind"`
+	Label    string `json:"label"`
+	District string `json:"district,omitempty"`
+	// DistrictKind lets the renderer colour a building without re-deriving
+	// which district it belongs to from geometry. Two sources of truth for
+	// the same fact drift; one cannot.
+	DistrictKind Place   `json:"districtKind,omitempty"`
+	Path         string  `json:"path,omitempty"`
+	Files        int     `json:"files"`
+	X            float64 `json:"x"`
+	Y            float64 `json:"y"`
+	W            float64 `json:"w"`
+	H            float64 `json:"h"`
 }
 
 // PlacedDistrict is a district's block on the map, drawn as its neighbourhood.
@@ -163,16 +167,17 @@ func placeDistrict(l *Layout, d District, buildings []Building, x, y float64) Pl
 		by := y + labelSpace + cellPad + float64(r)*cellH + (cellH-cellGap-h)/2
 
 		l.Sites = append(l.Sites, Site{
-			ID:       "building:" + b.Path,
-			Kind:     PlaceBuilding,
-			Label:    b.Name,
-			District: b.District,
-			Path:     b.Path,
-			Files:    b.Files,
-			X:        bx,
-			Y:        by,
-			W:        w,
-			H:        h,
+			ID:           "building:" + b.Path,
+			Kind:         PlaceBuilding,
+			Label:        b.Name,
+			District:     b.District,
+			DistrictKind: d.Kind,
+			Path:         b.Path,
+			Files:        b.Files,
+			X:            bx,
+			Y:            by,
+			W:            w,
+			H:            h,
 		})
 	}
 

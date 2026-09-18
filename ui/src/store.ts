@@ -13,6 +13,7 @@ export interface Site {
   kind: "building" | "workshop" | "yard" | "depot";
   label: string;
   district?: string;
+  districtKind?: "source" | "test";
   path?: string;
   files: number;
   x: number;
