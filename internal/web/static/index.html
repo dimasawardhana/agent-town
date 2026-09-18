@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Town</title>
+    <style>
+      body { background:#111; color:#ddd; font:14px/1.5 ui-monospace,monospace; margin:2rem; }
+      h1 { font-size:1rem; color:#888; font-weight:400; letter-spacing:.1em; text-transform:uppercase; }
+      #status { color:#7a7; }
+      #status.down { color:#a77; }
+      #log { margin-top:1rem; }
+      .ev { border-left:2px solid #333; padding-left:.6rem; margin:.3rem 0; }
+      .type { color:#9cf; }
+      .path { color:#8a8; }
+      .err  { color:#f88; }
+    </style>
+  </head>
+  <body>
+    <h1>AI Town</h1>
+    <div id="status">connecting…</div>
+    <div id="count"></div>
+    <div id="log"></div>
+
+    <script>
+      // Ticket 01 placeholder. Proves the transport from ADR-0013: one
+      // process, same origin, events over SSE. Ticket 04 replaces this with
+      // the Phaser town.
+      const status = document.getElementById("status");
+      const log = document.getElementById("log");
+      const countEl = document.getElementById("count");
+      let n = 0;
+
+      function line(cls, text) {
+        const d = document.createElement("div");
+        d.className = "ev " + cls;
+        d.textContent = text;
+        log.prepend(d);
+        while (log.children.length > 200) log.lastChild.remove();
+      }
+
+      const es = new EventSource("/stream");
+
+      es.onopen = () => {
+        status.textContent = "connected";
+        status.className = "";
+        line("", "— stream open —");
+      };
+
+      es.onerror = () => {
+        // EventSource reconnects on its own; we only surface the state.
+        status.textContent = "disconnected — reconnecting";
+        status.className = "down";
+      };
+
+      es.onmessage = (e) => {
+        let ev;
+        try { ev = JSON.parse(e.data); } catch { return line("", e.data); }
+        n++;
+        countEl.textContent = n + " event" + (n === 1 ? "" : "s");
+        const path = ev.target && ev.target.path ? "  " + ev.target.path : "";
+        const cls = ev.result === "error" ? "err" : "";
+        line(cls, `${ev.agent} ${ev.type} ${ev.tool || ""}${path}`);
+      };
+    </script>
+  </body>
+</html>

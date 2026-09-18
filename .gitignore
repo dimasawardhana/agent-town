@@ -1,0 +1,11 @@
+# Go build output
+/townd
+/town-analyze
+/bin/
+
+# Node
+node_modules/
+
+# Local scratch
+/tmp/
+*.log
