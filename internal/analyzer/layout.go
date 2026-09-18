@@ -14,6 +14,11 @@ const (
 	rowGap     = 28.0   // gap between district rows
 	maxRowW    = 1400.0 // target row width; a busy row may exceed it
 	rowStart   = 40.0   // left margin, and where each new row begins
+
+	// testPitch tightens a test district's cell spacing. Below 1 so a sprawl
+	// of one-file spec directories reads as a compact cluster rather than
+	// outranking the code it covers.
+	testPitch = 0.7
 )
 
 // Site is one place a worker can stand, with its position on the map.
@@ -169,8 +174,17 @@ func districtWidth(d District, buildings []Building) float64 {
 }
 
 // districtBox computes a district block's grid and extents.
+//
+// A test district is clustered rather than spread: it holds many directories
+// with very few files each, so counting buildings would hand it more land than
+// the code it tests (measured on team-builder: e2e is 16 buildings across 22
+// files against src's 9 across 65). Test territory stays visible, because
+// hiding it would be its own lie, but it cannot dominate the site. This is the
+// correction ADR-0012 records.
 func districtBox(d District, buildings []Building) (cols, rows int, cellW, cellH, blockW, blockH float64) {
-	cols = int(math.Ceil(math.Sqrt(float64(len(buildings)))))
+	n := len(buildings)
+
+	cols = int(math.Ceil(math.Sqrt(float64(n))))
 
 	// Size the cell from the largest building in this district, so a district
 	// of big buildings is not cramped and one of small buildings is not
@@ -186,10 +200,25 @@ func districtBox(d District, buildings []Building) (cols, rows int, cellW, cellH
 		}
 	}
 	cellW, cellH = maxW+cellGap, maxH+cellGap
-	rows = int(math.Ceil(float64(len(buildings)) / float64(cols)))
+	rows = int(math.Ceil(float64(n) / float64(cols)))
 
-	blockW = float64(cols)*cellW - cellGap + 2*cellPad
-	blockH = float64(rows)*cellH - cellGap + 2*cellPad + labelSpace
+	// A test district holds many small directories and few files. Sizing it by
+	// building count alone hands it more land than the code it tests —
+	// measured on team-builder, e2e is 16 buildings across 22 files against
+	// src's 9 across 65.
+	//
+	// The correction is a tighter cell pitch, not fewer columns: fewer
+	// columns would raise the row count and make the block taller, which is
+	// the opposite of compact. Test territory stays visible, because hiding it
+	// would be its own lie, but it cannot dominate the site.
+	pitch := 1.0
+	if d.Kind == DistrictTest {
+		pitch = testPitch
+	}
+	cellW, cellH = cellW*pitch, cellH*pitch
+
+	blockW = float64(cols)*cellW - cellGap*pitch + 2*cellPad
+	blockH = float64(rows)*cellH - cellGap*pitch + 2*cellPad + labelSpace
 	return cols, rows, cellW, cellH, blockW, blockH
 }
 

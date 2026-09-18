@@ -241,3 +241,44 @@ func TestDistrictKindReachesSites(t *testing.T) {
 		}
 	}
 }
+
+// Regression: a test district must not outrank the code it tests.
+//
+// ADR-0012 records the correction: sized by building count alone, a sprawl of
+// one-file spec directories claims more land than the source it covers.
+// Measured before the fix: e2e 59340 against src 50400 — the inversion the
+// ADR says was corrected, still present because the layout ignored d.Kind.
+func TestTestDistrictDoesNotDominateSource(t *testing.T) {
+	// src holds many files in few buildings; e2e holds few files in many.
+	root := tree(t, map[string][2]int{
+		"src": {4, 7},  // 28 files, 4 buildings
+		"e2e": {12, 1}, // 12 files, 12 buildings
+	})
+	l := layoutOf(t, root)
+
+	area := map[string]float64{}
+	for _, d := range l.Districts {
+		area[d.Name] = d.W * d.H
+	}
+	if area["src"] == 0 || area["e2e"] == 0 {
+		t.Fatalf("missing district: %v", area)
+	}
+	if area["e2e"] > area["src"] {
+		t.Errorf("test district (%.0f) is larger than the source it covers (%.0f) — the inversion ADR-0012 records is present",
+			area["e2e"], area["src"])
+	}
+}
+
+// Source districts keep full spacing; only test districts are tightened.
+func TestSourceDistrictKeepsFullSpacing(t *testing.T) {
+	root := tree(t, map[string][2]int{"src": {4, 7}})
+	l := layoutOf(t, root)
+
+	// 4 buildings of 7 files -> buildingSize(7) = 78
+	// cols = ceil(sqrt(4)) = 2, rows = 2
+	// blockW = 2*(78+14) - 14 + 2*20 = 210
+	const wantW = 2*(78+cellGap) - cellGap + 2*cellPad
+	if d := l.Districts[0]; d.W != wantW {
+		t.Errorf("source district width = %.0f, want %.0f (full pitch)", d.W, wantW)
+	}
+}
