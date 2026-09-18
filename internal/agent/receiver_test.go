@@ -88,3 +88,37 @@ func TestReceiverRejectsNonPost(t *testing.T) {
 		t.Fatalf("status = %d, want 405", w.Code)
 	}
 }
+
+// Regression: a restarted extension must not have its gaps masked.
+//
+// A hello announces a fresh extension instance, and a fresh instance restarts
+// its sequence numbering. Before this was fixed, lastSeq only ever ratcheted
+// upward: after one session reached a high mark, a restarted session's frames
+// all looked already-seen, so losses in the new session went unreported and
+// the town silently showed less than happened.
+func TestHelloResetsSequenceBaseline(t *testing.T) {
+	r := NewReceiver("/tmp/watched")
+	var gaps []int64
+	r.OnGap = func(_ string, lost int64) { gaps = append(gaps, lost) }
+
+	post := func(body string) {
+		req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(body))
+		r.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// Session A climbs to a high sequence number.
+	post(`{"kind":"event","directory":"/tmp/watched","seq":100,"type":"session.idle"}`)
+
+	// The extension restarts: hello, then the new session numbers from 1.
+	post(`{"kind":"hello","directory":"/tmp/watched","seq":1,"agent":"omp"}`)
+
+	// Frames 2..10 are genuinely lost; 11 arrives.
+	post(`{"kind":"event","directory":"/tmp/watched","seq":11,"type":"session.idle"}`)
+
+	if len(gaps) != 1 {
+		t.Fatalf("got %d gap warnings, want exactly 1 — a restart must not mask loss", len(gaps))
+	}
+	if gaps[0] != 9 {
+		t.Errorf("reported %d lost frames, want 9", gaps[0])
+	}
+}

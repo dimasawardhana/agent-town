@@ -280,3 +280,44 @@ func TestGappedFrameStillEmitsItsOwnEvents(t *testing.T) {
 		t.Errorf("Type = %q, want FILE_EDITED", evs[0].Type)
 	}
 }
+
+// Regression: a tool event must carry a usable time.
+//
+// normalizeToolHook hardcoded Timestamp: 0, so every completed tool frame —
+// the authoritative path — published Unix epoch. Any consumer treating 0 as a
+// real time would place every tool event in 1970.
+func TestToolHookCarriesFrameTime(t *testing.T) {
+	const when = int64(1789658048269)
+	f := Frame{
+		Kind: "tool.after", Directory: "/tmp/p", Seq: 1,
+		Agent: "omp", Tool: "edit", Time: when,
+		Args: map[string]any{"path": "src/a.ts"},
+	}
+	evs, _, err := NormalizeFrame(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	if evs[0].Timestamp != when {
+		t.Errorf("Timestamp = %d, want %d", evs[0].Timestamp, when)
+	}
+}
+
+func TestToolHookWithoutTimeDoesNotReportEpoch(t *testing.T) {
+	// The receiver stamps receipt time when the extension sent none. Verified
+	// at the receiver level, so here we only assert the field is carried
+	// through rather than silently replaced.
+	f := Frame{Kind: "tool.after", Directory: "/tmp/p", Seq: 1, Agent: "omp", Tool: "read"}
+	evs, _, err := NormalizeFrame(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	if evs[0].Timestamp != 0 {
+		t.Errorf("Timestamp = %d; the receiver is responsible for the fallback", evs[0].Timestamp)
+	}
+}

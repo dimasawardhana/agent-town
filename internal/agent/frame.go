@@ -25,6 +25,12 @@ type Frame struct {
 	// raw so the normalizer owns the shape decisions.
 	Part map[string]any `json:"part"`
 
+	// Time is when the extension observed the action, in Unix milliseconds.
+	// The tool hooks have no clock of their own on the wire, so without this
+	// every tool event would arrive with no usable time and could not be
+	// ordered on a timeline.
+	Time int64 `json:"time"`
+
 	// Tool hook fields.
 	Tool    string         `json:"tool"`
 	CallID  string         `json:"callID"`

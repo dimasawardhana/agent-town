@@ -82,7 +82,7 @@ func normalizeToolHook(f Frame) []UnifiedAgentEvent {
 		Tool:      f.Tool,
 		Target:    UnifiedTarget{Path: ExtractPath(f.Args)},
 		Result:    result,
-		Timestamp: 0,
+		Timestamp: f.Time,
 	}}
 }
 

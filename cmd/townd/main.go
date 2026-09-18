@@ -76,6 +76,15 @@ func main() {
 	mux.Handle("/stream", bus.StreamHandler()) // daemon -> UI
 	mux.Handle("/", web.Handler())             // the UI itself
 
+	// The daemon serves an unauthenticated UI and API over an event stream
+	// carrying private file paths, so it must never leave the machine
+	// (ADR-0013). Refuse anything that is not loopback rather than trusting
+	// the flag's default.
+	if err := requireLoopback(*addr); err != nil {
+		fmt.Fprintf(os.Stderr, "townd: %v\n", err)
+		os.Exit(1)
+	}
+
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "townd: listen: %v\n", err)
@@ -101,4 +110,28 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// requireLoopback rejects any listen address that is not loopback.
+//
+// A wildcard or routable address would expose the developer's agent activity
+// and file paths to the network, with no authentication in front of it. The
+// check is here rather than in documentation because a flag is easy to pass
+// by accident and the consequence is silent.
+func requireLoopback(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid listen address %q: %w", addr, err)
+	}
+	if host == "" {
+		return fmt.Errorf("refusing to bind %q: the address must be loopback", addr)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("refusing to bind %q: only loopback addresses are allowed", addr)
+	}
+	return nil
 }

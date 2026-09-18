@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // Receiver accepts frames from the AI Town forwarder extension.
@@ -92,6 +93,18 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if frame.Kind == "hello" {
+		// A hello announces a fresh extension instance, and a fresh instance
+		// restarts its sequence numbering. Resetting the baseline here is what
+		// keeps gaps detectable across a restart: without it, a previous
+		// session's high-water mark would mask every loss in the new one.
+		// Set the baseline to the hello's own sequence rather than clearing
+		// it: clearing would leave 0, and a 0 baseline means "nothing seen
+		// yet, so nothing can have been missed" — which is exactly the state
+		// that masks the new session's losses.
+		r.mu.Lock()
+		r.lastSeq[dir] = frame.Seq
+		r.mu.Unlock()
+
 		if r.OnHello != nil {
 			r.OnHello(dir)
 		}
@@ -102,6 +115,13 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	last := r.lastSeq[dir]
 	r.mu.Unlock()
+
+	// An extension that did not send a time gets the moment the daemon saw
+	// the frame. Better an approximate time than epoch zero, which would
+	// place every such event in 1970 and break any timeline.
+	if frame.Time == 0 {
+		frame.Time = time.Now().UnixMilli()
+	}
 
 	events, newSeq, err := NormalizeFrame(frame, last)
 
