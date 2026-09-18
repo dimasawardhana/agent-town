@@ -8,11 +8,12 @@ import (
 // World units are pixels. The frontend scales the camera; it never recomputes
 // positions, so the layout stays the single source of truth (ADR-0012).
 const (
-	cellPad    = 20.0 // padding inside a district block
-	cellGap    = 14.0 // gap between buildings
-	labelSpace = 30.0 // room for a district label above its buildings
-	rowGap     = 28.0 // gap between district rows
-	maxRowW    = 1400.0
+	cellPad    = 20.0   // padding inside a district block
+	cellGap    = 14.0   // gap between buildings
+	labelSpace = 30.0   // room for a district label above its buildings
+	rowGap     = 28.0   // gap between district rows
+	maxRowW    = 1400.0 // target row width; a busy row may exceed it
+	rowStart   = 40.0   // left margin, and where each new row begins
 )
 
 // Site is one place a worker can stand, with its position on the map.
@@ -109,31 +110,67 @@ func LayoutTown(t *Town) Layout {
 			continue
 		}
 
+		w := districtWidth(d, buildings)
+
+		// Wrap before placing, not after. Testing the fit after the block has
+		// been emitted would leave a straddling block sitting past the row
+		// edge, outside the camera bounds the width implies — reachable only
+		// by nothing.
+		if x > rowStart && x+w > maxRowW {
+			x = rowStart
+			y += rowH + rowGap
+			rowH = 0
+		}
+
 		blk := placeDistrict(&l, d, buildings, x, y)
 
 		x += blk.W + rowGap
 		if blk.H > rowH {
 			rowH = blk.H
 		}
-		if x+blk.W > maxRowW {
-			x = 40.0
-			y += rowH + rowGap
-			rowH = 0
-		}
 	}
 
 	// --- Bounds ---
-	l.Width = maxRowW
-	l.Height = y + rowH + 60
+	//
+	// Derived from what was actually placed, never assumed. A district can be
+	// wider than maxRowW on its own, so the canvas has to follow the content
+	// rather than the target width — otherwise the camera bounds clip it.
+	l.Width = rowStart
+	l.Height = 0
+	for _, s := range l.Sites {
+		if r := s.X + s.W; r > l.Width {
+			l.Width = r
+		}
+		if b := s.Y + s.H; b > l.Height {
+			l.Height = b
+		}
+	}
+	for _, d := range l.Districts {
+		if r := d.X + d.W; r > l.Width {
+			l.Width = r
+		}
+		if b := d.Y + d.H; b > l.Height {
+			l.Height = b
+		}
+	}
+	l.Width += rowStart
+	l.Height += rowStart
 
 	return l
 }
 
-// placeDistrict lays out one district's block and its buildings, and appends
-// both to the layout. It returns the block's rectangle via the appended
-// PlacedDistrict.
-func placeDistrict(l *Layout, d District, buildings []Building, x, y float64) PlacedDistrict {
-	cols := int(math.Ceil(math.Sqrt(float64(len(buildings)))))
+// districtWidth returns the width a district's block will occupy.
+//
+// It exists separately from placeDistrict because the wrap decision has to be
+// made before anything is placed.
+func districtWidth(d District, buildings []Building) float64 {
+	_, _, _, _, w, _ := districtBox(d, buildings)
+	return w
+}
+
+// districtBox computes a district block's grid and extents.
+func districtBox(d District, buildings []Building) (cols, rows int, cellW, cellH, blockW, blockH float64) {
+	cols = int(math.Ceil(math.Sqrt(float64(len(buildings)))))
 
 	// Size the cell from the largest building in this district, so a district
 	// of big buildings is not cramped and one of small buildings is not
@@ -148,11 +185,18 @@ func placeDistrict(l *Layout, d District, buildings []Building, x, y float64) Pl
 			maxH = h
 		}
 	}
-	cellW, cellH := maxW+cellGap, maxH+cellGap
-	rows := int(math.Ceil(float64(len(buildings)) / float64(cols)))
+	cellW, cellH = maxW+cellGap, maxH+cellGap
+	rows = int(math.Ceil(float64(len(buildings)) / float64(cols)))
 
-	blockW := float64(cols)*cellW - cellGap + 2*cellPad
-	blockH := float64(rows)*cellH - cellGap + 2*cellPad + labelSpace
+	blockW = float64(cols)*cellW - cellGap + 2*cellPad
+	blockH = float64(rows)*cellH - cellGap + 2*cellPad + labelSpace
+	return cols, rows, cellW, cellH, blockW, blockH
+}
+
+// placeDistrict lays out one district's block and its buildings, and appends
+// both to the layout.
+func placeDistrict(l *Layout, d District, buildings []Building, x, y float64) PlacedDistrict {
+	cols, _, cellW, cellH, blockW, blockH := districtBox(d, buildings)
 
 	pd := PlacedDistrict{Name: d.Name, Kind: d.Kind, X: x, Y: y, W: blockW, H: blockH}
 	l.Districts = append(l.Districts, pd)
