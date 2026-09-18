@@ -23,6 +23,7 @@ import (
 func main() {
 	dir := flag.String("dir", ".", "project directory to analyze")
 	asJSON := flag.Bool("json", false, "print the whole town as JSON")
+	asLayout := flag.Bool("layout", false, "print the computed map positions as JSON")
 	flag.Parse()
 
 	town, err := analyzer.Analyze(*dir)
@@ -40,6 +41,17 @@ func main() {
 				place = "—"
 			}
 			fmt.Printf("  %-10s %-24s %-14s %s\n", kind, place, reason, p)
+		}
+		return
+	}
+
+	if *asLayout {
+		layout := analyzer.LayoutTown(town)
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(layout); err != nil {
+			fmt.Fprintf(os.Stderr, "analyze: encode: %v\n", err)
+			os.Exit(1)
 		}
 		return
 	}

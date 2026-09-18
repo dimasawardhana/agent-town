@@ -9,3 +9,6 @@ node_modules/
 # Local scratch
 /tmp/
 *.log
+
+# Frontend
+ui/node_modules/

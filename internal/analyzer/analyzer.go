@@ -163,7 +163,16 @@ func Analyze(root string) (*Town, error) {
 		return nil, &fs.PathError{Op: "analyze", Path: abs, Err: os.ErrInvalid}
 	}
 
-	t := &Town{Root: abs, Name: filepath.Base(abs)}
+	// Initialise the slices rather than leaving them nil. A nil slice
+	// marshals to `null`, not `[]`, so an empty project would hand the UI a
+	// null it has to special-case — and a project with no source is a normal
+	// state, not an error.
+	t := &Town{
+		Root:      abs,
+		Name:      filepath.Base(abs),
+		Buildings: []Building{},
+		Districts: []District{},
+	}
 
 	// The repo already declares what is generated: .gitignore. Reading it
 	// beats hardcoding every tool's output directory, because a project that

@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -325,5 +326,47 @@ func TestTestDistrictsAreMarked(t *testing.T) {
 	}
 	if kinds["src"] != DistrictSource {
 		t.Errorf("src kind = %q, want %q", kinds["src"], DistrictSource)
+	}
+}
+
+func TestEmptyTownMarshalsAsEmptyNotNull(t *testing.T) {
+	// A project with no source is a normal state. Its lists must serialise as
+	// [] rather than null, or the UI has to special-case an empty town.
+	root := t.TempDir()
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := json.Marshal(town)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"buildings", "districts"} {
+		if string(raw[key]) == "null" {
+			t.Errorf("%s marshalled as null, want []", key)
+		}
+	}
+
+	l := LayoutTown(town)
+	lb, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lraw map[string]json.RawMessage
+	if err := json.Unmarshal(lb, &lraw); err != nil {
+		t.Fatal(err)
+	}
+	// The three special places are always laid out, so sites is never empty —
+	// but districts may be.
+	if string(lraw["districts"]) == "null" {
+		t.Error("layout.districts marshalled as null, want []")
+	}
+	if string(lraw["sites"]) == "null" {
+		t.Error("layout.sites marshalled as null, want []")
 	}
 }

@@ -30,12 +30,14 @@ import (
 	"time"
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent"
+	"github.com/dimasajiwardhana/agent-town/internal/analyzer"
 	"github.com/dimasajiwardhana/agent-town/internal/web"
 )
 
 func main() {
 	dir := flag.String("dir", ".", "project directory to observe")
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to listen on")
+	project := flag.String("project", "", "project to draw as a town (defaults to --dir)")
 	quiet := flag.Bool("quiet", false, "do not print events to stdout")
 	flag.Parse()
 
@@ -71,10 +73,32 @@ func main() {
 		}
 	}
 
+	// The town is computed once at startup. It is a pure function of the
+	// directory tree (ADR-0012), so there is nothing to recompute.
+	projectDir := *project
+	if projectDir == "" {
+		projectDir = abs
+	}
+	town, layout, townErr := buildTown(projectDir)
+	if townErr != nil {
+		fmt.Fprintf(os.Stderr, "townd: cannot analyze %s: %v\n", projectDir, townErr)
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/events", recv)                // extension -> daemon
 	mux.Handle("/stream", bus.StreamHandler()) // daemon -> UI
-	mux.Handle("/", web.Handler())             // the UI itself
+	mux.HandleFunc("/api/town", func(w http.ResponseWriter, r *http.Request) {
+		if townErr != nil {
+			http.Error(w, townErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"town":   town,
+			"layout": layout,
+		})
+	})
+	mux.Handle("/", web.Handler()) // the UI itself
 
 	// The daemon serves an unauthenticated UI and API over an event stream
 	// carrying private file paths, so it must never leave the machine
@@ -134,4 +158,18 @@ func requireLoopback(addr string) error {
 		return fmt.Errorf("refusing to bind %q: only loopback addresses are allowed", addr)
 	}
 	return nil
+}
+
+// buildTown analyzes a project and computes its map.
+//
+// Layout is computed here rather than in the browser: ADR-0012 requires it to
+// be a pure function of the analysis, and this keeps a single source of truth
+// for where everything sits.
+func buildTown(dir string) (*analyzer.Town, *analyzer.Layout, error) {
+	t, err := analyzer.Analyze(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	l := analyzer.LayoutTown(t)
+	return t, &l, nil
 }
