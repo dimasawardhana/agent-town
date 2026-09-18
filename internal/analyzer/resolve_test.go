@@ -128,7 +128,7 @@ func TestResolveAlwaysReturnsAPlace(t *testing.T) {
 		"skill://x", "memory://y", "src/**/*.ts", "§hashline\nbody",
 		"../escape.ts", "node_modules/dep/index.js", "////",
 	}
-	validKinds := map[string]bool{
+	validKinds := map[Place]bool{
 		PlaceBuilding: true, PlaceWorkshop: true, PlaceYard: true, PlaceDepot: true,
 	}
 	for _, in := range inputs {

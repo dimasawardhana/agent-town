@@ -93,9 +93,10 @@ func (b *Broadcaster) StreamHandler() http.Handler {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		// Same origin by construction, but this keeps a browser that was
-		// pointed at the stream directly working too.
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// No Access-Control-Allow-Origin. This endpoint is same-origin by
+		// construction, and the stream carries private file paths — setting a
+		// wildcard CORS header would let any website the developer visits
+		// read their codebase's activity through EventSource.
 		w.WriteHeader(http.StatusOK)
 
 		// An initial comment opens the stream immediately so the client's

@@ -1,11 +1,11 @@
 package agent
 
-// Frame is one message from the AI Town forwarder plugin.
+// Frame is one message from the AI Town forwarder extension.
 //
 // Fields are a superset of every frame kind. Only `kind`, `directory` and
 // `seq` are present on all of them; the rest are populated per kind.
 //
-// `Seq` is monotonic per plugin instance and is how the daemon detects that
+// `Seq` is monotonic per extension instance and is how the daemon detects that
 // it missed frames while it was down (docs/adr/0010).
 type Frame struct {
 	Kind      string `json:"kind"`

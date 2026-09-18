@@ -19,13 +19,15 @@ import (
 	"strings"
 )
 
-// Place kinds. Everything an event can resolve to is one of these, so the
-// renderer always has somewhere to put a worker.
+// Place is where a worker stands. Everything an event can resolve to is one
+// of these, so the renderer always has somewhere to put a worker.
+type Place string
+
 const (
-	PlaceBuilding = "building"
-	PlaceWorkshop = "workshop" // files at the repo root
-	PlaceYard     = "yard"     // site-wide work: tests, builds, git
-	PlaceDepot    = "depot"    // meta work: planning, dispatch, evaluation
+	PlaceBuilding Place = "building"
+	PlaceWorkshop Place = "workshop" // files at the repo root
+	PlaceYard     Place = "yard"     // site-wide work: tests, builds, git
+	PlaceDepot    Place = "depot"    // meta work: planning, dispatch, evaluation
 )
 
 // sourceExtensions are the file types that make a directory a building.
@@ -48,36 +50,29 @@ var sourceExtensions = map[string]bool{
 // This list is the single most important thing in this package. Each entry is
 // a directory that holds either machine-generated or third-party files, none
 // of which the developer wrote.
+//
+// Dot-prefixed directories are excluded separately by the walk itself, so
+// they are deliberately absent here — listing `.next` or `.venv` would be
+// dead weight, since the dot-prefix check skips them first.
 var ignoredDirs = map[string]bool{
-	// version control and tooling metadata
-	".git": true, ".hg": true, ".svn": true,
-
 	// dependencies
 	"node_modules": true, "bower_components": true, "vendor": true,
 	"dist-packages": true, "Pods": true,
 
 	// build output
 	"dist": true, "build": true, "out": true, "target": true, "bin": true,
-	"obj": true, "_build": true, ".cache": true,
-
-	// framework output
-	".next": true, ".nuxt": true, ".svelte-kit": true, ".astro": true,
-	".output": true, ".vercel": true, ".netlify": true, ".parcel-cache": true,
-	".turbo": true, ".vite": true,
+	"obj": true, "_build": true,
 
 	// language caches
-	"__pycache__": true, ".mypy_cache": true, ".pytest_cache": true,
-	".ruff_cache": true, ".tox": true,
+	"__pycache__": true,
 
 	// virtualenvs — the Image-nation case
-	"venv": true, ".venv": true, "env": true, ".env": true,
-	"virtualenv": true, ".virtualenv": true,
+	"venv": true, "env": true, "virtualenv": true,
 
 	// test and coverage artefacts
-	"coverage": true, ".nyc_output": true, "htmlcov": true, ".coverage": true,
+	"coverage": true, "htmlcov": true,
 
 	// caches and local data
-	".idea": true, ".vscode": true, ".gradle": true, ".terraform": true,
 	"tmp": true, "temp": true, "logs": true,
 
 	// bundled third-party data and deployment scaffolding. `onyx_data` ships
@@ -105,15 +100,15 @@ type Town struct {
 // different kind of place — an inspector's territory rather than a
 // construction site — and the town renders it differently.
 const (
-	DistrictSource = "source"
-	DistrictTest   = "test"
+	DistrictSource Place = "source"
+	DistrictTest   Place = "test"
 )
 
 // District is a top-level grouping of buildings. Districts map to the first
 // path segment of a building's location.
 type District struct {
 	Name      string `json:"name"`
-	Kind      string `json:"kind"`
+	Kind      Place  `json:"kind"`
 	Buildings int    `json:"buildings"`
 	Files     int    `json:"files"`
 }
@@ -132,7 +127,7 @@ var testDirNames = map[string]bool{
 	"integration": true, "unit": true, "fixtures": true,
 }
 
-func districtKind(name string) string {
+func districtKind(name string) Place {
 	if testDirNames[strings.ToLower(name)] {
 		return DistrictTest
 	}
@@ -146,7 +141,7 @@ type Building struct {
 	District string `json:"district"` // first path segment
 	Files    int    `json:"files"`    // source files directly in this directory
 	Total    int    `json:"total"`    // source files including subdirectories
-	Kind     string `json:"kind"`     // always PlaceBuilding
+	Kind     Place  `json:"kind"`     // always PlaceBuilding
 	Depth    int    `json:"depth"`    // path segments below the root
 }
 

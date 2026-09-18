@@ -52,10 +52,10 @@ func NewResolver(t *Town) *Resolver {
 //
 // It returns the Place kind and, for a building, its repo-relative path. The
 // reason is always populated.
-func (r *Resolver) Resolve(path string) (kind string, place string, reason Reason) {
+func (r *Resolver) Resolve(path string) (kind Place, place string, reason Reason) {
 	p := strings.TrimSpace(path)
 	if p == "" {
-		return PlaceYard, "", Reason(ReasonUnmapped)
+		return PlaceYard, "", ReasonUnmapped
 	}
 
 	// Internal URIs are not filesystem paths. omp's read tool accepts

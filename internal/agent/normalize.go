@@ -1,12 +1,15 @@
 package agent
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // NormalizeFrame converts one forwarder frame into zero or more
 // UnifiedAgentEvents.
 //
 // It returns the events, the frame's sequence number, and a *GapError when
-// the plugin's sequence indicates frames were lost since the last one.
+// the extension's sequence indicates frames were lost since the last one.
 //
 // A gap is reported ALONGSIDE the events, never instead of them: the gap
 // describes frames that are missing, but this frame arrived intact and its
@@ -16,7 +19,7 @@ import "encoding/json"
 // is the common case: OpenCode emits far more text and status frames than
 // tool frames.
 func NormalizeFrame(f Frame, lastSeq int64) ([]UnifiedAgentEvent, int64, error) {
-	// A hello starts a fresh sequence. It is the plugin announcing itself,
+	// A hello starts a fresh sequence. It is the extension announcing itself,
 	// so it can never be a gap, however far the numbering has moved.
 	if f.Kind == "hello" {
 		return nil, f.Seq, nil
@@ -84,7 +87,7 @@ func normalizeToolHook(f Frame) []UnifiedAgentEvent {
 }
 
 // agentName returns the adapter identity, defaulting to "opencode" only
-// when the frame is silent — which keeps older plugins working.
+// when the frame is silent — which keeps older extensions working.
 func agentName(a string) string {
 	if a == "" {
 		return "opencode"
@@ -205,5 +208,6 @@ type GapError struct {
 }
 
 func (e *GapError) Error() string {
-	return "event gap: lost sequence numbers"
+	return fmt.Sprintf("event gap: expected seq %d, got %d (%d frame(s) lost)",
+		e.Expected, e.Got, e.Lost)
 }

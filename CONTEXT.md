@@ -57,9 +57,8 @@ _Avoid_: repo, workspace, directory
 A normalized, agent-agnostic record of one agent action. The full field set is fixed — `id`, `session_id`, `agent`, `type`, `tool`, `target.path`, `result`, `timestamp` — and every adapter MUST produce exactly it. `agent` and `result` are not optional: omitting `agent` mislabels which agent acted, and `result` distinguishes a completed action from a failed one.
 _Avoid_: log, record, message, payload, datum
 
+**Frame**:
 The wire message an extension sends to the daemon. A frame carries the agent's raw fields — tool name, arguments, call id, error flag — plus transport metadata: the directory it came from, its sequence number, and the adapter identity. The normalizer turns a frame into an event. Frames are a transport concern; events are the domain.
-_Avoid_: message, packet, envelope, event
-The wire message an extension sends to the daemon. A frame carries the event plus transport metadata — the directory it came from, its sequence number, and the adapter identity. Frames are a transport concern; events are the domain.
 _Avoid_: message, packet, envelope, event
 
 **Event Normalizer**:

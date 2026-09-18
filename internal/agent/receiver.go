@@ -9,12 +9,12 @@ import (
 	"sync"
 )
 
-// Receiver accepts frames from the AI Town forwarder plugin.
+// Receiver accepts frames from the AI Town forwarder extension.
 //
 // It enforces the one guarantee the HTTP/SSE transport could not provide:
-// only the directories AI Town explicitly watches are accepted. A plugin
+// only the directories AI Town explicitly watches are accepted. An extension
 // running globally will fire for unrelated projects; those frames are
-// rejected with 403 and the plugin stops forwarding (docs/adr/0009).
+// rejected with 403 and the extension stops forwarding (docs/adr/0009).
 type Receiver struct {
 	// watched is the set of absolute directories AI Town is observing.
 	// A frame from any other directory is rejected.
@@ -29,16 +29,16 @@ type Receiver struct {
 	// it must not block.
 	OnEvent func(UnifiedAgentEvent)
 
-	// OnGap is called when the plugin's sequence indicates lost frames.
+	// OnGap is called when the extension's sequence indicates lost frames.
 	OnGap func(directory string, lost int64)
 
-	// OnHello is called when a plugin proves it loaded. This is the gate
+	// OnHello is called when an extension proves it loaded. This is the gate
 	// that lets a session be declared live (docs/adr/0010).
 	OnHello func(directory string)
 }
 
 // NewReceiver creates a receiver watching the given directories.
-// Paths are resolved to absolute form so a plugin reporting a symlinked or
+// Paths are resolved to absolute form so an extension reporting a symlinked or
 // relative path still matches.
 func NewReceiver(dirs ...string) *Receiver {
 	w := make(map[string]bool, len(dirs))
@@ -51,17 +51,6 @@ func NewReceiver(dirs ...string) *Receiver {
 		watched: w,
 		lastSeq: make(map[string]int64),
 	}
-}
-
-// Watch adds a directory to the accepted set.
-func (r *Receiver) Watch(dir string) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.watched[abs] = true
 }
 
 // ServeHTTP implements http.Handler for the /events endpoint.
@@ -96,7 +85,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.Unlock()
 
 	if !allowed {
-		// Not our project. Reject so the plugin stops forwarding.
+		// Not our project. Reject so the extension stops forwarding.
 		log.Printf("agent: rejected frame from unwatched directory %q", dir)
 		http.Error(w, "directory not watched", http.StatusForbidden)
 		return

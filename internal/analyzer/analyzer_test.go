@@ -272,7 +272,7 @@ func TestTopLevelDirectoryIsItsOwnDistrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, d := range town.Districts {
-		if d.Name == PlaceWorkshop {
+		if d.Name == string(PlaceWorkshop) {
 			t.Fatal("a top-level directory was misfiled as the Workshop")
 		}
 	}
@@ -316,7 +316,7 @@ func TestTestDistrictsAreMarked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kinds := map[string]string{}
+	kinds := map[string]Place{}
 	for _, d := range town.Districts {
 		kinds[d.Name] = d.Kind
 	}
