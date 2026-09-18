@@ -39,6 +39,7 @@ export class TownScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(0x11161d);
+    this.controls();
 
     // Read whatever the store already holds. If the fetch finished before
     // the scene booted, the town draws immediately rather than waiting.
@@ -100,13 +101,33 @@ export class TownScene extends Phaser.Scene {
     this.cameras.main.setBounds(-200, -200, layout.width + 400, layout.height + 400);
     this.cameras.main.setZoom(this.fitZoom(layout));
 
-    // Pan with drag, zoom with wheel. Entirely local to Phaser.
+  }
+
+  /**
+   * controls wires pan and zoom.
+   *
+   * Registered once from create, never from draw. Phaser clears input
+   * handlers only on scene shutdown, not between draws, so registering here
+   * per-draw would stack a new wheel handler on every SSE reconnect and make
+   * one notch zoom N times.
+   *
+   * Camera control is entirely local, which is what lets the transport stay
+   * one-way (ADR-0013).
+   */
+  private controls(): void {
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       this.dragging = true;
       this.moved = 0;
-      this.dragStart = { x: p.x, y: p.y, sx: this.cameras.main.scrollX, sy: this.cameras.main.scrollY };
+      this.dragStart = {
+        x: p.x,
+        y: p.y,
+        sx: this.cameras.main.scrollX,
+        sy: this.cameras.main.scrollY,
+      };
     });
+
     this.input.on("pointerup", () => (this.dragging = false));
+
     this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
       if (!this.dragging) return;
       const dx = p.x - this.dragStart.x;
@@ -115,14 +136,11 @@ export class TownScene extends Phaser.Scene {
       this.cameras.main.scrollX = this.dragStart.sx - dx / this.cameras.main.zoom;
       this.cameras.main.scrollY = this.dragStart.sy - dy / this.cameras.main.zoom;
     });
-    this.input.on(
-      "wheel",
-      (_p: unknown, _o: unknown, _dx: number, dy: number) => {
-        const cam = this.cameras.main;
-        const next = Phaser.Math.Clamp(cam.zoom - dy * 0.001, 0.25, 3);
-        cam.setZoom(next);
-      },
-    );
+
+    this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => {
+      const cam = this.cameras.main;
+      cam.setZoom(Phaser.Math.Clamp(cam.zoom - dy * 0.001, 0.25, 3));
+    });
   }
 
   private drawSite(s: Site, inTest: boolean): void {
