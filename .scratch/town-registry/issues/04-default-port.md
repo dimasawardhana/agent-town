@@ -6,10 +6,10 @@ A collision must fail loudly and name the fix. Silent fallback to a nearby port 
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Default listen address is `127.0.0.1:7777`
-- [ ] `--port 8080` listens on `127.0.0.1:8080`
-- [ ] A second daemon on the same port exits non-zero with a message naming the port, the conflict, and how to change it
-- [ ] The address printed on startup is the address actually bound, including when overridden
-- [ ] The loopback-only refusal is unaffected: a non-loopback address still exits with an explanation
+- [x] Default listen address is `127.0.0.1:7777`
+- [x] `--port 8080` listens on `127.0.0.1:8080`
+- [x] A second daemon on the same port exits non-zero with a message naming the port, the conflict, and how to change it
+- [x] The address printed on startup is the address actually bound, including when overridden
+- [x] The loopback-only refusal is unaffected: a non-loopback address still exits with an explanation

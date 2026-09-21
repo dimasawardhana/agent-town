@@ -155,3 +155,93 @@ func TestResolveUnmappedRealPathGoesToYard(t *testing.T) {
 		t.Errorf("reason = %q, want %q", reason, ReasonUnmapped)
 	}
 }
+
+// literalTown builds a town from building paths alone. Resolution is pure, so
+// these tests need no filesystem and no analysis pass.
+func literalTown(buildings ...string) *Town {
+	town := &Town{Root: "/town", Buildings: []Building{}, Districts: []District{}}
+	for _, b := range buildings {
+		town.Buildings = append(town.Buildings, Building{
+			Path:     b,
+			Name:     lastSegment(b),
+			District: districtOf(b),
+		})
+	}
+	return town
+}
+
+func TestResolveBracketedDirectoryIsABuilding(t *testing.T) {
+	// A Next.js app-router route is a real directory whose name contains
+	// brackets, so `src/app/[slug]/page.tsx` is an edit to that building.
+	// Treating every `[` as a glob put the worker in the Yard for a file that
+	// belongs to one building — the town reporting site-wide work on a
+	// building's file.
+	r := NewResolver(literalTown(
+		"src/app/[slug]",
+		"src/app/dashboard/[id]",
+		"src/app/[...catchAll]",
+		"src/domain",
+	))
+
+	cases := map[string]string{
+		"src/app/[slug]/page.tsx":         "src/app/[slug]",
+		"src/app/dashboard/[id]/page.tsx": "src/app/dashboard/[id]",
+		"src/app/[...catchAll]/route.ts":  "src/app/[...catchAll]",
+		// Bracketed segment inside an ordinary building: the deepest known
+		// building still wins.
+		"src/domain/[id]/handler.ts": "src/domain",
+	}
+	for in, want := range cases {
+		kind, place, reason := r.Resolve(in)
+		if kind != PlaceBuilding {
+			t.Errorf("Resolve(%q) kind = %q, want building (reason %q)", in, kind, reason)
+			continue
+		}
+		if place != want {
+			t.Errorf("Resolve(%q) place = %q, want %q", in, place, want)
+		}
+		if reason != ReasonBuilding {
+			t.Errorf("Resolve(%q) reason = %q, want %q", in, reason, ReasonBuilding)
+		}
+	}
+}
+
+func TestResolveBracketedPathWithNoBuildingIsAGlob(t *testing.T) {
+	// Brackets are only given the benefit of the doubt until the building
+	// lookup fails. A bracketed path matching nothing is the pattern it looks
+	// like — a character class — and names no single place.
+	r := NewResolver(literalTown("src/app/[slug]"))
+
+	for _, in := range []string{
+		"src/pages/[id]/page.tsx",
+		"src/[ab]/file.ts",
+		"[misc]/file.ts",
+	} {
+		kind, place, reason := r.Resolve(in)
+		if kind != PlaceYard || place != "" {
+			t.Errorf("Resolve(%q) = (%q, %q), want yard with no place", in, kind, place)
+		}
+		if reason != ReasonGlob {
+			t.Errorf("Resolve(%q) reason = %q, want %q", in, reason, ReasonGlob)
+		}
+	}
+}
+
+func TestResolveWildcardsStillGoToTheYard(t *testing.T) {
+	// `*` and `?` are unambiguous wildcards, so a path carrying either is a
+	// pattern. Unchanged from before the bracket rule.
+	r := NewResolver(literalTown("src/app/[slug]", "src/domain"))
+
+	for _, in := range []string{"src/**/*.ts", "*.go", "src/*.ts", "src/?.ts"} {
+		kind, place, reason := r.Resolve(in)
+		if kind != PlaceYard {
+			t.Errorf("Resolve(%q) kind = %q, want yard — a glob names no single place", in, kind)
+		}
+		if place != "" {
+			t.Errorf("Resolve(%q) place = %q, want none", in, place)
+		}
+		if reason != ReasonGlob {
+			t.Errorf("Resolve(%q) reason = %q, want %q", in, reason, ReasonGlob)
+		}
+	}
+}

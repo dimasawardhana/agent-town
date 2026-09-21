@@ -31,6 +31,124 @@ func TestReceiverAcceptsWatchedDirectory(t *testing.T) {
 	}
 }
 
+// postFrame sends one hello frame from dir and reports the gate's status.
+func postFrame(r *Receiver, dir string) int {
+	body := `{"kind":"hello","directory":"` + dir + `","seq":1}`
+	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w.Code
+}
+
+// A frame from a subdirectory of a watched root belongs to that root.
+//
+// The agent runs in the directory it was started in, and in a monorepo that is
+// a package rather than the imported root. Exact-matching the root rejected
+// every such frame, so a project whose work happens in a package produced no
+// town at all.
+func TestReceiverAcceptsSubdirectoryOfWatchedRoot(t *testing.T) {
+	r := NewReceiver("/tmp/nest")
+
+	for _, dir := range []string{
+		"/tmp/nest",
+		"/tmp/nest/pkg-a",
+		"/tmp/nest/pkg-a/internal/deep",
+	} {
+		if code := postFrame(r, dir); code != http.StatusNoContent {
+			t.Errorf("directory %q: status = %d, want 204", dir, code)
+		}
+	}
+}
+
+// Regression: ownership is by path segment, not by string prefix.
+//
+// A naive strings.HasPrefix(dir, root) reads /repo-other and /repo20 as
+// children of /repo, which ships one project's frames into another's town.
+// Reproduced: a prefix test answers 204 for these directories against a
+// receiver watching only /repo.
+func TestReceiverRejectsSiblingSharingPrefix(t *testing.T) {
+	r := NewReceiver("/tmp/repo")
+
+	for _, dir := range []string{"/tmp/repo-other", "/tmp/repo20", "/tmp/repository"} {
+		if code := postFrame(r, dir); code != http.StatusForbidden {
+			t.Errorf("directory %q: status = %d, want 403", dir, code)
+		}
+	}
+}
+
+// A frame naming no directory names no project. It must be rejected rather
+// than resolved, because resolving an empty path reads as the daemon's own
+// working directory — which would fold an unattributable frame into whatever
+// project the daemon happens to be started in.
+func TestReceiverRejectsEmptyDirectory(t *testing.T) {
+	r := NewReceiver("/tmp/watched")
+	if code := postFrame(r, ""); code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", code)
+	}
+}
+
+// A registry daemon decides ownership through OnOwner, and that decision is
+// the gate. The receiver must not second-guess it from its own watched set,
+// or the registry would not be the single authority on membership.
+func TestReceiverOnOwnerDecidesOwnership(t *testing.T) {
+	r := NewReceiver()
+	r.OnOwner = func(dir string) bool {
+		// The registry owns /repo and its packages, but not siblings.
+		return dir == "/repo" || strings.HasPrefix(dir, "/repo/")
+	}
+
+	for _, dir := range []string{"/repo", "/repo/pkg-a/src"} {
+		if code := postFrame(r, dir); code != http.StatusNoContent {
+			t.Errorf("directory %q: status = %d, want 204", dir, code)
+		}
+	}
+	for _, dir := range []string{"/repo-other", "/elsewhere"} {
+		if code := postFrame(r, dir); code != http.StatusForbidden {
+			t.Errorf("directory %q: status = %d, want 403", dir, code)
+		}
+	}
+}
+
+// Regression: the gate must not latch after a rejection.
+//
+// A frame refused while the project was unimported must not keep the project
+// out once it is imported: the gate answers from the watched set every time.
+func TestReceiverRejectionDoesNotBlockLaterFrames(t *testing.T) {
+	r := NewReceiver("/tmp/watched")
+
+	if code := postFrame(r, "/tmp/unwatched"); code != http.StatusForbidden {
+		t.Fatalf("unwatched: status = %d, want 403", code)
+	}
+	if code := postFrame(r, "/tmp/watched"); code != http.StatusNoContent {
+		t.Errorf("watched root after a rejection: status = %d, want 204", code)
+	}
+	if code := postFrame(r, "/tmp/watched/pkg"); code != http.StatusNoContent {
+		t.Errorf("watched subdirectory after a rejection: status = %d, want 204", code)
+	}
+}
+
+// Nested watched roots — a monorepo and one of its packages both imported —
+// must attribute a frame to the deepest root that owns it. A shallow match
+// would credit the monorepo, and a registry routing on the owner would then
+// fold a package's events into the wrong town.
+func TestReceiverProjectForPicksDeepestWatchedRoot(t *testing.T) {
+	r := NewReceiver("/tmp/mono", "/tmp/mono/packages/a")
+
+	cases := map[string]string{
+		"/tmp/mono/packages/a":     "/tmp/mono/packages/a",
+		"/tmp/mono/packages/a/src": "/tmp/mono/packages/a",
+		"/tmp/mono/packages/b":     "/tmp/mono",
+		"/tmp/mono":                "/tmp/mono",
+		"/tmp/mono-other":          "",
+		"/tmp/elsewhere":           "",
+	}
+	for dir, want := range cases {
+		if got := r.ProjectFor(dir); got != want {
+			t.Errorf("ProjectFor(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}
+
 func TestReceiverCallsOnHello(t *testing.T) {
 	r := NewReceiver("/tmp/watched")
 	var got string

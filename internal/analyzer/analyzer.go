@@ -94,6 +94,17 @@ type Town struct {
 	Name      string     `json:"name"`
 	Districts []District `json:"districts"`
 	Buildings []Building `json:"buildings"`
+
+	// Partial records that the walk stopped at its budget, so this town is
+	// drawn from part of the repository. It travels with the map because the
+	// renderer must say so: a partial town presented as whole is the product
+	// claiming work it did not do.
+	Partial bool `json:"partial,omitempty"`
+
+	// FilesSeen and MaxFiles report the size of that truncation, so the UI can
+	// state how much was left out rather than only that something was.
+	FilesSeen int `json:"filesSeen,omitempty"`
+	MaxFiles  int `json:"maxFiles,omitempty"`
 }
 
 // District kinds. A test district is not less important, but it is a
@@ -150,7 +161,36 @@ type Building struct {
 // It returns an error only if the root cannot be read at all. Unreadable
 // subdirectories are skipped: a single permission-denied folder should not
 // fail an otherwise valid town.
+// DefaultMaxFiles bounds how many source files an analysis will visit.
+//
+// It exists because the analyzer has no natural stopping point: pointed at a
+// home directory it visits tens of thousands of files and takes tens of
+// seconds, during which the daemon can answer nothing else. A budget bounds
+// the walk by cost, which a depth limit does not — depth truncates by tree
+// shape, so a shallow cap can empty a real repository while still walking a
+// pathological one.
+//
+// 2000 keeps every ordinary repository whole (the largest here has 12
+// buildings from 35 files) while capping a home directory at tens of
+// milliseconds.
+const DefaultMaxFiles = 2000
+
+// Analyze walks root and produces its town.
+//
+// It returns an error only if the root cannot be read at all. Unreadable
+// subdirectories are skipped: a single permission-denied folder should not
+// fail an otherwise valid town.
 func Analyze(root string) (*Town, error) {
+	return AnalyzeBounded(root, DefaultMaxFiles)
+}
+
+// AnalyzeBounded is Analyze with an explicit file budget.
+//
+// A budget of zero or less means unbounded. When the walk stops early the
+// town is marked Partial rather than silently presented as whole: a town drawn
+// from part of a repository is not the town, and PRD 34 forbids passing one
+// off as the other.
+func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -181,6 +221,12 @@ func Analyze(root string) (*Town, error) {
 
 	// files directly in each directory, keyed by repo-relative path
 	direct := map[string]int{}
+	seen := 0
+	// truncated records that the walk stopped because the budget ran out,
+	// rather than because the tree ended. Without it, a tree holding exactly
+	// maxFiles files is indistinguishable from one that was cut off, and would
+	// be reported as partial when nothing was omitted.
+	truncated := false
 
 	walkErr := filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -189,6 +235,14 @@ func Analyze(root string) (*Town, error) {
 				return fs.SkipDir
 			}
 			return nil
+		}
+
+		// Stop once the budget is spent. WalkDir visits in lexical order, so
+		// this is deterministic: the same tree yields the same town on every
+		// run, which ADR-0012 requires.
+		if maxFiles > 0 && seen >= maxFiles {
+			truncated = true
+			return fs.SkipAll
 		}
 
 		if d.IsDir() {
@@ -211,6 +265,7 @@ func Analyze(root string) (*Town, error) {
 		if !isSource(d.Name()) {
 			return nil
 		}
+		seen++
 
 		rel, relErr := filepath.Rel(abs, filepath.Dir(path))
 		if relErr != nil {
@@ -221,6 +276,15 @@ func Analyze(root string) (*Town, error) {
 	})
 	if walkErr != nil {
 		return nil, walkErr
+	}
+
+	// The budget stopped the walk before the tree was exhausted. Recorded
+	// rather than left implicit so nothing downstream can present a partial
+	// town as a whole one.
+	if truncated {
+		t.Partial = true
+		t.FilesSeen = seen
+		t.MaxFiles = maxFiles
 	}
 
 	// A directory is a building if it holds source directly. The repo root is

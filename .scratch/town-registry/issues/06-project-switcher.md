@@ -4,10 +4,10 @@
 
 **Blocked by:** 05.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The UI lists every registered project and marks which one is being viewed
-- [ ] Choosing a project shows its town, with its own workers, buildings and canvas bounds
-- [ ] The live event stream delivers only the viewed project's snapshots, so a snapshot from another project never redraws the wrong town
-- [ ] Work continuing in a project that is not being viewed still updates that project's state
-- [ ] Switching back shows the work that happened while it was away
+- [x] The UI lists every registered project and marks which one is being viewed
+- [x] Choosing a project shows its town, with its own workers, buildings and canvas bounds
+- [x] The live event stream delivers only the viewed project's snapshots, so a snapshot from another project never redraws the wrong town
+- [x] Work continuing in a project that is not being viewed still updates that project's state
+- [x] Switching back shows the work that happened while it was away

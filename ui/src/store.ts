@@ -94,7 +94,25 @@ export interface AgentEvent {
   timestamp: number;
 }
 
+export interface ProjectRef {
+  path: string;
+  name: string;
+  analyzed: boolean;
+  // state is the project's lifecycle (CONTEXT.md). A project that is
+  // registered but not yet analyzed still accepts events; the label says so
+  // rather than leaving the developer wondering why the town is empty.
+  state?: string;
+  error?: string;
+}
+
 interface State {
+  // projects is the registry the daemon serves (ADR-0014), and current is the
+  // one being viewed. Switching projects changes only what is drawn: every
+  // registered project keeps folding events in the daemon, because a town is
+  // the result of real work and switching away must not pause someone's build.
+  projects: ProjectRef[];
+  current: string;
+
   town: Town | null;
   layout: Layout | null;
   live: Live;
@@ -103,7 +121,9 @@ interface State {
   connected: boolean;
   error: string | null;
 
-  setTown: (t: Town, l: Layout, live?: Live) => void;
+  setProjects: (p: ProjectRef[], current: string) => void;
+  setCurrent: (path: string) => void;
+  setTown: (t: Town | null, l: Layout | null, live?: Live) => void;
   setLive: (l: Live) => void;
   select: (s: Site | null) => void;
   pushEvent: (e: AgentEvent) => void;
@@ -118,6 +138,8 @@ const MAX_EVENTS = 200;
 const EMPTY_LIVE: Live = { workers: [], buildings: [], events: [] };
 
 export const useTown = create<State>((set) => ({
+  projects: [],
+  current: "",
   town: null,
   layout: null,
   live: EMPTY_LIVE,
@@ -128,6 +150,19 @@ export const useTown = create<State>((set) => ({
 
   setTown: (town, layout, live) =>
     set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
+  setProjects: (projects, current) => set({ projects, current }),
+  setCurrent: (path) =>
+    set({
+      current: path,
+      // Clear the view so a stale town is never drawn as though it were the
+      // newly chosen one while that project's state is still loading.
+      town: null,
+      layout: null,
+      live: EMPTY_LIVE,
+      events: [],
+      selected: null,
+      error: null,
+    }),
   setLive: (live) => set({ live }),
   select: (selected) => set({ selected }),
   pushEvent: (e) =>

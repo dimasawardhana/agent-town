@@ -13,3 +13,8 @@ This is the property that makes the feature safe. Buildings are placed by index 
 - [ ] Positions are identical to the full layout, so the same repository yields the same town regardless of how much detail is shown
 - [ ] The camera bounds account for what is drawn, so revealing deeper buildings does not clip them
 - [ ] A site that is not drawn yet still resolves — a worker sent there is not lost
+
+**Not implemented in this change.** The file budget (ticket 08) bounds the analysis,
+which was the stated purpose of the depth limit, so this ticket's remaining value is
+the display control alone. Positions are already stable under display filtering, so it
+can be added without disturbing what is drawn.

@@ -5,11 +5,15 @@
 
 import { useEffect, useRef } from "react";
 import { SITE_ID_BUILDING_PREFIX, useTown } from "./store";
-import { fetchTown, subscribe } from "./api";
+import { fetchAllTowns, fetchProjects, fetchTown, subscribe } from "./api";
+import { ProjectSwitcher } from "./ProjectSwitcher";
 import { TownCanvas } from "./TownCanvas";
 
 export function App() {
   const town = useTown((s) => s.town);
+  const projects = useTown((s) => s.projects);
+  const current = useTown((s) => s.current);
+  const setProjects = useTown((s) => s.setProjects);
   const selected = useTown((s) => s.selected);
   const live = useTown((s) => s.live);
   const rawEvents = useTown((s) => s.events);
@@ -25,19 +29,59 @@ export function App() {
   const pushEvent = useTown((s) => s.pushEvent);
   const select = useTown((s) => s.select);
 
-  const load = useRef(async () => {
+  // load reads one project's town. An empty path names none, which the daemon
+  // answers with every project it serves.
+  const load = useRef(async (project: string) => {
     try {
-      const { town, layout, live } = await fetchTown();
+      const { town, layout, live } = await fetchTown(project);
       setTown(town, layout, live);
+      // Viewing a project analyzes it, which changes its state in the registry.
+      // Re-reading the list keeps the switcher's labels honest rather than
+      // leaving a project marked "analyzing" after it has finished.
+      const list = await fetchProjects();
+      setProjects(list, project);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   });
 
+  // The registry is read once. A daemon with no projects is a normal state,
+  // not an error: the panel says so rather than rendering an empty town.
   useEffect(() => {
-    void load.current();
-    return subscribe(setLive, pushEvent, setConnected, () => void load.current());
-  }, [setLive, pushEvent, setConnected]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchProjects();
+        if (cancelled) return;
+        setProjects(list, list[0]?.path ?? "");
+        if (list.length === 0) {
+          // Fall back to the unfiltered town so a daemon started with --dir
+          // but no registry still draws something.
+          await load.current("");
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setProjects]);
+
+  // Subscribe once, scoped to the viewed project. Re-opening the stream on
+  // every switch is what keeps a client from being handed another town's
+  // snapshots, and the daemon closes the old one when we do.
+  useEffect(() => {
+    if (!current) return;
+    void load.current(current);
+    return subscribe(
+      setLive,
+      pushEvent,
+      setConnected,
+      () => void load.current(current),
+      current,
+    );
+  }, [current, setLive, pushEvent, setConnected]);
 
   return (
     <div className="app">
@@ -48,11 +92,20 @@ export function App() {
           <span className={connected ? "dot ok" : "dot down"} />
         </header>
 
+        <ProjectSwitcher />
+
         {error && <p className="error">{error}</p>}
 
         {town && (
           <p className="meta">
             {town.buildings.length} buildings · {town.districts.length} districts
+          </p>
+        )}
+
+        {!town && projects.length === 0 && (
+          <p className="muted">
+            No projects registered. Run <code>townd add &lt;path&gt;</code> to
+            add one — <code>townd</code> prints the same advice on startup.
           </p>
         )}
 

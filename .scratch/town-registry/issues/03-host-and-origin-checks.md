@@ -6,11 +6,11 @@ This is a prerequisite for the registry rather than a follow-up: a fixed port ma
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A request with a non-loopback `Host` is refused, including when the connection genuinely arrived over loopback
-- [ ] `Host` values of `127.0.0.1`, `localhost` and `[::1]` are accepted, with or without a port
-- [ ] A request with no `Origin` is accepted, so the extension — which is not a browser — still works
-- [ ] A request whose `Origin` is not the daemon's own loopback origin is refused, including on `POST /events`
-- [ ] The check covers every route, and a route added later is covered without being registered individually
-- [ ] The refusal names the rule, so the cause is legible rather than looking like a crash
+- [x] A request with a non-loopback `Host` is refused, including when the connection genuinely arrived over loopback
+- [x] `Host` values of `127.0.0.1`, `localhost` and `[::1]` are accepted, with or without a port
+- [x] A request with no `Origin` is accepted, so the extension — which is not a browser — still works
+- [x] A request whose `Origin` is not the daemon's own loopback origin is refused, including on `POST /events`
+- [x] The check covers every route, and a route added later is covered without being registered individually
+- [x] The refusal names the rule, so the cause is legible rather than looking like a crash

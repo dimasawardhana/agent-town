@@ -6,11 +6,11 @@ Frames are held in a bounded in-memory buffer until analysis lands, then replaye
 
 **Blocked by:** 05.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A project reports one of Registered, Analyzing, Ready, Partial or Unreadable, and the state is visible to the UI
-- [ ] Frames arriving before analysis completes are buffered and replayed once the town exists, so no event is lost
-- [ ] The buffer is bounded; exceeding it marks the project and reports how many events were dropped
-- [ ] A project that fails analysis reports Unreadable and does not block other projects
-- [ ] Nothing is rendered as having happened before it has been placed — a buffered event produces no provisional worker
-- [ ] This does not use an event store: the buffer is in memory, nothing is written, and a restart loses buffered events only
+- [x] A project reports one of Registered, Analyzing, Ready, Partial or Unreadable, and the state is visible to the UI
+- [x] Frames arriving before analysis completes are buffered and replayed once the town exists, so no event is lost
+- [x] The buffer is bounded; exceeding it marks the project and reports how many events were dropped
+- [x] A project that fails analysis reports Unreadable and does not block other projects
+- [x] Nothing is rendered as having happened before it has been placed — a buffered event produces no provisional worker
+- [x] This does not use an event store: the buffer is in memory, nothing is written, and a restart loses buffered events only

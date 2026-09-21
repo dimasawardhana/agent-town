@@ -6,11 +6,11 @@ Bounding *depth* instead was measured and rejected: at depth 2 the wedding-invit
 
 **Blocked by:** 05.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Analysis stops after `--max-files` source files, defaulting to 2000
-- [ ] The bound is deterministic: the same tree yields the same buildings on every run
-- [ ] A repository within the budget is unaffected — a normal repository produces exactly the town it did before
-- [ ] A truncated project is reported as Partial, with the file count seen and the fact that the town is incomplete
-- [ ] The UI states that a Partial town is incomplete rather than presenting it as whole
-- [ ] A file count large enough to time the walk is measurably bounded, not merely claimed to be
+- [x] Analysis stops after `--max-files` source files, defaulting to 2000
+- [x] The bound is deterministic: the same tree yields the same buildings on every run
+- [x] A repository within the budget is unaffected — a normal repository produces exactly the town it did before
+- [x] A truncated project is reported as Partial, with the file count seen and the fact that the town is incomplete
+- [x] The UI states that a Partial town is incomplete rather than presenting it as whole
+- [x] A file count large enough to time the walk is measurably bounded, not merely claimed to be

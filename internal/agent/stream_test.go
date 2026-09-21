@@ -11,10 +11,10 @@ import (
 
 func TestBroadcasterDeliversToSubscriber(t *testing.T) {
 	b := NewBroadcaster()
-	ch, unsub := b.Subscribe()
+	ch, unsub := b.Subscribe("")
 	defer unsub()
 
-	b.Publish([]byte(`{"type":"FILE_READ"}`))
+	b.Publish("", []byte(`{"type":"FILE_READ"}`))
 
 	select {
 	case got := <-ch:
@@ -28,12 +28,12 @@ func TestBroadcasterDeliversToSubscriber(t *testing.T) {
 
 func TestBroadcasterFansOutToAllSubscribers(t *testing.T) {
 	b := NewBroadcaster()
-	a, ua := b.Subscribe()
+	a, ua := b.Subscribe("")
 	defer ua()
-	c, uc := b.Subscribe()
+	c, uc := b.Subscribe("")
 	defer uc()
 
-	b.Publish([]byte("x"))
+	b.Publish("", []byte("x"))
 
 	for name, ch := range map[string]<-chan []byte{"a": a, "c": c} {
 		select {
@@ -48,14 +48,14 @@ func TestBroadcasterFansOutToAllSubscribers(t *testing.T) {
 // that keeps a frozen browser tab from stalling the ingest path.
 func TestBroadcasterDoesNotBlockOnSlowSubscriber(t *testing.T) {
 	b := NewBroadcaster()
-	_, unsub := b.Subscribe() // never read from
+	_, unsub := b.Subscribe("") // never read from
 	defer unsub()
 
 	done := make(chan struct{})
 	go func() {
 		// Far more than the subscriber buffer, to guarantee a full channel.
 		for i := 0; i < 1000; i++ {
-			b.Publish([]byte("flood"))
+			b.Publish("", []byte("flood"))
 		}
 		close(done)
 	}()
@@ -69,7 +69,7 @@ func TestBroadcasterDoesNotBlockOnSlowSubscriber(t *testing.T) {
 
 func TestBroadcasterUnsubscribeIsIdempotent(t *testing.T) {
 	b := NewBroadcaster()
-	_, unsub := b.Subscribe()
+	_, unsub := b.Subscribe("")
 	unsub()
 	unsub() // must not panic on double-close
 	if b.Count() != 0 {
@@ -126,7 +126,7 @@ func TestStreamHandlerDeliversPublishedEvent(t *testing.T) {
 		t.Fatal("subscriber never registered")
 	}
 
-	b.Publish([]byte(`{"hello":"town"}`))
+	b.Publish("", []byte(`{"hello":"town"}`))
 
 	// Read lines until the event arrives or we give up.
 	lines := make(chan string, 64)

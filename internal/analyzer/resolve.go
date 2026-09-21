@@ -64,8 +64,9 @@ func (r *Resolver) Resolve(path string) (kind Place, place string, reason Reason
 		return PlaceDepot, "", ReasonInternalURI
 	}
 
-	// A glob names a set, not a place. glob and grep tools send these.
-	if strings.ContainsAny(p, "*?[") {
+	// A wildcard marks a pattern, and a pattern names a set rather than a
+	// place. glob and grep tools send these.
+	if strings.ContainsAny(p, "*?") {
 		return PlaceYard, "", ReasonGlob
 	}
 
@@ -77,6 +78,12 @@ func (r *Resolver) Resolve(path string) (kind Place, place string, reason Reason
 			return PlaceYard, "", ReasonUnmapped
 		}
 	}
+
+	// A bracket is not proof of a pattern. A Next.js app-router route is a
+	// real directory called `[slug]`, and reading the bracket as a wildcard
+	// put edits to that building's own files in the Yard as site-wide work.
+	// Bracketed paths get the building lookup first and fall back below.
+	bracketed := strings.ContainsAny(p, "[]")
 
 	rel := p
 	if filepath.IsAbs(p) {
@@ -105,6 +112,12 @@ func (r *Resolver) Resolve(path string) (kind Place, place string, reason Reason
 		if dir == b || strings.HasPrefix(dir, b+"/") {
 			return PlaceBuilding, b, ReasonBuilding
 		}
+	}
+	// No building owns it. A bracketed path that got this far is a character
+	// class rather than a route directory, so it is a glob after all — that is
+	// why brackets are resolved optimistically instead of up front.
+	if bracketed {
+		return PlaceYard, "", ReasonGlob
 	}
 
 	// A real path inside the repo that holds no source of its own — a

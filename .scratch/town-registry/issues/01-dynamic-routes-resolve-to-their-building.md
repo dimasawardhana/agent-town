@@ -6,9 +6,9 @@ Path Resolution treats any path containing `[`, `*` or `?` as a glob pattern nam
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A file under a bracketed directory resolves to that directory's building, with a reason of `building`
-- [ ] A genuine glob pattern still resolves to the Yard with reason `glob`, so the fix does not trade one wrong answer for another
-- [ ] A file outside any building still resolves to the Yard as `unmapped`, unchanged
-- [ ] Verified against a real repository containing at least one dynamic route, not only a synthetic fixture
+- [x] A file under a bracketed directory resolves to that directory's building, with a reason of `building`
+- [x] A genuine glob pattern still resolves to the Yard with reason `glob`, so the fix does not trade one wrong answer for another
+- [x] A file outside any building still resolves to the Yard as `unmapped`, unchanged
+- [x] Verified against a real repository containing at least one dynamic route, not only a synthetic fixture

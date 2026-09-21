@@ -4,10 +4,10 @@
 
 **Blocked by:** 04.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] With `AI_TOWN_URL` unset, the extension targets the default fixed port
-- [ ] With `AI_TOWN_URL` set, that value wins, so a non-default port still works
-- [ ] A refused connection disables forwarding for the session without retrying and without writing to the agent's output
-- [ ] The agent's behaviour is identical whether the extension is installed and unable to reach a daemon, or not installed at all
-- [ ] The default is a single guess, not a scan: no other port is probed
+- [x] With `AI_TOWN_URL` unset, the extension targets the default fixed port
+- [x] With `AI_TOWN_URL` set, that value wins, so a non-default port still works
+- [x] A refused connection disables forwarding for the session without retrying and without writing to the agent's output
+- [x] The agent's behaviour is identical whether the extension is installed and unable to reach a daemon, or not installed at all
+- [x] The default is a single guess, not a scan: no other port is probed
