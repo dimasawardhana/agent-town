@@ -100,8 +100,15 @@ async function drain(TARGET: string): Promise<void> {
         clearTimeout(abort);
       }
       if (res.status === 403) {
-        // AI Town does not watch this directory. Stop entirely, so an
-        // unrelated project is never shipped to the daemon.
+        // AI Town does not watch this directory. Drop this frame and stop
+        // forwarding from here, so an unrelated project is never shipped.
+        //
+        // Note this is process-wide, which is correct only because omp
+        // answers one directory per process: each directory gets its own
+        // module instance (verified — two directories spawned separately
+        // both reported load #1). If a future omp ever drove two watched and
+        // unwatched directories in one process, this would need to key on
+        // the frame's directory rather than a module-level flag.
         disabled = true;
         queue = [];
         break;
