@@ -19,7 +19,7 @@ export function TownCanvas() {
 
     // Phaser CANVAS is required by the overlay decision (ADR-0002): WebGL and
     // a DOM overlay contend for the same pixels.
-    game.current = new Phaser.Game({
+    const g = new Phaser.Game({
       type: Phaser.CANVAS,
       parent: host.current,
       backgroundColor: "#11161d",
@@ -32,11 +32,17 @@ export function TownCanvas() {
       scene: [TownScene],
     });
 
+    game.current = g;
+    // Exposed for verification: a headless probe can ask the game what it is
+    // animating, which a screenshot cannot answer for a two-pixel pulse.
+    (window as unknown as { __town?: Phaser.Game }).__town = g;
+
     // StrictMode mounts, unmounts and remounts in development. Without this
     // the first game would keep running, invisible and leaking.
     return () => {
       game.current?.destroy(true);
       game.current = null;
+      delete (window as unknown as { __town?: Phaser.Game }).__town;
     };
   }, []);
 

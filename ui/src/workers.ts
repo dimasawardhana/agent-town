@@ -56,6 +56,8 @@ export class WorkerLayer {
   // building per event, and each pass re-drew at 0.55 alpha over the last —
   // so touched buildings visibly darkened as a session went on.
   private tints: Phaser.GameObjects.Graphics[] = [];
+  // The action each worker's pulse was built for, so a change can rebuild it.
+  private pulseFor = new Map<string, string>();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -112,10 +114,8 @@ export class WorkerLayer {
       this.move(w.id, fig, x, y);
 
       const ring = this.rings.get(w.id);
-      if (ring) {
-        ring.setPosition(fig.x, fig.y);
-        ring.setStrokeStyle(2, colour, this.ringAlpha(w.action));
-      }
+      if (ring) ring.setPosition(fig.x, fig.y);
+      this.retime(w.id, w);
 
       const label = this.labels.get(w.id);
       if (label) {
@@ -134,6 +134,7 @@ export class WorkerLayer {
       this.figures.delete(id);
       this.labels.delete(id);
       this.rings.delete(id);
+      this.pulseFor.delete(id);
     }
   }
 
@@ -161,27 +162,68 @@ export class WorkerLayer {
   }
 
   /**
-   * ringAlpha makes the ring pulse per action, so a worker that is working
-   * looks different from one that is idle without needing new art.
+   * ring rhythm per action.
+   *
+   * A distinct animation per action kind is required, and ADR-0004 sanctions
+   * a low-metaphor rendering, so the difference has to come from motion
+   * rather than from art that does not exist yet. Each action gets its own
+   * pulse: how far the ring expands, how fast, and how bright.
+   *
+   * The shapes are chosen to read as the work:
+   *   hammering, building, demolishing — fast and tight, like repeated blows
+   *   testing   — slow and wide, a sweep across the building
+   *   reading   — a small steady breath, attention rather than effort
+   *   planning, commanding — barely moves; thinking, not doing
+   *   celebrating — one big bright bloom
    */
-  private ringAlpha(action: Action): number {
+  private ringPulse(action: Action): { alpha: number; scale: number; ms: number } {
     switch (action) {
       case "hammering":
       case "building":
       case "demolishing":
-        return 0.85; // loud: something is being changed
+        return { alpha: 0.9, scale: 1.6, ms: 260 };
       case "testing":
-        return 0.6;
+        return { alpha: 0.75, scale: 2.6, ms: 900 };
       case "reading":
-        return 0.3;
+        return { alpha: 0.4, scale: 1.25, ms: 1400 };
+      case "celebrating":
+        return { alpha: 1, scale: 3.2, ms: 700 };
       case "planning":
       case "commanding":
-        return 0.2;
-      case "celebrating":
-        return 0.9;
+        return { alpha: 0.25, scale: 1.15, ms: 2000 };
       default:
-        return 0.15;
+        return { alpha: 0.15, scale: 1.1, ms: 2000 };
     }
+  }
+
+  /**
+   * retime restarts a worker's pulse when its action changes, so the motion
+   * matches the work rather than continuing at the previous rhythm.
+   */
+  private retime(id: string, w: Worker): void {
+    const ring = this.rings.get(id);
+    if (!ring) return;
+
+    const key = `${w.action}`;
+    if (this.pulseFor.get(id) === key) return;
+    this.pulseFor.set(id, key);
+
+    this.scene.tweens.killTweensOf(ring);
+    const { alpha, scale, ms } = this.ringPulse(w.action);
+
+    ring.setStrokeStyle(2, agentColour(w.agent), alpha);
+    ring.setScale(1);
+
+    // Scale and alpha are animated, never radius: radius is what scale
+    // multiplies, so changing both would compound.
+    this.scene.tweens.add({
+      targets: ring,
+      scale: { from: 1, to: scale },
+      alpha: { from: alpha, to: 0 },
+      duration: ms,
+      repeat: -1,
+      ease: "Sine.easeOut",
+    });
   }
 
   /** tint paints building states onto their drawn rectangles. */
@@ -223,5 +265,6 @@ export class WorkerLayer {
     this.labels.clear();
     this.rings.clear();
     this.tweening.clear();
+    this.pulseFor.clear();
   }
 }
