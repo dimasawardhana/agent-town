@@ -1,6 +1,6 @@
 # AI Town
 
-A visual observability tool that represents software projects as persistent towns, where AI coding agents become construction workers and their activity becomes construction events. One town per git repository.
+A visual observability tool that represents software projects as persistent towns, where AI coding agents become construction workers and their activity becomes construction events. One town per imported project.
 
 omp is the reference agent: it is the first adapter, and where the glossary needs a concrete example it uses omp. pi is the second. opencode and hermes are supported but not load-bearing.
 
@@ -9,7 +9,7 @@ omp is the reference agent: it is the first adapter, and where the glossary need
 ### The town
 
 **Town**:
-The persistent visual representation of a single git repository. A town is a collection of districts, buildings, infrastructure, and roads that evolves over time as AI agents work. One town = one git repo.
+The persistent visual representation of a single imported project. A town is a collection of districts, buildings, infrastructure, and roads that evolves over time as AI agents work. One town = one project.
 _Avoid_: project map, dashboard, workspace
 
 **District**:
@@ -54,8 +54,14 @@ A single agent's run, from start to completion, identified by the agent's own se
 _Avoid_: run, task, job, execution, process
 
 **Project**:
-A git repository imported into AI Town. One git repo = one town. Nested `.git` dirs (monorepo packages, submodules) create separate towns.
+A directory the developer chose to import into AI Town. One project = one town. A project need not be a git repository, and a directory containing nested repositories is still one project: what makes it a town is that the developer imported it, not what it contains.
 _Avoid_: repo, workspace, directory
+
+A project is in exactly one state: **Registered** (known to the daemon, accepting frames, not yet analyzed), **Analyzing**, **Ready**, **Partial** (analyzed up to the file budget, so the town is incomplete and says so), or **Unreadable** (the path is gone or is not a directory). Registration and analysis are separate so that frames arriving before a town exists are kept rather than rejected.
+
+**Town Registry**:
+The set of projects one daemon serves. A registry holds many projects, each with one town. It is what the project switcher lists, and it is the answer to "which towns can I look at right now" — a question about the daemon, not about any single town.
+_Avoid_: workspace, collection, list, dashboard
 
 ### The plumbing
 
@@ -154,6 +160,10 @@ _Avoid_: server, backend, collector, listener
 - ADR-0011: Agent adapter contract and the fail-closed rule
 - ADR-0012: Town layout is computed deterministically from the directory tree
 - ADR-0013: One process serves the UI and the event stream over SSE
+- ADR-0014: The daemon serves a registry of projects, not one
+- ADR-0015: Analysis is bounded by a file budget, and detail is a display concern
+- ADR-0016: The extension may default its target address, but still fails silent
+- ADR-0017: The daemon checks Host and Origin on every request
 
 ## Resolved Questions
 
@@ -165,6 +175,8 @@ Answered by live experiment. Kept because the reasoning matters more than the an
 - **Version support floor.** Partially resolved. omp 18.0.3 and pi 0.79.4 are the tested versions. opencode was tested at 1.4.3 only, while current is 1.18.31 — treat opencode above 1.4.3 as unverified.
 
 ## Open Questions
+
+- **The default port.** 7777 was chosen over 7000 because 7000 collides with macOS AirPlay. It is a guess, not a measured choice.
 
 - **Multi-agent in one town.** `prd.md` §33 promises simultaneous agents. Attribution by session id is designed but not demonstrated with two concurrent sessions.
 - **Subagent mapping.** omp gives subagents their own session id inside the parent process. Rendering them as Sub Workers is mechanically possible; the policy is undecided.
