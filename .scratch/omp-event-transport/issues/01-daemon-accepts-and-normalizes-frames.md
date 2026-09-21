@@ -6,22 +6,22 @@ The daemon binds loopback only and prints its own `AI_TOWN_URL` on stdout.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `townd --dir <path>` starts, binds `127.0.0.1` on an ephemeral port, and prints `AI_TOWN_URL=http://127.0.0.1:<port>` on stdout
-- [ ] A frame from the watched directory returns 204; the same frame from any other directory returns 403 and logs the rejection
-- [ ] A completed tool frame becomes a normalized event with `agent`, `type`, `tool`, `target.path`, `result` and `timestamp` populated
-- [ ] A frame with `isError: true` produces `result: "error"` — a failed tool must never read as success
-- [ ] `agent` is taken from the frame, so an `omp` frame yields `"agent":"omp"`
-- [ ] A tool-started frame produces no event, because the work has not happened
-- [ ] A sequence jump emits a gap warning **and** still emits the frame's own event
-- [ ] A frame arriving before any sequence baseline does not report a spurious gap
-- [ ] A malformed body returns 204 and does not kill the stream
-- [ ] A non-POST returns 405
-- [ ] The daemon also serves the frontend: `GET /` returns the UI, and `GET /stream` streams normalized events as Server-Sent Events (ADR-0013)
-- [ ] `POST /events` and `GET /stream` share an origin, so no CORS headers are needed
-- [ ] `go build ./... && go vet ./...` passes with no third-party dependencies
-- [ ] `go test ./...` passes
+- [x] `townd --dir <path>` starts, binds `127.0.0.1` on an ephemeral port, and prints `AI_TOWN_URL=http://127.0.0.1:<port>` on stdout
+- [x] A frame from the watched directory returns 204; the same frame from any other directory returns 403 and logs the rejection
+- [x] A completed tool frame becomes a normalized event with `agent`, `type`, `tool`, `target.path`, `result` and `timestamp` populated
+- [x] A frame with `isError: true` produces `result: "error"` — a failed tool must never read as success
+- [x] `agent` is taken from the frame, so an `omp` frame yields `"agent":"omp"`
+- [x] A tool-started frame produces no event, because the work has not happened
+- [x] A sequence jump emits a gap warning **and** still emits the frame's own event
+- [x] A frame arriving before any sequence baseline does not report a spurious gap
+- [x] A malformed body returns 204 and does not kill the stream
+- [x] A non-POST returns 405
+- [x] The daemon also serves the frontend: `GET /` returns the UI, and `GET /stream` streams normalized events as Server-Sent Events (ADR-0013)
+- [x] `POST /events` and `GET /stream` share an origin, so no CORS headers are needed
+- [x] `go build ./... && go vet ./...` passes with no third-party dependencies
+- [x] `go test ./...` passes
 
 **Note for the implementer:** the code is fully written and dry-run verified in `docs/plans/2026-09-18-omp-event-transport.md`, Tasks 1, 2, 3 and 5. Transcribe it; do not redesign it. Task 5 carries the exact `curl` commands and expected output.
 
