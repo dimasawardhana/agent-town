@@ -61,6 +61,9 @@ func main() {
 	recv.OnGap = func(d string, lost int64) {
 		fmt.Fprintf(os.Stderr, "townd: WARNING lost %d frame(s) from %s\n", lost, d)
 	}
+	recv.OnDrop = func(d string, lost int64) {
+		fmt.Fprintf(os.Stderr, "townd: WARNING extension queue overflowed, %d frame(s) dropped from %s\n", lost, d)
+	}
 	recv.OnEvent = func(ev agent.UnifiedAgentEvent) {
 		raw, err := json.Marshal(ev)
 		if err != nil {

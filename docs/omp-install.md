@@ -54,10 +54,11 @@ than retrying forever.
 
 ## What it forwards
 
-Only two hooks, both **observation-only**:
+Three hooks, every one **observation-only**:
 
 | Hook | Purpose |
 |---|---|
+| `session_start` | sends the handshake, proving the extension loaded |
 | `tool_execution_start` | caches the tool's arguments |
 | `tool_execution_end` | forwards the completed action, with its result |
 

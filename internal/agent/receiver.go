@@ -26,12 +26,20 @@ type Receiver struct {
 	// gaps are detected per agent rather than globally.
 	lastSeq map[string]int64
 
+	// lastDropped tracks the highest overflow count reported, so a jump is
+	// surfaced once rather than on every frame that carries the total.
+	lastDropped int64
+
 	// OnEvent receives normalized events. Called from the HTTP handler, so
 	// it must not block.
 	OnEvent func(UnifiedAgentEvent)
 
 	// OnGap is called when the extension's sequence indicates lost frames.
 	OnGap func(directory string, lost int64)
+
+	// OnDrop is called when an extension reports it gave up on frames because
+	// its queue overflowed.
+	OnDrop func(directory string, lost int64)
 
 	// OnHello is called when an extension proves it loaded. This is the gate
 	// that lets a session be declared live (docs/adr/0010).
@@ -103,6 +111,8 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// that masks the new session's losses.
 		r.mu.Lock()
 		r.lastSeq[dir] = frame.Seq
+		// A fresh extension starts its counter over.
+		r.lastDropped = frame.Dropped
 		r.mu.Unlock()
 
 		if r.OnHello != nil {
@@ -121,6 +131,18 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// place every such event in 1970 and break any timeline.
 	if frame.Time == 0 {
 		frame.Time = time.Now().UnixMilli()
+	}
+
+	// An extension reports how many frames it gave up on when its queue
+	// overflowed. The count is cumulative per extension process, so it is
+	// surfaced as a delta: a jump means the town is missing history, which
+	// ADR-0010 requires be recorded rather than silently absorbed.
+	if frame.Dropped > r.lastDropped {
+		lost := frame.Dropped - r.lastDropped
+		r.lastDropped = frame.Dropped
+		if r.OnDrop != nil {
+			r.OnDrop(dir, lost)
+		}
 	}
 
 	events, newSeq, err := NormalizeFrame(frame, last)

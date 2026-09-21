@@ -122,3 +122,57 @@ func TestHelloResetsSequenceBaseline(t *testing.T) {
 		t.Errorf("reported %d lost frames, want 9", gaps[0])
 	}
 }
+
+// Regression: an extension that overflowed its queue must be reported.
+//
+// The extension stamps a cumulative drop count on every frame, and ADR-0010
+// requires the count be recorded rather than silently absorbed. Before this,
+// nothing read it, so a town could be missing history with no sign.
+func TestReceiverReportsExtensionDrops(t *testing.T) {
+	r := NewReceiver("/tmp/watched")
+	var reported []int64
+	r.OnDrop = func(_ string, lost int64) { reported = append(reported, lost) }
+
+	post := func(body string) {
+		req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(body))
+		r.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	post(`{"kind":"hello","directory":"/tmp/watched","seq":1,"dropped":0}`)
+	post(`{"kind":"event","directory":"/tmp/watched","seq":2,"dropped":7,"type":"session.idle"}`)
+	// The count is cumulative, so repeating it must not report again.
+	post(`{"kind":"event","directory":"/tmp/watched","seq":3,"dropped":7,"type":"session.idle"}`)
+	// A further overflow reports only the delta.
+	post(`{"kind":"event","directory":"/tmp/watched","seq":4,"dropped":10,"type":"session.idle"}`)
+
+	if len(reported) != 2 {
+		t.Fatalf("got %d drop reports %v, want 2 (one per increase)", len(reported), reported)
+	}
+	if reported[0] != 7 || reported[1] != 3 {
+		t.Errorf("reported %v, want [7 3]", reported)
+	}
+}
+
+// A hello resets the drop baseline, since a fresh extension restarts its count.
+func TestHelloResetsDropBaseline(t *testing.T) {
+	r := NewReceiver("/tmp/watched")
+	var reported []int64
+	r.OnDrop = func(_ string, lost int64) { reported = append(reported, lost) }
+
+	post := func(body string) {
+		req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(body))
+		r.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	post(`{"kind":"event","directory":"/tmp/watched","seq":5,"dropped":20,"type":"session.idle"}`)
+	post(`{"kind":"hello","directory":"/tmp/watched","seq":1,"dropped":0,"agent":"omp"}`)
+	// Post-restart overflow must be reported from the new baseline.
+	post(`{"kind":"event","directory":"/tmp/watched","seq":2,"dropped":4,"type":"session.idle"}`)
+
+	if len(reported) != 2 {
+		t.Fatalf("got %v, want two reports", reported)
+	}
+	if reported[1] != 4 {
+		t.Errorf("post-restart report = %d, want 4", reported[1])
+	}
+}

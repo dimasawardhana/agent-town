@@ -27,6 +27,7 @@ type Frame = Record<string, unknown>;
 let queue: Frame[] = [];
 let seq = 0;
 let draining = false;
+let redrain = false;
 let dropped = 0;
 let disabled = false;
 
@@ -49,6 +50,11 @@ function target(): string {
 // queue drain on its own, which is what "with retry" has to mean.
 const RETRY_MS = 2000;
 
+// A fetch that is accepted but never answered would leave `draining` true
+// forever, stranding the queue behind a re-entry guard that never clears.
+// The timeout bounds that.
+const FETCH_TIMEOUT_MS = 5000;
+
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRetry(TARGET: string): void {
@@ -62,24 +68,36 @@ function scheduleRetry(TARGET: string): void {
 }
 
 async function drain(TARGET: string): Promise<void> {
-  if (draining) return;
+  if (draining) {
+    // A drain is already in flight. Leave a marker so that when it finishes
+    // the queue is re-checked, rather than consuming this call silently —
+    // otherwise a retry that lands mid-drain is lost.
+    redrain = true;
+    return;
+  }
   draining = true;
   let stalled = false;
   try {
     while (queue.length > 0) {
       const frame = queue[0]!;
       let res: Response;
+      const timer = new AbortController();
+      const abort = setTimeout(() => timer.abort(), FETCH_TIMEOUT_MS);
       try {
         res = await fetch(TARGET, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(frame),
+          signal: timer.signal,
         });
       } catch {
-        // Daemon unreachable. Keep the frame and retry on a timer, so a
-        // restart costs latency rather than history.
+        // Daemon unreachable, or it accepted the connection and went silent.
+        // Keep the frame and retry on a timer, so a restart costs latency
+        // rather than history.
         stalled = true;
         break;
+      } finally {
+        clearTimeout(abort);
       }
       if (res.status === 403) {
         // AI Town does not watch this directory. Stop entirely, so an
@@ -96,6 +114,13 @@ async function drain(TARGET: string): Promise<void> {
     }
   } finally {
     draining = false;
+  }
+
+  // Work that arrived while this drain was in flight.
+  if (redrain && !disabled) {
+    redrain = false;
+    void drain(TARGET);
+    return;
   }
   if (stalled) scheduleRetry(TARGET);
 }
