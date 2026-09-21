@@ -385,3 +385,39 @@ func TestRegisteredProjectReadsSafelyBeforeView(t *testing.T) {
 		_, _ = p.Snapshot()
 	}
 }
+
+// TestProjectBudgetIsTheCallersChoice checks that a project's truncation
+// depends on the budget it was analyzed with, not a fixed default.
+//
+// `townd ls` reported a project as whole while the daemon, started with a
+// lower --max-files, drew it as PARTIAL. The list was using its own default
+// rather than the budget in play, so the two disagreed about the same project.
+func TestProjectBudgetIsTheCallersChoice(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
+	dir := filepath.Join(base, "work")
+	for i := range 30 {
+		sub := filepath.Join(dir, "pkg", "d"+itoa(i))
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, "f.go"), []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	generous := &Project{path: dir}
+	generous.Analyze(2000)
+	if generous.State() != StateReady {
+		t.Errorf("with a generous budget the project is %q, want %q", generous.State(), StateReady)
+	}
+
+	tight := &Project{path: dir}
+	tight.Analyze(5)
+	if tight.State() != StatePartial {
+		t.Errorf("with a tight budget the project is %q, want %q", tight.State(), StatePartial)
+	}
+	if tight.Static() == nil || !tight.Static().Partial {
+		t.Error("the town is not marked Partial despite a truncated analysis")
+	}
+}

@@ -22,6 +22,8 @@ a failed tool      →    a construction problem on that building
 
 ## Try it
 
+Full guide, including troubleshooting: **[docs/install.md](docs/install.md)**.
+
 **1. Install the daemon.** Needs Go 1.27 or later. Nothing else — no npm, no
 database, no service. The UI and the agent extension are both embedded in the
 binary.
@@ -122,6 +124,16 @@ Known gaps, stated rather than hidden:
 - **Location comes from the path, not the output.** A failing test marks the
   Yard, not the building that actually failed. Deriving that from command
   output is the natural next slice.
+
+## Guides
+
+| | |
+|---|---|
+| **[docs/install.md](docs/install.md)** | installing, the CLI, troubleshooting, uninstalling |
+| [docs/omp-extension.md](docs/omp-extension.md) | how the extension works inside the agent |
+| [docs/multi-agent-support.md](docs/multi-agent-support.md) | omp, pi, opencode, hermes — what each exposes |
+| [CONTEXT.md](CONTEXT.md) | the vocabulary, and what not to call things |
+| [docs/adr/](docs/adr/) | decisions, with the alternatives that lost |
 
 ## Where things are
 

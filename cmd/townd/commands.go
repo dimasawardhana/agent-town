@@ -122,8 +122,22 @@ func runRemove(args []string) int {
 // alone cannot answer the second half. The daemon defers analysis so it can
 // start immediately; an explicit request for the list is not that case.
 func runList(args []string) int {
+	fs := flag.NewFlagSet("townd ls", flag.ContinueOnError)
+	maxFiles := fs.Int("max-files", analyzer.DefaultMaxFiles,
+		"stop analyzing after this many source files (0 = unbounded)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: townd ls [--max-files <n>]")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
 	configPath := registry.ConfigPath()
-	reg, err := registry.LoadBounded(configPath, analyzer.DefaultMaxFiles)
+	// The same budget the daemon would use, so a project reported as PARTIAL
+	// here is PARTIAL there. A different budget would let ls disagree with
+	// what the daemon actually builds.
+	reg, err := registry.LoadBounded(configPath, *maxFiles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "townd: could not read %s: %v\n", configPath, err)
 		return 1
@@ -134,7 +148,7 @@ func runList(args []string) int {
 		return 0
 	}
 	for _, p := range reg.Projects() {
-		describe(os.Stdout, p)
+		describe(os.Stdout, p, *maxFiles)
 	}
 	fmt.Printf("\nconfig: %s\n", configPath)
 	return 0
@@ -145,10 +159,10 @@ func runList(args []string) int {
 // It never dereferences an absent map: a project that has not been analyzed and
 // one whose analysis failed are different states with different remedies, and
 // conflating them is what crashed this command on a freshly registered project.
-func describe(w io.Writer, p *registry.Project) {
+func describe(w io.Writer, p *registry.Project, maxFiles int) {
 	if !p.Analyzed() {
-		// build the map so the line can report real counts.
-		p.Analyze(analyzer.DefaultMaxFiles)
+		// Build the map so the line can report real counts.
+		p.Analyze(maxFiles)
 	}
 
 	if err := p.AnalysisError(); err != nil {
