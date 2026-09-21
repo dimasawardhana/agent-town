@@ -70,6 +70,7 @@ func runDaemon(args []string) int {
 	addr := fs.String("addr", fmt.Sprintf("127.0.0.1:%d", defaultPort), "loopback address to listen on")
 	port := fs.Int("port", 0, "loopback port to listen on (overrides the port in --addr)")
 	maxFiles := fs.Int("max-files", analyzer.DefaultMaxFiles, "stop analyzing after this many source files (0 = unbounded)")
+	watch := fs.Duration("reload", 2*time.Second, "how often to re-read the registry, so townd add takes effect without a restart (0 disables)")
 	quiet := fs.Bool("quiet", false, "do not print events to stdout")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, "usage: townd [flags] | townd add <path> | townd rm <path> | townd install\n\n")
@@ -223,6 +224,20 @@ func runDaemon(args []string) int {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "townd: start an agent with this URL, or run 'townd install' to set up")
 	fmt.Fprintln(os.Stderr, "townd: the extension so it finds this daemon without configuration")
+
+	// The registry is re-read while running, so `townd add` from another
+	// terminal takes effect without a restart. Projects passed with --dir are
+	// held as keepers: they are not in the config by design, and a sync that
+	// only consulted the file would drop them mid-session.
+	keep := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if abs, err := filepath.Abs(d); err == nil {
+			keep = append(keep, abs)
+		}
+	}
+	if *watch > 0 && configPath != "" {
+		go watchRegistry(ctx, reg, bus, configPath, keep, *maxFiles, *watch)
+	}
 
 	<-ctx.Done()
 	fmt.Fprintln(os.Stderr, "townd: shutting down")
@@ -397,3 +412,87 @@ func requireLoopback(addr string) error {
 	}
 	return nil
 }
+
+// watchRegistry re-reads the config on a timer and reconciles the registry.
+//
+// It polls rather than watching for filesystem events, because the standard
+// library has no portable file watcher and adding one would break the
+// stdlib-only rule for a change that happens a handful of times a session. A
+// tick costs one stat when nothing has changed.
+//
+// A change is reported and pushed to the UI, so a project added in another
+// terminal appears in the switcher rather than requiring a refresh.
+func watchRegistry(
+	ctx context.Context,
+	reg *registry.Registry,
+	bus *agent.Broadcaster,
+	configPath string,
+	keep []string,
+	maxFiles int,
+	every time.Duration,
+) {
+	last := stampConfig(configPath)
+
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		now := stampConfig(configPath)
+		if !now.Changed(last) {
+			continue
+		}
+		last = now
+
+		desired, err := registry.ReadConfigStrict(configPath)
+		if err != nil {
+			// Deliberately keep what is already running. The lenient reader
+			// used at startup treats a bad file as no projects, which is the
+			// right escape hatch then and destructive now: it would empty the
+			// registry and start refusing the frames of agents that were
+			// working a moment ago.
+			fmt.Fprintf(os.Stderr, "townd: ignoring %s: %v\n", configPath, err)
+			fmt.Fprintln(os.Stderr, "townd: keeping the projects already being served")
+			continue
+		}
+
+		added, removed, err := reg.Sync(desired, keep)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "townd: could not apply %s: %v\n", configPath, err)
+			continue
+		}
+
+		for _, d := range removed {
+			fmt.Fprintf(os.Stderr, "townd: no longer serving %s\n", d)
+		}
+		for _, d := range added {
+			fmt.Fprintf(os.Stderr, "townd: now serving %s\n", d)
+			// Analyzed on arrival so the town is ready when it is opened,
+			// rather than making the first view wait for the walk.
+			if p := reg.Get(d); p != nil && !p.Analyzed() {
+				if snap, ok, dropped := p.Analyze(maxFiles); ok {
+					publishTown(bus, p, snap)
+					if dropped > 0 {
+						fmt.Fprintf(os.Stderr, "townd: %s: %d events dropped before analysis\n", d, dropped)
+					}
+				}
+			}
+		}
+
+		if len(added) == 0 && len(removed) == 0 {
+			continue
+		}
+		// Tell the UI, so a dropdown picks the change up without a reload.
+		if raw, err := json.Marshal(projectsResponse(reg)); err == nil {
+			bus.Publish("", raw)
+		}
+	}
+}
+
+// stampConfig is the cheap fingerprint the reload loop compares.
+func stampConfig(path string) registry.ConfigStamp { return registry.Stamp(path) }

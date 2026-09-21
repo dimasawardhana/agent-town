@@ -102,6 +102,36 @@ townd ls              # what is registered, and how big each town is
 townd rm ~/code/app   # unregister one
 ```
 
+### The running daemon picks these up by itself
+
+There is no restart. A daemon re-reads the registry every couple of seconds,
+so `townd add` or `townd rm` in another terminal takes effect immediately —
+the project appears in the UI's dropdown without a page reload, and its
+agent's frames stop being refused.
+
+```
+$ townd add ~/code/app        # in one terminal
+added /home/you/code/app — 19 buildings, 3 districts
+
+townd: now serving /home/you/code/app    # in the daemon's log
+```
+
+A corrupt or half-written config is **refused rather than applied**, and the
+projects already being served are kept:
+
+```
+townd: ignoring /home/you/.config/ai-town/config.json: config is not valid JSON: ...
+townd: keeping the projects already being served
+```
+
+That distinction matters. At startup a config the daemon cannot read is
+treated as empty, because that is the only way out of a broken file. While
+running, the same behaviour would empty the registry and start rejecting
+frames from agents that were working fine a moment ago.
+
+Turn the check off with `--reload 0` if you would rather the registry only
+changed on restart.
+
 The registry lives at `$XDG_CONFIG_HOME/ai-town/config.json`, falling back to
 `~/.config/ai-town/config.json`. It is plain JSON and safe to edit by hand:
 
@@ -178,6 +208,7 @@ townd --dir <path>        # also serve this one, for this run only, unregistered
 townd --port <n>          # listen elsewhere (default 7777)
 townd --addr <host:port>  # full address, for a non-default host
 townd --max-files <n>     # analysis budget per project (default 2000, 0 = unbounded)
+townd --reload <dur>      # how often to re-read the registry (default 2s, 0 = off)
 townd --quiet             # do not also print events to stdout
 
 townd add <path>          # register and analyze a project

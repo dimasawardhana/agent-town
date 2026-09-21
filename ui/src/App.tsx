@@ -80,6 +80,9 @@ export function App() {
       setConnected,
       () => void load.current(current),
       current,
+      // The registry changed under us — a project was added or removed in
+      // another terminal. Update the switcher without a page reload.
+      (list) => setProjects(list, current),
     );
   }, [current, setLive, pushEvent, setConnected]);
 

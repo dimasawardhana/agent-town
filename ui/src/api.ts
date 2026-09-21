@@ -63,9 +63,14 @@ export async function fetchAllTowns(): Promise<Record<string, TownResponse>> {
 // on every event rather than the raw event alone, because worker movement is
 // the product and recomputing it in the browser would make the UI a second
 // authority on where things are.
+//
+// A third shape arrives when the registry changes: the daemon re-reads it so
+// `townd add` takes effect without a restart, and tells the UI so the switcher
+// can pick the project up without a page reload.
 type Frame =
   | { kind: "live"; live: Live }
-  | { kind: "event"; event: AgentEvent };
+  | { kind: "event"; event: AgentEvent }
+  | { kind: "projects"; projects: ProjectEntry[] };
 
 // subscribe opens the event stream and calls back on every frame.
 //
@@ -78,6 +83,7 @@ export function subscribe(
   onState: (connected: boolean) => void,
   onReconnect: () => void,
   project = "",
+  onProjects?: (p: ProjectEntry[]) => void,
 ): () => void {
   let hadOpened = false;
   // Naming the project scopes the stream to it. Without it the client would
@@ -106,8 +112,13 @@ export function subscribe(
       return; // A malformed frame is not worth tearing the stream down for.
     }
     const f = parsed as Partial<Frame> & Partial<Live>;
-    // The daemon publishes a live snapshot when it has a town to interpret,
-    // and a bare event when it does not.
+    // Three shapes share this stream, told apart by their key: a live
+    // snapshot carries workers, a registry change carries projects, and
+    // anything else is a bare event.
+    if (f && typeof f === "object" && "projects" in f && Array.isArray(f.projects)) {
+      onProjects?.(f.projects as ProjectEntry[]);
+      return;
+    }
     if (f && Array.isArray((f as Live).workers)) {
       onLive(f as Live);
     } else {
