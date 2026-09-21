@@ -34,11 +34,19 @@ func Guard(next http.Handler) http.Handler {
 }
 
 // refuse states which rule was broken, so a refusal is legible rather than
-// looking like a crash. It is deliberately not 403: that status is already
-// meaningful on /events, where it tells the extension to stop forwarding.
+// looking like a crash.
+//
+// 421 rather than 403, and the distinction is load-bearing: the extension reads
+// 403 on /events as "this directory is not watched" and stops forwarding it for
+// the life of the process. A Host or Origin violation is a different fact — the
+// request reached a daemon that will not answer it — and conflating the two
+// would let one misconfigured AI_TOWN_URL disable an agent's forwarding
+// permanently, with the extension reporting it as an unwatched project.
+//
+// 421 is defined for a misdirected request, which is what a foreign Host is.
 func refuse(w http.ResponseWriter, reason string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusForbidden)
+	w.WriteHeader(http.StatusMisdirectedRequest)
 	_, _ = w.Write([]byte("ai-town: refused: " + reason + "\n"))
 }
 

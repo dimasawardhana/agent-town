@@ -59,8 +59,8 @@ func TestGuardRefusesForeignHost(t *testing.T) {
 			if *reached {
 				t.Errorf("Host %q reached the handler; a non-loopback Host must be refused", host)
 			}
-			if rec.Code != http.StatusForbidden {
-				t.Errorf("Host %q got status %d, want 403", host, rec.Code)
+			if rec.Code != http.StatusMisdirectedRequest {
+				t.Errorf("Host %q got status %d, want 421", host, rec.Code)
 			}
 		})
 	}
@@ -118,8 +118,8 @@ func TestGuardRefusesForeignOrigin(t *testing.T) {
 			if *reached {
 				t.Errorf("Origin %q reached the handler; it must be refused", origin)
 			}
-			if rec.Code != http.StatusForbidden {
-				t.Errorf("Origin %q got status %d, want 403", origin, rec.Code)
+			if rec.Code != http.StatusMisdirectedRequest {
+				t.Errorf("Origin %q got status %d, want 421", origin, rec.Code)
 			}
 		})
 	}
@@ -143,8 +143,8 @@ func TestGuardCoversEveryPath(t *testing.T) {
 
 			Guard(mux).ServeHTTP(rec, req)
 
-			if rec.Code != http.StatusForbidden {
-				t.Errorf("%s got status %d with a foreign Host, want 403", path, rec.Code)
+			if rec.Code != http.StatusMisdirectedRequest {
+				t.Errorf("%s got status %d with a foreign Host, want 421", path, rec.Code)
 			}
 		})
 	}
@@ -187,5 +187,26 @@ func TestGuardAcceptsTheWholeLoopbackBlock(t *testing.T) {
 		if !isLoopbackHost(host) {
 			t.Errorf("isLoopbackHost(%q) = false; it is loopback", host)
 		}
+	}
+}
+
+// TestGuardStatusIsDistinctFromTheDirectoryGate is the load-bearing part of
+// using 421 rather than 403. The extension treats 403 on /events as "this
+// directory is not watched" and stops forwarding it permanently, so a guard
+// refusal sharing that status would let a misconfigured AI_TOWN_URL disable an
+// agent's forwarding while reporting it as an unwatched project.
+func TestGuardStatusIsDistinctFromTheDirectoryGate(t *testing.T) {
+	next, _ := okHandler()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/events", nil)
+	req.Host = "evil.example"
+	Guard(next).ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusForbidden {
+		t.Fatal("the guard refuses with 403, which the extension reads as 'directory not watched' and stops forwarding for good")
+	}
+	if rec.Code != http.StatusMisdirectedRequest {
+		t.Errorf("guard refused with %d, want 421", rec.Code)
 	}
 }

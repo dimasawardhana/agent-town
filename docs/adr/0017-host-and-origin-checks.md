@@ -39,6 +39,16 @@ The middleware wraps the whole mux rather than individual routes, so a route
 added later is covered by default. Registering it per-handler would make
 protection something a future contributor must remember.
 
+**A refusal is 421, not 403.** The extension reads 403 on `/events` as "this
+directory is not watched" and stops forwarding it for the life of the process.
+That is the right meaning for the directory gate, but it is the wrong meaning
+for a Host or Origin violation, which says the request reached a daemon that
+will not answer it rather than that the project is unknown. Sharing the status
+would let one misconfigured `AI_TOWN_URL` disable an agent's forwarding
+permanently, and the extension would report it as an unwatched project — a
+wrong diagnosis of a recoverable mistake. 421 (Misdirected Request) is defined
+for exactly this case: a request sent to a server that cannot answer it.
+
 ## Why not a shared secret or token
 
 A token in `AI_TOWN_URL` would also close this, and would additionally protect

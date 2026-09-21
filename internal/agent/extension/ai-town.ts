@@ -49,8 +49,11 @@ const pendingArgs: Record<string, unknown> = {};
 //
 // ADR-0016 relaxes the fail-closed rule far enough to *attempt* a default
 // address, which removes the environment variable from the common install.
-// Silence is still required on failure, so a daemon on another port needs
-// AI_TOWN_URL rather than being discovered.
+//
+// AI_TOWN_URL is still needed when the daemon was started on another port with
+// --port, and for nothing else: the extension cannot look up what port a
+// daemon actually chose, so it can only guess the default. Silence on failure
+// is still required, which is why a wrong guess produces no diagnostic.
 const DEFAULT_URL = "http://127.0.0.1:7777";
 
 function target(): string {

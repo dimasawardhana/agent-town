@@ -269,3 +269,30 @@ func TestConcurrentViewAndApply(t *testing.T) {
 		t.Error("no snapshot after analysis completed")
 	}
 }
+
+// TestDroppedCountSurvivesAnalyze is a regression test for a bug that shipped:
+// Analyze drained the buffer and reset the drop count with it, so a loss that
+// happened before the project was opened became invisible to the UI — the town
+// silently omitting history, which the product principle forbids.
+func TestDroppedCountSurvivesAnalyze(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
+	dir := newSourceTree(t, filepath.Join(base, "work"))
+
+	p := &Project{path: dir}
+	for i := range maxPending + 7 {
+		p.Apply(event("e"+itoa(i), "src/auth/service.go"))
+	}
+	if got := p.Dropped(); got != 7 {
+		t.Fatalf("Dropped() = %d before analysis, want 7", got)
+	}
+
+	_, _, reported := p.Analyze(2000)
+	if reported != 7 {
+		t.Errorf("Analyze reported %d dropped, want 7", reported)
+	}
+	if got := p.Dropped(); got != reported {
+		t.Errorf("Dropped() = %d after Analyze which reported %d; the count must survive so the UI can report the loss",
+			got, reported)
+	}
+}

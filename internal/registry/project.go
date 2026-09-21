@@ -75,7 +75,12 @@ const maxPending = 200
 
 // pendingBuffer holds events for a project that has no map yet.
 type pendingBuffer struct {
-	events  []agent.UnifiedAgentEvent
+	events []agent.UnifiedAgentEvent
+
+	// dropped is a running total for the project's life, not just the current
+	// buffer. Draining resets the events but NOT this: a loss that happened
+	// before the project was opened must still be reportable afterwards,
+	// because a town missing history has to say so.
 	dropped int64
 }
 
@@ -90,11 +95,14 @@ func (b *pendingBuffer) Add(ev agent.UnifiedAgentEvent) {
 	b.events = append(b.events, ev)
 }
 
-// Drain returns everything buffered and resets.
-func (b *pendingBuffer) Drain() ([]agent.UnifiedAgentEvent, int64) {
-	evs, dropped := b.events, b.dropped
-	b.events, b.dropped = nil, 0
-	return evs, dropped
+// Drain returns everything buffered and clears the events.
+//
+// The lifetime drop count is deliberately not reset: it is what the UI reports
+// as history the town never saw.
+func (b *pendingBuffer) Drain() []agent.UnifiedAgentEvent {
+	evs := b.events
+	b.events = nil
+	return evs
 }
 
 // Len is how many events are waiting.
@@ -262,7 +270,8 @@ func (p *Project) Analyze(maxFiles int) (town.Snapshot, bool, int64) {
 
 	// Replayed raw rather than pre-resolved, so the resolver places them
 	// exactly as it would have live.
-	pending, dropped := p.pending.Drain()
+	pending := p.pending.Drain()
+	dropped := p.pending.dropped
 	for _, ev := range pending {
 		live.Apply(ev)
 	}
