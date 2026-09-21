@@ -51,3 +51,36 @@ This is why the rule is a MUST, not a preference. Observation hooks only:
 - **omp's `tool_execution_end` omits `args`; pi's includes it.** Verified live. An adapter written against pi's shape produces pathless events on omp. Adapters MUST cache args from `tool_execution_start` and merge into the end frame. This is a real structural difference, not a style choice.
 - **pi and omp are now live-verified** end-to-end (extension → daemon) using a free OpenRouter model, on both success and failure paths, producing correct `agent`, `target.path` and `result`. hermes is verified only at the hook level, not through the daemon.
 - **Two bugs were found only by running the real chain**, not by unit tests: the daemon hardcoded `agent: "opencode"` (so omp and pi events were mislabelled), and hardcoded `result: "success"` (so a failed tool rendered as a completed building, violating `prd.md` §34). Both are now fixed with regression tests.
+
+## Where an event goes when it has no building
+
+Ticket 05 required this be recorded rather than left to fall through, because
+a miss that renders as nothing is the town lying about what happened. Every
+event resolves to exactly one Place, and the resolution rule is:
+
+| Case | Place | Reason |
+|---|---|---|
+| Path inside a building | that **Building** | `building` |
+| Path at the repo root | **Workshop** | `workshop` |
+| Path inside the repo with no building of its own | **Yard** | `unmapped` |
+| Path outside the repo | **Yard** | `outside-repo` |
+| Internal URI (`skill://`, `memory://`) | **Depot** | `internal-uri` |
+| Glob pattern (`src/**/*.ts`) | **Yard** | `glob` |
+| A shell command | **Yard**, or testing if it runs the tests | `shell-tool` |
+| Meta tool (planning, dispatch, evaluation) | **Depot** | `meta-tool` |
+| A tool with no path at all | **Yard** | `no-path` |
+
+The reasoning behind the two that are judgement calls:
+
+**An internal URI is Depot, not Yard.** `skill://using-superpowers` is the
+agent consulting its own instructions, which is work *about* the work — the
+same category as planning. It is not site work, and putting it in the Yard
+would make reading a skill look like running a build.
+
+**A path that resolves to nothing is Yard, not dropped.** A real path inside
+the repo whose directory holds no source is site work by default. The
+alternative — staying silent — would make an agent editing a lockfile or a
+config directory at the repo root look idle.
+
+Every classification carries its Reason, so a placement can be audited rather
+than inferred from a missing worker.

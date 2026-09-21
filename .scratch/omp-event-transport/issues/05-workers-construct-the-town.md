@@ -4,17 +4,17 @@
 
 **Blocked by:** 02 (events arrive) and 04 (there is a town to move on). Both must be done.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] An event resolves to a **Place** — a Building, the Workshop, the Yard, or the Depot — and never silently vanishes for want of a location
-- [ ] A file inside a building sends the worker to that building; a root file sends them to the Workshop
-- [ ] Site-wide work — tests, builds, git, installs — is staged in the **Yard**, visible to the whole town
-- [ ] Meta work — planning, task dispatch, evaluation — is staged in the **Depot**, so a planning agent is visibly working rather than idle
-- [ ] The worker walks to the place before acting, then performs a distinct animation per action kind: inspecting, hammering, building, demolishing, testing
-- [ ] A session start spawns a crew; a session end makes the workers leave and the town persist in its new state
-- [ ] A failed tool leaves a visible **Construction Problem** on the place rather than advancing it
-- [ ] Two sessions on one repo produce two crews, attributed by session id
-- [ ] The town persists across a restart — closing AI Town and reopening shows what was built
+- [x] An event resolves to a **Place** — a Building, the Workshop, the Yard, or the Depot — and never silently vanishes for want of a location
+- [x] A file inside a building sends the worker to that building; a root file sends them to the Workshop
+- [x] Site-wide work — tests, builds, git, installs — is staged in the **Yard**, visible to the whole town
+- [x] Meta work — planning, task dispatch, evaluation — is staged in the **Depot**, so a planning agent is visibly working rather than idle
+- [x] The worker walks to the place before acting, then performs a distinct animation per action kind: inspecting, hammering, building, demolishing, testing
+- [x] A session start spawns a crew; a session end makes the workers leave and the town persist in its new state
+- [x] A failed tool leaves a visible **Construction Problem** on the place rather than advancing it
+- [x] Two sessions on one repo produce two crews, attributed by session id
+- [x] The town persists across a restart — closing AI Town and reopening shows what was built
 
 **Why the Yard and Depot matter more than they look:** in a real omp session, `bash` is **48%** of all tool calls and meta tools another **~33%**. Only about **19%** of actions touch a single file. Without a place for site-wide and meta work, four fifths of a session renders as a worker standing still while the agent works hard — the town showing less than what happened, which the product principle forbids.
 
