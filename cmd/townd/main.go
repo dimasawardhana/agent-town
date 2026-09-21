@@ -70,13 +70,33 @@ func main() {
 	// condition the buildings they touch are in. The static town is the map;
 	// this is what moves on it.
 	var live *town.Town
+	statePath := ""
 	if static != nil {
 		live = town.New(static)
+		// Restore what earlier sessions built. The map is recomputed from the
+		// tree every start, so only the live state needs persisting.
+		statePath = town.StatePath(projectDir)
+		if err := live.Load(statePath); err != nil {
+			fmt.Fprintf(os.Stderr, "townd: could not restore town state: %v\n", err)
+		}
 	}
 
 	recv := agent.NewReceiver(abs)
 	recv.OnHello = func(d string) {
 		fmt.Fprintf(os.Stderr, "townd: extension handshake from %s\n", d)
+	}
+	recv.OnSessionEnd = func(session string) {
+		// The crew stands down. The buildings it touched stay, because the
+		// town is the result of the work and clearing it on exit would throw
+		// away the only persistent thing the product produces.
+		if live != nil {
+			live.EndSession(session)
+			persist(live, statePath)
+			if snap, err := json.Marshal(live.Snapshot()); err == nil {
+				bus.Publish(snap)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "townd: session ended %s\n", session)
 	}
 	recv.OnGap = func(d string, lost int64) {
 		fmt.Fprintf(os.Stderr, "townd: WARNING lost %d frame(s) from %s\n", lost, d)
@@ -98,6 +118,7 @@ func main() {
 		// the browser a second authority on where things are.
 		if live != nil {
 			live.Apply(ev)
+			persist(live, statePath)
 			if snap, err := json.Marshal(live.Snapshot()); err == nil {
 				bus.Publish(snap)
 			}
@@ -159,6 +180,9 @@ func main() {
 
 	<-ctx.Done()
 	fmt.Fprintln(os.Stderr, "townd: shutting down")
+	if live != nil {
+		persist(live, statePath)
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -201,4 +225,17 @@ func buildTown(dir string) (*analyzer.Town, *analyzer.Layout, error) {
 	}
 	l := analyzer.LayoutTown(t)
 	return t, &l, nil
+}
+
+// persist writes the live town, discarding a write error.
+//
+// A failed save costs history on the next start, not correctness now, and the
+// daemon has no better option at this point. Reported so it is not silent.
+func persist(live *town.Town, path string) {
+	if live == nil || path == "" {
+		return
+	}
+	if err := live.Save(path); err != nil {
+		fmt.Fprintf(os.Stderr, "townd: could not save town state: %v\n", err)
+	}
 }

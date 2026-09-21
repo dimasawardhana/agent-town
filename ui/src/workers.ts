@@ -51,6 +51,11 @@ export class WorkerLayer {
   private labels = new Map<string, Phaser.GameObjects.Text>();
   private rings = new Map<string, Phaser.GameObjects.Arc>();
   private tweening = new Set<string>();
+  // Tints are redrawn wholesale on every sync, so the previous pass is
+  // destroyed first. Leaving them would accumulate a Graphics object per
+  // building per event, and each pass re-drew at 0.55 alpha over the last —
+  // so touched buildings visibly darkened as a session went on.
+  private tints: Phaser.GameObjects.Graphics[] = [];
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -167,7 +172,7 @@ export class WorkerLayer {
         return 0.85; // loud: something is being changed
       case "testing":
         return 0.6;
-      case "inspecting":
+      case "reading":
         return 0.3;
       case "planning":
       case "commanding":
@@ -181,6 +186,10 @@ export class WorkerLayer {
 
   /** tint paints building states onto their drawn rectangles. */
   tint(sites: Site[], buildings: BuildingState[]): void {
+    // Replace the previous pass rather than drawing over it.
+    for (const g of this.tints) g.destroy();
+    this.tints = [];
+
     const byPath = new Map<string, BuildingState>();
     for (const b of buildings) byPath.set(b.path, b);
 
@@ -195,11 +204,14 @@ export class WorkerLayer {
       g.fillRoundedRect(s.x, s.y, s.w, s.h, 4);
       g.lineStyle(2, colour, 0.9);
       g.strokeRoundedRect(s.x, s.y, s.w, s.h, 4);
+      this.tints.push(g);
     }
   }
 
   /** destroy tears down every figure. Used when the map is rebuilt. */
   destroy(): void {
+    for (const g of this.tints) g.destroy();
+    this.tints = [];
     for (const o of [
       ...this.figures.values(),
       ...this.labels.values(),

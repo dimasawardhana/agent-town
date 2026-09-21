@@ -4,7 +4,7 @@
 // store the scene writes to.
 
 import { useEffect, useRef } from "react";
-import { useTown } from "./store";
+import { SITE_ID_BUILDING_PREFIX, useTown } from "./store";
 import { fetchTown, subscribe } from "./api";
 import { TownCanvas } from "./TownCanvas";
 
@@ -88,7 +88,7 @@ export function App() {
                   <span className={`tier ${w.tier}`}>{w.tier}</span>
                   <span className="agent">{w.agent}</span>
                   <span className="action">{w.action}</span>
-                  <span className="at">{w.place.replace(/^building:/, "")}</span>
+                  <span className="at">{w.place.replace(SITE_ID_BUILDING_PREFIX, "")}</span>
                 </li>
               ))}
             </ul>

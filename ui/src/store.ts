@@ -8,6 +8,13 @@
 
 import { create } from "zustand";
 
+// SITE_ID_BUILDING_PREFIX mirrors analyzer.SiteIDBuildingPrefix.
+//
+// It is the join key between a worker's resolved Place and the building's
+// position. The two definitions cannot be shared across the language
+// boundary, so this one points at the other rather than restating the reason.
+export const SITE_ID_BUILDING_PREFIX = "building:";
+
 export interface Site {
   id: string;
   kind: "building" | "workshop" | "yard" | "depot";
@@ -46,7 +53,7 @@ export interface Town {
 }
 
 export type Action =
-  | "inspecting" | "hammering" | "building" | "demolishing"
+  | "reading" | "hammering" | "building" | "demolishing"
   | "testing" | "commanding" | "planning" | "celebrating";
 
 export interface Worker {

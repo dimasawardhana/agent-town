@@ -8,6 +8,11 @@ package agent
 // UnifiedTarget identifies what an event acted upon.
 type UnifiedTarget struct {
 	Path string `json:"path"`
+	// Command is the shell invocation, for events that ran one. It lives here
+	// rather than being recovered from raw arguments downstream, so the
+	// agent-agnostic layer stays the only place that knows a given agent keeps
+	// its command under one key and its path under another.
+	Command string `json:"command,omitempty"`
 }
 
 // UnifiedAgentEvent is the agent-agnostic record of a single agent action.

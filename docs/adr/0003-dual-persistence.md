@@ -29,3 +29,30 @@ Storing only the materialized state makes replay impossible. Storing only events
 ## Trade-off
 
 This doubles write operations (one event write + one state update per agent event). For local-first, this is acceptable — SQLite handles this trivially. The cost is negligible compared to the benefit of having both fast startup and full replay.
+
+## Amendment (implementation)
+
+**Storage is a JSON file, not SQLite.**
+
+This ADR specifies SQLite for both tables. That conflicts with a repo-wide
+constraint the project adopted later: the daemon is Go stdlib only, with zero
+third-party dependencies. Go's standard library has no SQLite driver, so the
+two cannot both hold.
+
+The materialized half is now a single JSON document under the user's data
+directory, keyed by the project's absolute path. It stores only building
+state — the part that cannot be recomputed. The map is a pure function of the
+directory tree (ADR-0012) and is rebuilt on every start, so persisting its
+geometry would let it drift from the code it describes.
+
+The event store half is **not** implemented. It is required for replay and
+analytics, neither of which is in scope yet; the daemon keeps the last 200
+events in memory and writes nothing of them. This is a known gap rather than
+a decision: when replay arrives it should bring its own storage choice, and
+at that point the stdlib-only rule deserves re-examination, because SQLite is
+the right answer for an append-only event log and JSON is not.
+
+Writes are atomic — a temporary file renamed into place — so a crash mid-write
+leaves the previous state intact rather than a truncated file. A corrupt or
+version-mismatched file is discarded rather than misread: the town is a cache
+of what happened, and starting fresh beats starting wrong.

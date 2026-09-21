@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dimasajiwardhana/agent-town/internal/agent"
 	"github.com/dimasajiwardhana/agent-town/internal/analyzer"
 )
 
@@ -28,10 +29,37 @@ func project(t *testing.T, files ...string) *analyzer.Resolver {
 	return analyzer.NewResolver(town)
 }
 
+// classify builds a normalized event the way an adapter would, so these tests
+// exercise the same path the daemon does rather than a parallel one.
+func classify(tool string, args map[string]any, r *analyzer.Resolver) Classification {
+	ev := agent.UnifiedAgentEvent{
+		Tool:   tool,
+		Type:   typeFor(tool),
+		Target: agent.UnifiedTarget{Path: agent.ExtractPath(args), Command: agent.ExtractCommand(args)},
+	}
+	return Classify(ev, r)
+}
+
+// typeFor mirrors what each adapter normalizes a tool to.
+func typeFor(tool string) string {
+	switch tool {
+	case "read", "list", "glob", "grep", "find", "ls", "search", "read_file", "search_files":
+		return "FILE_READ"
+	case "write", "create", "write_file":
+		return "FILE_CREATED"
+	case "delete", "rm", "remove":
+		return "FILE_DELETED"
+	case "bash", "shell", "terminal", "exec", "run_command":
+		return "COMMAND_COMPLETED"
+	default:
+		return "FILE_EDITED"
+	}
+}
+
 func TestFileInsideBuildingLandsOnThatBuilding(t *testing.T) {
 	r := project(t, "src/auth/service.ts", "src/auth/token.ts")
 
-	c := Classify("edit", map[string]any{"path": "src/auth/service.ts"}, r)
+	c := classify("edit", map[string]any{"path": "src/auth/service.ts"}, r)
 	if c.Place != analyzer.PlaceBuilding {
 		t.Fatalf("place = %q, want building (reason %q)", c.Place, c.Reason)
 	}
@@ -46,11 +74,11 @@ func TestFileInsideBuildingLandsOnThatBuilding(t *testing.T) {
 func TestRootFileLandsInWorkshop(t *testing.T) {
 	r := project(t, "src/a.ts")
 
-	c := Classify("read", map[string]any{"path": "package.json"}, r)
+	c := classify("read", map[string]any{"path": "package.json"}, r)
 	if c.Place != analyzer.PlaceWorkshop {
 		t.Errorf("place = %q, want workshop", c.Place)
 	}
-	if c.Action != ActionInspect {
+	if c.Action != ActionRead {
 		t.Errorf("action = %q, want inspecting", c.Action)
 	}
 }
@@ -72,7 +100,7 @@ func TestSiteWideWorkLandsInTheYard(t *testing.T) {
 			if args["pattern"] != nil || args["path"] != nil {
 				tool = "grep"
 			}
-			c := Classify(tool, args, r)
+			c := classify(tool, args, r)
 			if c.Place != analyzer.PlaceYard {
 				t.Errorf("place = %q, want yard (reason %q)", c.Place, c.Reason)
 			}
@@ -87,7 +115,7 @@ func TestTestCommandGetsItsOwnAction(t *testing.T) {
 		"npx vitest run", "go test ./...", "pytest -q",
 		"npx playwright test", "npm test", "npx tsc --noEmit",
 	} {
-		c := Classify("bash", map[string]any{"command": cmd}, r)
+		c := classify("bash", map[string]any{"command": cmd}, r)
 		if c.Action != ActionTest {
 			t.Errorf("%q -> action %q, want testing", cmd, c.Action)
 		}
@@ -103,7 +131,7 @@ func TestMetaToolsLandInTheDepot(t *testing.T) {
 	r := project(t, "src/a.ts")
 
 	for _, tool := range []string{"hub", "todo", "task", "eval", "ask", "reflect"} {
-		c := Classify(tool, map[string]any{}, r)
+		c := classify(tool, map[string]any{}, r)
 		if c.Place != analyzer.PlaceDepot {
 			t.Errorf("%s -> place %q, want depot", tool, c.Place)
 		}
@@ -116,10 +144,10 @@ func TestMetaToolsLandInTheDepot(t *testing.T) {
 func TestCreateAndDeleteMapToBuildAndDemolish(t *testing.T) {
 	r := project(t, "src/a.ts")
 
-	if c := Classify("write", map[string]any{"path": "src/new.ts"}, r); c.Action != ActionBuild {
+	if c := classify("write", map[string]any{"path": "src/new.ts"}, r); c.Action != ActionBuild {
 		t.Errorf("write -> %q, want building", c.Action)
 	}
-	if c := Classify("delete", map[string]any{"path": "src/old.ts"}, r); c.Action != ActionDemolish {
+	if c := classify("delete", map[string]any{"path": "src/old.ts"}, r); c.Action != ActionDemolish {
 		t.Errorf("delete -> %q, want demolishing", c.Action)
 	}
 }
@@ -159,7 +187,7 @@ func TestEveryActionGetsAPlace(t *testing.T) {
 	}
 
 	for _, tc := range tools {
-		c := Classify(tc.name, tc.args, r)
+		c := classify(tc.name, tc.args, r)
 		if !validPlaces[c.Place] {
 			t.Errorf("tool %q args %v -> invalid place %q", tc.name, tc.args, c.Place)
 		}
@@ -174,7 +202,7 @@ func TestEveryActionGetsAPlace(t *testing.T) {
 func TestOmpEditHashlineResolves(t *testing.T) {
 	r := project(t, "src/auth/service.ts")
 
-	c := Classify("edit", map[string]any{"input": "§src/auth/service.ts\nold\n⟪a│b⟫"}, r)
+	c := classify("edit", map[string]any{"input": "§src/auth/service.ts\nold\n⟪a│b⟫"}, r)
 	if c.Place != analyzer.PlaceBuilding || c.Path != "src/auth" {
 		t.Errorf("got place=%q path=%q, want building src/auth", c.Place, c.Path)
 	}
@@ -188,7 +216,7 @@ func TestRealSessionToolDistribution(t *testing.T) {
 		"bash", "hub", "read", "write", "edit", "todo", "task", "eval", "ask", "grep",
 	}
 	for _, tool := range observed {
-		c := Classify(tool, map[string]any{"command": "echo x", "path": "src/a.ts"}, r)
+		c := classify(tool, map[string]any{"command": "echo x", "path": "src/a.ts"}, r)
 		if c.Place == "" {
 			t.Errorf("real tool %q classified to nothing", tool)
 		}

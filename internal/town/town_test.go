@@ -30,10 +30,9 @@ func liveTown(t *testing.T, files ...string) *Town {
 
 func ev(session, tool, path, result string) agent.UnifiedAgentEvent {
 	return agent.UnifiedAgentEvent{
-		ID: "e1", SessionID: session, Agent: "omp", Type: "FILE_READ",
-		Tool: tool, Target: struct {
-			Path string `json:"path"`
-		}{Path: path},
+		ID: "e1", SessionID: session, Agent: "omp", Type: typeFor(tool),
+		Tool:   tool,
+		Target: agent.UnifiedTarget{Path: path},
 		Result: result, Timestamp: 1000,
 	}
 }
@@ -211,12 +210,134 @@ func TestEveryRealisticActionClassifies(t *testing.T) {
 	}
 
 	for _, tc := range realistic {
-		c := Classify(tc.tool, tc.args, r)
+		c := classify(tc.tool, tc.args, r)
 		if c.Action == "" {
 			t.Errorf("%s produced no action", tc.tool)
 		}
 		if c.Place == "" {
 			t.Errorf("%s produced no place", tc.tool)
 		}
+	}
+}
+
+// Regression: a session ending must stand its crew down.
+//
+// StartSession and EndSession existed but nothing called them, so a real
+// session left its worker frozen mid-action forever — the town claiming work
+// was happening when the agent had long gone.
+func TestEndSessionStandsTheCrewDown(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+
+	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	if got := tw.Snapshot().Workers[0].Action; got != ActionHammer {
+		t.Fatalf("action = %q, want hammering while working", got)
+	}
+
+	tw.EndSession("s1")
+	if got := tw.Snapshot().Workers[0].Action; got != ActionCelebrate {
+		t.Errorf("after session end, action = %q, want celebrating", got)
+	}
+}
+
+// The buildings survive the session. The town is the result of the work;
+// clearing it on exit would discard the only persistent thing the product
+// makes.
+func TestEndSessionKeepsWhatWasBuilt(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	tw.EndSession("s1")
+
+	snap := tw.Snapshot()
+	if len(snap.Buildings) != 1 || snap.Buildings[0].Touches != 1 {
+		t.Fatalf("buildings after end = %+v, want one with one touch", snap.Buildings)
+	}
+}
+
+func TestStateSurvivesARestart(t *testing.T) {
+	root := t.TempDir()
+	full := filepath.Join(root, "src", "a.ts")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.json")
+
+	first := New(at)
+	first.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	first.Apply(ev("s1", "edit", "src/a.ts", "error"))
+	if err := first.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh town, as a restarted daemon would build.
+	second := New(at)
+	if err := second.Load(path); err != nil {
+		t.Fatal(err)
+	}
+
+	snap := second.Snapshot()
+	if len(snap.Buildings) != 1 {
+		t.Fatalf("after restart, %d buildings, want 1", len(snap.Buildings))
+	}
+	b := snap.Buildings[0]
+	if b.Touches != 2 || b.Problems != 1 {
+		t.Errorf("after restart: touches=%d problems=%d, want 2 and 1", b.Touches, b.Problems)
+	}
+}
+
+func TestMissingStateFileIsNotAnError(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	if err := tw.Load(filepath.Join(t.TempDir(), "absent.json")); err != nil {
+		t.Errorf("loading absent state returned %v, want nil — a first run has nothing to restore", err)
+	}
+}
+
+func TestCorruptStateIsDiscarded(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	path := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Load(path); err != nil {
+		t.Errorf("corrupt state returned %v, want nil — losing history beats rendering something untrue", err)
+	}
+	if len(tw.Snapshot().Buildings) != 0 {
+		t.Error("corrupt state produced buildings")
+	}
+}
+
+func TestStatePathIsStableAndProjectSpecific(t *testing.T) {
+	a := StatePath("/home/dev/projects/alpha")
+	b := StatePath("/home/dev/projects/alpha")
+	c := StatePath("/home/dev/projects/beta")
+
+	if a == "" {
+		t.Fatal("StatePath returned empty")
+	}
+	if a != b {
+		t.Errorf("same project gave different paths: %q vs %q", a, b)
+	}
+	if a == c {
+		t.Errorf("two projects share a state path %q", a)
+	}
+}
+
+func TestStatusDoesNotRegress(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusConstructing {
+		t.Fatalf("after edit status = %q, want constructing", got)
+	}
+	// A later read must not un-build the building.
+	tw.Apply(ev("s1", "read", "src/a.ts", "success"))
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusConstructing {
+		t.Errorf("a read regressed status to %q; a building that was built does not become unbuilt by being looked at", got)
 	}
 }

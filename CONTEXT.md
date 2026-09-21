@@ -36,7 +36,13 @@ An active entity representing an AI agent or subagent performing construction ac
 - **Chief Worker** (main agent): Full-size worker with a distinct helmet. Owns the session and can spawn sub-workers.
 - **Sub Worker** (subagent): Smaller worker with a different helmet. Spawned by chief workers for specific tasks.
 
-Workers have states (IDLE, WALKING, THINKING, READING, HAMMERING, BUILDING, DEMOLISHING, TESTING, WAITING, ERROR, CELEBRATING, LEAVING) and target buildings.
+A worker has a **state** — its lifecycle — and an **action** — the work it is doing. They are separate because they move independently: a worker can be WALKING to a building before READING anything, and a worker whose session ends is LEAVING whatever it was last doing.
+
+States: IDLE, WALKING, WAITING, LEAVING.
+
+Actions: READING, HAMMERING, BUILDING, DEMOLISHING, TESTING, COMMANDING, PLANNING, CELEBRATING.
+
+COMMANDING and PLANNING exist because most of a real session is not file work: shell commands are roughly half of all tool calls and meta tools roughly a third. Without them those actions would have no way to be shown, and the town would render a working agent as idle.
 _Avoid_: agent, bot, process, thread
 
 **Construction Crew**:

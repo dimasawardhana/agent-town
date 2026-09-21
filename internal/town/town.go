@@ -65,19 +65,15 @@ type Town struct {
 	events    []agent.UnifiedAgentEvent
 	resolver  *analyzer.Resolver
 	maxEvents int
-	// subWorkers tracks spawned subagents so their workers can be rendered
-	// alongside the chief's.
-	subWorkers map[string]*Worker
 }
 
 // New creates a live town for a project.
 func New(t *analyzer.Town) *Town {
 	return &Town{
-		workers:    map[string]*Worker{},
-		subWorkers: map[string]*Worker{},
-		buildings:  map[string]*BuildingState{},
-		resolver:   analyzer.NewResolver(t),
-		maxEvents:  200,
+		workers:   map[string]*Worker{},
+		buildings: map[string]*BuildingState{},
+		resolver:  analyzer.NewResolver(t),
+		maxEvents: 200,
 	}
 }
 
@@ -87,12 +83,10 @@ func New(t *analyzer.Town) *Town {
 // is site-wide work and is staged in the Yard, which is what keeps a session
 // from rendering as a worker standing still.
 func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
-	args := map[string]any{}
-	if ev.Target.Path != "" {
-		args["path"] = ev.Target.Path
-	}
-
-	c := Classify(ev.Tool, args, t.resolver)
+	// The adapter already normalized the tool, target and command, so the
+	// event goes to Classify as-is. Rebuilding an argument map here would
+	// re-derive what the normalizer decided.
+	c := Classify(ev, t.resolver)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -139,8 +133,12 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 		if ev.Result == "error" {
 			b.Problems++
 			b.Status = StatusBroken
-		} else {
-			b.Status = statusFor(c.Action)
+		} else if next := statusFor(c.Action); rank(next) > rank(b.Status) {
+			// Progress only moves forward. A status is overwritten solely by
+			// one further along, so reading a file cannot un-build a building
+			// that was already constructed — the town would erase visible
+			// work the moment the agent looked at it again.
+			b.Status = next
 		}
 	}
 
@@ -151,9 +149,29 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 // to find it on the map.
 func placeKey(c Classification) string {
 	if c.Place == analyzer.PlaceBuilding && c.Path != "" {
-		return "building:" + c.Path
+		return analyzer.SiteIDBuildingPrefix + c.Path
 	}
 	return string(c.Place)
+}
+
+// statusRank orders the stages so progress can be compared.
+//
+// Broken is excluded deliberately: it is not a stage of construction but a
+// condition, set by a failure and cleared by the next success at whatever
+// rank that success reaches.
+func rank(s Status) int {
+	switch s {
+	case StatusUntouched:
+		return 0
+	case StatusTesting:
+		return 1
+	case StatusConstructing:
+		return 2
+	case StatusCompleted:
+		return 3
+	default:
+		return 0
+	}
 }
 
 // statusFor maps an action onto the building stage it implies.
@@ -199,7 +217,6 @@ func (t *Town) EndSession(sessionID string) {
 		w.Action = ActionCelebrate
 		w.Label = "session complete"
 		w.Since = time.Now().UnixMilli()
-		delete(t.subWorkers, sessionID)
 	}
 }
 
@@ -216,11 +233,8 @@ func (t *Town) Snapshot() Snapshot {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	workers := make([]Worker, 0, len(t.workers)+len(t.subWorkers))
+	workers := make([]Worker, 0, len(t.workers))
 	for _, w := range t.workers {
-		workers = append(workers, *w)
-	}
-	for _, w := range t.subWorkers {
 		workers = append(workers, *w)
 	}
 

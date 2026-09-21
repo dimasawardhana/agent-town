@@ -80,7 +80,10 @@ func normalizeToolHook(f Frame) []UnifiedAgentEvent {
 		Agent:     agentName(f.Agent),
 		Type:      ToolToEventType(f.Tool),
 		Tool:      f.Tool,
-		Target:    UnifiedTarget{Path: ExtractPath(f.Args)},
+		Target: UnifiedTarget{
+			Path:    ExtractPath(f.Args),
+			Command: ExtractCommand(f.Args),
+		},
 		Result:    result,
 		Timestamp: f.Time,
 	}}
@@ -170,6 +173,22 @@ func ToolToEventType(tool string) string {
 	}
 }
 
+// ExtractCommand pulls a shell invocation out of a tool's argument bag.
+//
+// Only shell tools carry one, so an empty result is the common case. It exists
+// so the normalizer, not its consumers, knows which keys hold a command.
+func ExtractCommand(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	for _, key := range []string{"command", "cmd", "script"} {
+		if v, ok := args[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // ExtractPath pulls the affected file path out of a tool's argument bag.
 //
 // There is no top-level filePath in OpenCode's payload (docs/adr/0009). The
@@ -179,7 +198,11 @@ func ExtractPath(args map[string]any) string {
 	if args == nil {
 		return ""
 	}
-	for _, key := range []string{"filePath", "file_path", "path", "filename"} {
+	// `input` last: omp's edit carries a hashline payload there rather than a
+	// path field. The resolver strips the § prefix; this only has to surface
+	// the value, because deciding what a path means is the resolver's job and
+	// knowing which key holds it is the adapter's.
+	for _, key := range []string{"filePath", "file_path", "path", "filename", "input"} {
 		if v, ok := args[key].(string); ok && v != "" {
 			return v
 		}

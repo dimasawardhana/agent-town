@@ -5,6 +5,13 @@ import (
 	"sort"
 )
 
+// SiteIDBuildingPrefix marks a Site whose ID names a building rather than one
+// of the special places. It is the join key between an event's resolved Place
+// and a position on the map, so it is defined once here and mirrored in the
+// UI — a silent divergence would place a worker at the wrong spot rather than
+// failing.
+const SiteIDBuildingPrefix = "building:"
+
 // World units are pixels. The frontend scales the camera; it never recomputes
 // positions, so the layout stays the single source of truth (ADR-0012).
 const (

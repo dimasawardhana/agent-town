@@ -46,6 +46,10 @@ type Receiver struct {
 	// OnHello is called when an extension proves it loaded. This is the gate
 	// that lets a session be declared live (docs/adr/0010).
 	OnHello func(directory string)
+
+	// OnSessionEnd is called when an extension reports its session finished,
+	// so the crew can be stood down rather than left frozen mid-action.
+	OnSessionEnd func(session string)
 }
 
 // NewReceiver creates a receiver watching the given directories.
@@ -100,6 +104,14 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Not our project. Reject so the extension stops forwarding.
 		log.Printf("agent: rejected frame from unwatched directory %q", dir)
 		http.Error(w, "directory not watched", http.StatusForbidden)
+		return
+	}
+
+	if frame.Kind == "session.end" {
+		if r.OnSessionEnd != nil {
+			r.OnSessionEnd(frame.SessionID)
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

@@ -156,19 +156,35 @@ export default function (pi: any) {
     return;
   }
 
-  // A drain that ignores the retry timer, used by the shutdown flush.
+  // flush drains what is left at session end, ignoring the retry timer.
+  //
+  // It must NOT clear `draining` to take over the loop. Doing that while a
+  // retry drain was still awaiting its fetch ran two loops at once, and both
+  // read queue[0] before either shifted it — so the same frame went out twice
+  // and the daemon stood the same crew down on each copy.
+  //
+  // Instead it waits for any in-flight drain to settle, then runs its own
+  // passes until the queue empties or the budget runs out. Retries are
+  // cancelled first, so nothing else competes for the queue.
   async function flush(TARGET: string, budgetMs: number): Promise<void> {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+
     const deadline = Date.now() + budgetMs;
-    while (queue.length > 0 && Date.now() < deadline && !disabled) {
-      draining = false; // the shutdown flush owns the loop now
-      await drain(TARGET);
-      // If the daemon is still absent, stop rather than spin until the
-      // deadline on a connection that is not coming back.
-      if (queue.length > 0 && retryTimer === null) break;
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-        retryTimer = null;
+    while (Date.now() < deadline && !disabled) {
+      // Wait out a drain already in progress rather than racing it.
+      while (draining && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
       }
+      if (queue.length === 0 || disabled) return;
+
+      const before = queue.length;
+      await drain(TARGET);
+      // No progress means the daemon is not coming back; stop rather than
+      // spin until the deadline on a connection that is already refused.
+      if (queue.length >= before) return;
     }
   }
 
@@ -214,7 +230,17 @@ export default function (pi: any) {
   // retry timer is unref'd and the process is gone before it fires.
   //
   // Bounded so a dead daemon cannot stall the agent's exit.
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event: any, ctx: any) => {
+    // Tell the daemon the crew is leaving BEFORE flushing, so the leave is in
+    // the queue and goes out with everything else. Without it the daemon never
+    // learns the session ended and its worker stays frozen mid-action.
+    send(TARGET, {
+      kind: "session.end",
+      directory: ctx?.cwd ?? process.cwd(),
+      agent: AGENT,
+      sessionID: ctx?.sessionManager?.getSessionId?.(),
+      time: Date.now(),
+    });
     await flush(TARGET, SHUTDOWN_FLUSH_MS);
   });
 }

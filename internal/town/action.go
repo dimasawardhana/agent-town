@@ -9,6 +9,7 @@ package town
 import (
 	"strings"
 
+	"github.com/dimasajiwardhana/agent-town/internal/agent"
 	"github.com/dimasajiwardhana/agent-town/internal/analyzer"
 )
 
@@ -20,7 +21,7 @@ import (
 type Action string
 
 const (
-	ActionInspect   Action = "inspecting"  // reading, searching, listing
+	ActionRead      Action = "inspecting"  // reading, searching, listing
 	ActionHammer    Action = "hammering"   // editing an existing thing
 	ActionBuild     Action = "building"    // creating something new
 	ActionDemolish  Action = "demolishing" // deleting
@@ -100,33 +101,57 @@ var testCommands = []string{
 // Classify maps one normalized event onto where it happens and what it looks
 // like. It always returns a place: an action with nowhere to go would render
 // as an agent doing nothing.
-func Classify(tool string, args map[string]any, r *analyzer.Resolver) Classification {
+//
+// It reads the event's already-normalized Type and Target.Path rather than
+// re-deriving them from the raw tool name and arguments. The adapter owns
+// agent-agnosticism (CONTEXT.md): re-deciding here would mean every new
+// agent's tool names had to be taught to the domain layer too, and the two
+// vocabularies could disagree.
+func Classify(ev agent.UnifiedAgentEvent, r *analyzer.Resolver) Classification {
+	tool := ev.Tool
 	switch {
-	case metaTools[tool]:
-		return Classification{Action: ActionPlan, Place: analyzer.PlaceDepot, Reason: "meta-tool"}
-
-	case shellTools[tool]:
-		// A shell command is site-wide work. Tests get their own staging
-		// because the town should look different when tests run than when a
-		// dependency installs.
-		if isTestCommand(args) {
+	case ev.Type == "COMMAND_COMPLETED":
+		// A shell command is site-wide work, except tests, which the town
+		// should look different for.
+		if isTestCommand(ev) {
 			return Classification{Action: ActionTest, Place: analyzer.PlaceYard, Reason: "test-command"}
 		}
 		return Classification{Action: ActionCommand, Place: analyzer.PlaceYard, Reason: "shell-tool"}
 
-	case inspectTools[tool]:
-		return viaPath(ActionInspect, tool, args, r)
-	case writeTools[tool]:
-		return viaPath(ActionBuild, tool, args, r)
-	case editTools[tool]:
-		return viaPath(ActionHammer, tool, args, r)
+	case metaTools[tool]:
+		return Classification{Action: ActionPlan, Place: analyzer.PlaceDepot, Reason: "meta-tool"}
+
+	case shellTools[tool]:
+		return Classification{Action: ActionCommand, Place: analyzer.PlaceYard, Reason: "shell-tool"}
+
+	// The file classes are what the event Type encodes, so they normally need
+	// no tool-name table of their own.
+	case ev.Type == "FILE_READ":
+		return viaPath(ActionRead, ev, r)
+	case ev.Type == "FILE_CREATED":
+		return viaPath(ActionBuild, ev, r)
+	case ev.Type == "FILE_EDITED":
+		return viaPath(ActionHammer, ev, r)
+	}
+
+	// Fall back to the tool name for the file classes. An event whose Type is
+	// missing or generic — an adapter that normalized imperfectly, or a tool
+	// no adapter has classified yet — still knows what its tool was doing,
+	// and losing the distinction would render an edit as mere inspection.
+	switch {
 	case deleteTools[tool]:
-		return viaPath(ActionDemolish, tool, args, r)
+		return viaPath(ActionDemolish, ev, r)
+	case writeTools[tool]:
+		return viaPath(ActionBuild, ev, r)
+	case editTools[tool]:
+		return viaPath(ActionHammer, ev, r)
+	case inspectTools[tool]:
+		return viaPath(ActionRead, ev, r)
 	}
 
 	// An unknown tool is still work. If it names a file, place it there;
 	// otherwise it belongs to the site.
-	c := viaPath(ActionCommand, tool, args, r)
+	c := viaPath(ActionCommand, ev, r)
 	if c.Place == analyzer.PlaceBuilding || c.Place == analyzer.PlaceWorkshop {
 		c.Reason = "unknown-tool-with-path"
 		return c
@@ -135,17 +160,16 @@ func Classify(tool string, args map[string]any, r *analyzer.Resolver) Classifica
 	return c
 }
 
-// viaPath resolves a file-bearing tool onto its building.
+// viaPath resolves an event's target onto its building.
 //
-// When the tool names no path at all — a bash call, a search with no target —
-// the resolver is not consulted, because there is nothing to resolve and the
-// work is site-wide by nature.
-func viaPath(action Action, tool string, args map[string]any, r *analyzer.Resolver) Classification {
-	path := pathOf(args)
-	if path == "" {
+// The path is already extracted and normalized by the adapter, so this only
+// has to resolve it. An event naming no file is site-wide work by nature —
+// a bash call or a search with no target — and belongs to the Yard.
+func viaPath(action Action, ev agent.UnifiedAgentEvent, r *analyzer.Resolver) Classification {
+	if ev.Target.Path == "" {
 		return Classification{Action: action, Place: analyzer.PlaceYard, Reason: "no-path"}
 	}
-	kind, place, reason := r.Resolve(path)
+	kind, place, reason := r.Resolve(ev.Target.Path)
 	return Classification{
 		Action: action,
 		Place:  kind,
@@ -154,29 +178,13 @@ func viaPath(action Action, tool string, args map[string]any, r *analyzer.Resolv
 	}
 }
 
-// pathOf pulls a file path out of a tool's arguments.
-//
-// The key is tool-dependent: opencode and omp use filePath or path, hermes
-// uses path, and omp's edit carries it as a § prefix on a hashline string.
-// The resolver handles the § case; this only has to find the value.
-func pathOf(args map[string]any) string {
-	for _, key := range []string{"filePath", "file_path", "path", "filename", "file", "input"} {
-		v, ok := args[key]
-		if !ok {
-			continue
-		}
-		s, ok := v.(string)
-		if !ok || s == "" {
-			continue
-		}
-		return s
-	}
-	return ""
-}
-
 // isTestCommand reports whether a shell invocation is running the tests.
-func isTestCommand(args map[string]any) bool {
-	cmd, _ := args["command"].(string)
+//
+// The command string is the only signal available: a shell tool carries no
+// path, and the adapter normalizes the type to COMMAND_COMPLETED for every
+// invocation alike.
+func isTestCommand(ev agent.UnifiedAgentEvent) bool {
+	cmd := ev.Target.Command
 	if cmd == "" {
 		return false
 	}

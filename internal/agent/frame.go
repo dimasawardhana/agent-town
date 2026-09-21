@@ -25,6 +25,10 @@ type Frame struct {
 	// raw so the normalizer owns the shape decisions.
 	Part map[string]any `json:"part"`
 
+	// Kind "session.end" marks a crew leaving. Without it the daemon never
+	// learns a session finished, and its worker stays frozen mid-action
+	// forever — the town claiming work is happening when the agent is gone.
+	//
 	// Time is when the extension observed the action, in Unix milliseconds.
 	// The tool hooks have no clock of their own on the wire, so without this
 	// every tool event would arrive with no usable time and could not be
