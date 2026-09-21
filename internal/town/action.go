@@ -21,7 +21,7 @@ import (
 type Action string
 
 const (
-	ActionRead      Action = "inspecting"  // reading, searching, listing
+	ActionRead      Action = "reading"     // reading, searching, listing
 	ActionHammer    Action = "hammering"   // editing an existing thing
 	ActionBuild     Action = "building"    // creating something new
 	ActionDemolish  Action = "demolishing" // deleting
@@ -30,6 +30,27 @@ const (
 	ActionPlan      Action = "planning"    // meta work: dispatch, notes, evaluation
 	ActionCelebrate Action = "celebrating" // a session finished cleanly
 )
+
+// AllActions is every action a worker can be doing, in a stable order.
+//
+// It exists so the vocabulary can be asserted rather than assumed. The daemon
+// names an action as a string and the renderer switches on those strings to
+// pick an animation; the two cannot share a definition across the language
+// boundary, so a test compares this list against the UI's Action type. When
+// they drifted, every read rendered with the default pulse because the action
+// arrived as "inspecting" while the renderer only knew "reading".
+func AllActions() []Action {
+	return []Action{
+		ActionBuild,
+		ActionCelebrate,
+		ActionCommand,
+		ActionDemolish,
+		ActionHammer,
+		ActionPlan,
+		ActionRead,
+		ActionTest,
+	}
+}
 
 // Classification says where an action happens and what it looks like.
 type Classification struct {
