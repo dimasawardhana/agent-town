@@ -22,44 +22,61 @@ a failed tool      →    a construction problem on that building
 
 ## Try it
 
-**1. Build the daemon.** Needs Go 1.27 or later. Nothing else — no npm, no
-database, no service to install. The UI is embedded in the binary.
+**1. Install the daemon.** Needs Go 1.27 or later. Nothing else — no npm, no
+database, no service. The UI and the agent extension are both embedded in the
+binary.
 
 ```bash
-go build -o townd ./cmd/townd
+go install ./cmd/townd
 ```
 
-**2. Start it on a project.**
+That puts `townd` in `$(go env GOPATH)/bin`. If `townd: command not found`
+afterwards, that directory is not on your `PATH` — add it:
 
 ```bash
-./townd --dir ~/your/project
+echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc && exec $SHELL
 ```
 
-It prints the address to open, then the exact commands to start watching an
-agent.
-
-**3. Install the extension.** One file, copied once. Global covers every omp
-session on the machine:
+**2. Install the agent extension.** One command. It covers every omp session on
+the machine.
 
 ```bash
-mkdir -p ~/.omp/agent/extensions
-cp internal/agent/extension/ai-town.ts ~/.omp/agent/extensions/
+townd install              # global
+townd install --project .  # or just this repository
 ```
 
-Or per project, scoped to one repository:
+**3. Register the projects you want to watch.**
 
 ```bash
-mkdir -p ~/your/project/.omp/extensions
-cp internal/agent/extension/ai-town.ts ~/your/project/.omp/extensions/
+townd add ~/code/app
+townd add ~/code/lib
 ```
 
-**4. Start your agent with the daemon's URL.**
+Each is analyzed as you add it, so a path that cannot be a town is refused
+there and then rather than showing up as an empty map later. `townd ls` lists
+what is registered, `townd rm <path>` removes one.
+
+**4. Start the daemon.**
 
 ```bash
-AI_TOWN_URL=http://127.0.0.1:<port> omp
+townd
 ```
 
-Then work as you normally would. The town moves.
+It listens on `127.0.0.1:7777` and prints the address to open. To serve a
+project for one run without registering it, add `--dir ~/code/scratch`.
+
+**5. Start your agent. No environment variable needed.**
+
+```bash
+omp
+```
+
+The extension finds the daemon on the default port. Only if you started the
+daemon elsewhere with `--port` do you need to say so:
+`AI_TOWN_URL=http://127.0.0.1:<port> omp`.
+
+Then work as you normally would. The town moves, and switching which project
+you are looking at is a dropdown.
 
 ## What you will see
 
