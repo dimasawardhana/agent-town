@@ -7,6 +7,7 @@
 package registry
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent"
@@ -157,11 +158,32 @@ func (p *Project) Analyzed() bool {
 }
 
 // AnalysisError is why there is no map, or nil when there is one.
+//
+// A project that has never been analyzed reports an error rather than nil,
+// because a nil here alongside a nil Static() is the shape that invites a
+// caller to write `if err := p.AnalysisError(); err != nil { ... }` and then
+// dereference Static() — which crashed `townd ls` on a freshly registered
+// project. Analysis is deferred by design (see Register), so "not yet" is a
+// normal state that callers must handle, not an absence of error.
 func (p *Project) AnalysisError() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.static == nil && p.analysisErr == nil {
+		return errNotAnalyzed
+	}
 	return p.analysisErr
 }
+
+// errNotAnalyzed reports a project whose analysis has not been attempted.
+//
+// It is a sentinel so callers can tell "not yet" from "failed", which have
+// different remedies: one waits, the other is fixed or removed.
+var errNotAnalyzed = errors.New("not analyzed yet")
+
+// ErrNotAnalyzed is errNotAnalyzed for callers outside this package, which
+// need to distinguish a deferred analysis from a failure to present the right
+// message.
+var ErrNotAnalyzed = errNotAnalyzed
 
 // Static is the analyzed town, or nil when analysis has not succeeded.
 func (p *Project) Static() *analyzer.Town {

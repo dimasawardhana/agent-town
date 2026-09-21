@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -328,26 +329,38 @@ func describeProjects(w *os.File, reg *registry.Registry) {
 		fmt.Fprintln(w, "townd: no projects registered — run 'townd add <path>' to add one")
 		return
 	}
-	// Projects are registered, not analyzed, at startup: a daemon serving
-	// many projects must answer immediately rather than walking every tree
-	// first. So this lists what is registered, and building counts appear only
-	// for projects that have been opened.
+	// Projects are registered, not analyzed, at startup: a daemon serving many
+	// projects must answer immediately rather than walking every tree first.
+	// So most lines here say only the path, and a count appears once a project
+	// has been opened. A deferred analysis is the normal case, not a fault, so
+	// it is reported as pending rather than as an error.
 	fmt.Fprintf(w, "townd: serving %d project(s):\n", reg.Len())
 	for _, p := range reg.Projects() {
-		if err := p.AnalysisError(); err != nil {
-			fmt.Fprintf(w, "townd:   %s (cannot analyze: %v)\n", p.Path(), err)
+		// Checked before the error, because "not analyzed yet" is an error
+		// value but is not a problem: it is what every project looks like
+		// until someone views it.
+		if !p.Analyzed() {
+			if errors.Is(p.AnalysisError(), registry.ErrNotAnalyzed) {
+				fmt.Fprintf(w, "townd:   %s\n", p.Path())
+				continue
+			}
+			if err := p.AnalysisError(); err != nil {
+				fmt.Fprintf(w, "townd:   %s (cannot read: %v)\n", p.Path(), err)
+				continue
+			}
+		}
+
+		t := p.Static()
+		if t == nil {
+			fmt.Fprintf(w, "townd:   %s\n", p.Path())
 			continue
 		}
-		t := p.Static()
-		switch {
-		case t == nil:
-			fmt.Fprintf(w, "townd:   %s\n", p.Path())
-		case t.Partial:
+		if t.Partial {
 			fmt.Fprintf(w, "townd:   %s (%d buildings, PARTIAL — stopped after %d files)\n",
 				p.Path(), len(t.Buildings), t.FilesSeen)
-		default:
-			fmt.Fprintf(w, "townd:   %s (%d buildings)\n", p.Path(), len(t.Buildings))
+			continue
 		}
+		fmt.Fprintf(w, "townd:   %s (%d buildings)\n", p.Path(), len(t.Buildings))
 	}
 }
 

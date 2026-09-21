@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -294,5 +295,93 @@ func TestDroppedCountSurvivesAnalyze(t *testing.T) {
 	if got := p.Dropped(); got != reported {
 		t.Errorf("Dropped() = %d after Analyze which reported %d; the count must survive so the UI can report the loss",
 			got, reported)
+	}
+}
+
+// TestUnanalyzedProjectDoesNotCrashReaders is a regression test for a panic in
+// `townd ls`. Registration defers analysis (see Register), so a freshly
+// registered project has no map — but AnalysisError() returned nil anyway,
+// which invited callers to guard a Static() dereference with it and then
+// dereference a nil pointer. The states must be distinguishable.
+func TestUnanalyzedProjectDoesNotCrashReaders(t *testing.T) {
+	p := &Project{path: "/tmp/whatever"}
+
+	if p.Analyzed() {
+		t.Fatal("a bare project claims to be analyzed")
+	}
+
+	// The guard callers actually write. It must not report "fine" while the
+	// map is absent, or the dereference that follows segfaults.
+	if err := p.AnalysisError(); err == nil {
+		t.Fatal("AnalysisError() is nil for a project with no map; a caller guarding on it will dereference nil")
+	} else if !errors.Is(err, ErrNotAnalyzed) {
+		t.Errorf("AnalysisError() = %v, want ErrNotAnalyzed so callers can tell 'not yet' from 'failed'", err)
+	}
+
+	if p.Static() != nil {
+		t.Error("Static() should be nil before analysis")
+	}
+	if p.Layout() != nil {
+		t.Error("Layout() should be nil before analysis")
+	}
+	if p.State() != StateAnalyzing {
+		t.Errorf("State() = %q, want %q", p.State(), StateAnalyzing)
+	}
+	if _, ok := p.Snapshot(); ok {
+		t.Error("Snapshot() reported a map before analysis")
+	}
+}
+
+// TestNotAnalyzedIsDistinctFromFailure keeps the two remedies apart: one is
+// waited for, the other is fixed or removed.
+func TestNotAnalyzedIsDistinctFromFailure(t *testing.T) {
+	// Never attempted: a deferral, which a caller waits for.
+	pending := &Project{path: filepath.Join(t.TempDir(), "later")}
+	if !errors.Is(pending.AnalysisError(), ErrNotAnalyzed) {
+		t.Errorf("before analysis, AnalysisError() = %v, want ErrNotAnalyzed", pending.AnalysisError())
+	}
+
+	// Attempted and impossible: a failure, which a caller fixes or removes.
+	// A missing directory is this case, not a deferral.
+	failed := &Project{path: filepath.Join(t.TempDir(), "absent")}
+	failed.Analyze(2000)
+	err := failed.AnalysisError()
+	if err == nil {
+		t.Fatal("analysis of a missing directory reported no error")
+	}
+	if errors.Is(err, ErrNotAnalyzed) {
+		t.Error("a failed analysis reported ErrNotAnalyzed; the two states must differ")
+	}
+	if failed.State() != StateUnreadable {
+		t.Errorf("State() = %q, want %q", failed.State(), StateUnreadable)
+	}
+}
+
+// TestRegisteredProjectReadsSafelyBeforeView covers the daemon's path: every
+// project loaded from config is unanalyzed until someone views it, and reading
+// its description must not panic.
+func TestRegisteredProjectReadsSafelyBeforeView(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
+	path := filepath.Join(base, "config.json")
+	dir := newSourceTree(t, filepath.Join(base, "work"))
+	if err := os.WriteFile(path, []byte(`{"version":1,"projects":["`+dir+`"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range r.Projects() {
+		// Everything a renderer or a list command reads before analyzing.
+		_ = p.Analyzed()
+		_ = p.State()
+		_ = p.Static()
+		_ = p.Layout()
+		_ = p.Pending()
+		_ = p.Dropped()
+		_ = p.AnalysisError()
+		_, _ = p.Snapshot()
 	}
 }

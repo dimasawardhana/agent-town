@@ -4,10 +4,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent/extension"
+	"github.com/dimasajiwardhana/agent-town/internal/analyzer"
 	"github.com/dimasajiwardhana/agent-town/internal/registry"
 )
 
@@ -48,13 +50,23 @@ func runAdd(args []string) int {
 		return 1
 	}
 
+	// Add analyzes before returning, so a failure here means the path cannot be
+	// a town. It refuses rather than registering something unusable.
 	p, err := reg.Add(abs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "townd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "townd: cannot analyze %s: %v\n", abs, err)
 		return 1
 	}
 	if err := p.AnalysisError(); err != nil {
 		fmt.Fprintf(os.Stderr, "townd: cannot analyze %s: %v\n", abs, err)
+		return 1
+	}
+
+	// Guarded rather than assumed: the crash this replaced was a dereference
+	// of Static() justified by an AnalysisError() check that did not hold.
+	t := p.Static()
+	if t == nil {
+		fmt.Fprintf(os.Stderr, "townd: %s analyzed but produced no map\n", abs)
 		return 1
 	}
 
@@ -63,7 +75,6 @@ func runAdd(args []string) int {
 		return 1
 	}
 
-	t := p.Static()
 	fmt.Printf("added %s — %d buildings, %d districts\n", abs, len(t.Buildings), len(t.Districts))
 	fmt.Printf("config: %s\n", configPath)
 	return 0
@@ -104,26 +115,60 @@ func runRemove(args []string) int {
 	return 0
 }
 
-// runList prints the registry.
+// runList prints the registry and what each project amounts to.
+//
+// It analyzes each project rather than only listing paths, because "is this
+// registered and is it any good" is the question `ls` answers, and a path
+// alone cannot answer the second half. The daemon defers analysis so it can
+// start immediately; an explicit request for the list is not that case.
 func runList(args []string) int {
 	configPath := registry.ConfigPath()
-	reg, err := registry.Load(configPath)
+	reg, err := registry.LoadBounded(configPath, analyzer.DefaultMaxFiles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "townd: could not read %s: %v\n", configPath, err)
 		return 1
 	}
 	if reg.Len() == 0 {
 		fmt.Println("no projects registered")
+		fmt.Println("add one with: townd add <path>")
 		return 0
 	}
 	for _, p := range reg.Projects() {
-		if err := p.AnalysisError(); err != nil {
-			fmt.Printf("%s (cannot analyze: %v)\n", p.Path(), err)
-			continue
-		}
-		fmt.Printf("%s (%d buildings)\n", p.Path(), len(p.Static().Buildings))
+		describe(os.Stdout, p)
 	}
+	fmt.Printf("\nconfig: %s\n", configPath)
 	return 0
+}
+
+// describe prints one project's line, analyzing it if that has not happened.
+//
+// It never dereferences an absent map: a project that has not been analyzed and
+// one whose analysis failed are different states with different remedies, and
+// conflating them is what crashed this command on a freshly registered project.
+func describe(w io.Writer, p *registry.Project) {
+	if !p.Analyzed() {
+		// build the map so the line can report real counts.
+		p.Analyze(analyzer.DefaultMaxFiles)
+	}
+
+	if err := p.AnalysisError(); err != nil {
+		fmt.Fprintf(w, "%s — %s: %v\n", p.Path(), p.State(), err)
+		return
+	}
+
+	t := p.Static()
+	if t == nil {
+		// Unreachable while Analyzed() and Static() agree, but the whole
+		// crash being fixed here was an assumption that they do.
+		fmt.Fprintf(w, "%s — %s\n", p.Path(), p.State())
+		return
+	}
+	if t.Partial {
+		fmt.Fprintf(w, "%s — %d buildings, PARTIAL (stopped after %d files)\n",
+			p.Path(), len(t.Buildings), t.FilesSeen)
+		return
+	}
+	fmt.Fprintf(w, "%s — %d buildings, %d districts\n", p.Path(), len(t.Buildings), len(t.Districts))
 }
 
 // runInstall copies the extension into an agent's extension directory.
