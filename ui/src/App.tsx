@@ -99,7 +99,9 @@ export function App() {
           <h2>Activity</h2>
           {events.length === 0 ? (
             <p className="muted">
-              No events yet. Start an agent with <code>AI_TOWN_URL</code> set.
+              No events yet. Install the AI Town extension, then start your
+              agent with <code>AI_TOWN_URL</code> set — <code>townd</code>
+              prints the exact commands on startup.
             </p>
           ) : (
             <ul>

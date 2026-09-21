@@ -177,6 +177,12 @@ func main() {
 	fmt.Printf("AI_TOWN_URL=http://%s\n", ln.Addr().String())
 	fmt.Fprintf(os.Stderr, "townd: watching %s\n", abs)
 	fmt.Fprintf(os.Stderr, "townd: open http://%s\n", ln.Addr().String())
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "townd: to watch an agent, install the extension and start it with this URL:")
+	fmt.Fprintln(os.Stderr, "townd:   mkdir -p ~/.omp/agent/extensions")
+	fmt.Fprintln(os.Stderr, "townd:   cp internal/agent/extension/ai-town.ts ~/.omp/agent/extensions/")
+	fmt.Fprintf(os.Stderr, "townd:   AI_TOWN_URL=http://%s omp\n", ln.Addr().String())
+	fmt.Fprintln(os.Stderr, "townd: see docs/omp-install.md for pi and for a per-project install")
 
 	<-ctx.Done()
 	fmt.Fprintln(os.Stderr, "townd: shutting down")
