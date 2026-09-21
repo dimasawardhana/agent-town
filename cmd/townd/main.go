@@ -31,6 +31,7 @@ import (
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent"
 	"github.com/dimasajiwardhana/agent-town/internal/analyzer"
+	"github.com/dimasajiwardhana/agent-town/internal/town"
 	"github.com/dimasajiwardhana/agent-town/internal/web"
 )
 
@@ -54,6 +55,25 @@ func main() {
 	// second sink because it is the fastest way to verify the pipeline.
 	bus := agent.NewBroadcaster()
 
+	// The town is computed once at startup. It is a pure function of the
+	// directory tree (ADR-0012), so there is nothing to recompute.
+	projectDir := *project
+	if projectDir == "" {
+		projectDir = abs
+	}
+	static, layout, townErr := buildTown(projectDir)
+	if townErr != nil {
+		fmt.Fprintf(os.Stderr, "townd: cannot analyze %s: %v\n", projectDir, townErr)
+	}
+
+	// The live town folds events into state: where workers stand, and what
+	// condition the buildings they touch are in. The static town is the map;
+	// this is what moves on it.
+	var live *town.Town
+	if static != nil {
+		live = town.New(static)
+	}
+
 	recv := agent.NewReceiver(abs)
 	recv.OnHello = func(d string) {
 		fmt.Fprintf(os.Stderr, "townd: extension handshake from %s\n", d)
@@ -70,21 +90,20 @@ func main() {
 			fmt.Fprintf(os.Stderr, "townd: encode: %v\n", err)
 			return
 		}
-		bus.Publish(raw)
 		if !*quiet {
 			_, _ = os.Stdout.Write(append(raw, '\n'))
 		}
-	}
-
-	// The town is computed once at startup. It is a pure function of the
-	// directory tree (ADR-0012), so there is nothing to recompute.
-	projectDir := *project
-	if projectDir == "" {
-		projectDir = abs
-	}
-	town, layout, townErr := buildTown(projectDir)
-	if townErr != nil {
-		fmt.Fprintf(os.Stderr, "townd: cannot analyze %s: %v\n", projectDir, townErr)
+		// The UI wants the resulting town, not the raw event: the movement of
+		// a worker is the product, and recomputing it client-side would make
+		// the browser a second authority on where things are.
+		if live != nil {
+			live.Apply(ev)
+			if snap, err := json.Marshal(live.Snapshot()); err == nil {
+				bus.Publish(snap)
+			}
+			return
+		}
+		bus.Publish(raw)
 	}
 
 	mux := http.NewServeMux()
@@ -96,10 +115,17 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"town":   town,
+		resp := map[string]any{
+			"town":   static,
 			"layout": layout,
-		})
+		}
+		// The live state travels with the map so a client that reconnects
+		// draws the current town rather than an empty one. Events missed
+		// during the gap are not replayed; the snapshot is the authority.
+		if live != nil {
+			resp["live"] = live.Snapshot()
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.Handle("/", web.Handler()) // the UI itself
 

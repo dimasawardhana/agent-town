@@ -1,8 +1,7 @@
 // The town, drawn in Phaser.
 //
-// This ticket renders a static town: districts as blocks, buildings sized by
-// source-file count, the three special places pinned across the top. Nothing
-// moves — ticket 05 adds workers.
+// Districts as blocks, buildings sized by source-file count, the three
+// special places pinned across the top, and workers moving between them.
 //
 // Phaser owns the camera (ADR-0002). Pan and zoom are entirely local, which
 // is why the transport can be one-way.
@@ -10,6 +9,7 @@
 import Phaser from "phaser";
 import type { Layout, Site } from "./store";
 import { useTown } from "./store";
+import { WorkerLayer } from "./workers";
 
 // Colours by place kind. Deliberately few and flat: the town's meaning comes
 // from position and size, not from colour.
@@ -29,6 +29,7 @@ const DISTRICT_LABEL = "#93a4b8";
 
 export class TownScene extends Phaser.Scene {
   private layout: Layout | null = null;
+  private workers: WorkerLayer | null = null;
   private dragging = false;
   private dragStart = { x: 0, y: 0, sx: 0, sy: 0 };
   private moved = 0;
@@ -40,15 +41,23 @@ export class TownScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor(0x11161d);
     this.controls();
+    this.workers = new WorkerLayer(this);
 
     // Read whatever the store already holds. If the fetch finished before
     // the scene booted, the town draws immediately rather than waiting.
     const { layout } = useTown.getState();
     if (layout) this.draw(layout);
 
-    // A later fetch or reconnect redraws.
+    // A later fetch or reconnect redraws the map; a live update only moves
+    // workers, so a walk in progress is not interrupted by a new event.
     useTown.subscribe((s, prev) => {
-      if (s.layout && s.layout !== prev.layout) this.draw(s.layout);
+      if (s.layout && s.layout !== prev.layout) {
+        this.draw(s.layout);
+        return;
+      }
+      if (s.live !== prev.live && this.layout) {
+        this.syncLive();
+      }
     });
   }
 
@@ -90,6 +99,12 @@ export class TownScene extends Phaser.Scene {
     for (const s of layout.sites) {
       this.drawSite(s, s.districtKind === "test");
     }
+
+    // Workers are drawn after the map, and their positions come from the live
+    // state, so a reconnecting client draws the current town rather than an
+    // empty one.
+    this.workers?.destroy();
+    this.syncLive();
 
     // A canvas smaller than the viewport would let the camera drift into
     // empty space; pad the world so bounds always contain the town.
@@ -180,6 +195,23 @@ export class TownScene extends Phaser.Scene {
     zone.on("pointerup", () => {
       if (this.moved < 5) useTown.getState().select(s);
     });
+  }
+
+  /**
+   * syncLive moves workers and repaints building states.
+   *
+   * It reads the store rather than taking arguments, because it is called
+   * both on redraw and on every live update — and on a redraw the caller has
+   * the map but not the current workers.
+   */
+  private syncLive(): void {
+    if (!this.workers || !this.layout) return;
+    const { live } = useTown.getState();
+    const buildingSites = this.layout.sites.filter((s) => s.kind === "building");
+
+    // Tints draw before figures so a worker is never hidden under a repaint.
+    this.workers.tint(buildingSites, live.buildings);
+    this.workers.sync(live.workers, this.layout.sites);
   }
 
   /** fitZoom scales the town to the viewport on first load. */

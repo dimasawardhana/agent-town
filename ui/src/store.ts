@@ -45,6 +45,37 @@ export interface Town {
   buildings: unknown[];
 }
 
+export type Action =
+  | "inspecting" | "hammering" | "building" | "demolishing"
+  | "testing" | "commanding" | "planning" | "celebrating";
+
+export interface Worker {
+  id: string;
+  session: string;
+  agent: string;
+  tier: "chief" | "sub";
+  action: Action;
+  place: string;
+  placeKind: "building" | "workshop" | "yard" | "depot";
+  label: string;
+  since: number;
+}
+
+export interface BuildingState {
+  path: string;
+  touches: number;
+  problems: number;
+  lastAgent: string;
+  status: "untouched" | "constructing" | "testing" | "completed" | "broken";
+  updated: number;
+}
+
+export interface Live {
+  workers: Worker[];
+  buildings: BuildingState[];
+  events: AgentEvent[];
+}
+
 export interface AgentEvent {
   id: string;
   session_id: string;
@@ -59,12 +90,14 @@ export interface AgentEvent {
 interface State {
   town: Town | null;
   layout: Layout | null;
+  live: Live;
   selected: Site | null;
   events: AgentEvent[];
   connected: boolean;
   error: string | null;
 
-  setTown: (t: Town, l: Layout) => void;
+  setTown: (t: Town, l: Layout, live?: Live) => void;
+  setLive: (l: Live) => void;
   select: (s: Site | null) => void;
   pushEvent: (e: AgentEvent) => void;
   setConnected: (c: boolean) => void;
@@ -75,15 +108,20 @@ interface State {
 // and an unbounded array would grow for the life of the tab.
 const MAX_EVENTS = 200;
 
+const EMPTY_LIVE: Live = { workers: [], buildings: [], events: [] };
+
 export const useTown = create<State>((set) => ({
   town: null,
   layout: null,
+  live: EMPTY_LIVE,
   selected: null,
   events: [],
   connected: false,
   error: null,
 
-  setTown: (town, layout) => set({ town, layout, error: null }),
+  setTown: (town, layout, live) =>
+    set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
+  setLive: (live) => set({ live }),
   select: (selected) => set({ selected }),
   pushEvent: (e) =>
     set((s) => ({ events: [e, ...s.events].slice(0, MAX_EVENTS) })),

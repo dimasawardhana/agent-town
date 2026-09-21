@@ -51,6 +51,20 @@
         font: inherit; cursor: pointer;
       }
 
+      .crew { padding: 0 0 8px; border-bottom: 1px solid #232c38; }
+      .crew h2 { font-size: 12px; margin: 14px 16px 8px; color: #9fb0c4; text-transform: uppercase; letter-spacing: .05em; }
+      .crew ul { list-style: none; margin: 0; padding: 0; }
+      .crew li { padding: 4px 16px; display: flex; gap: 8px; align-items: baseline; }
+      .crew li.done { opacity: .55; }
+      .crew .tier {
+        font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+        padding: 1px 5px; border-radius: 3px; background: #232c38; color: #9fb0c4;
+      }
+      .crew .tier.sub { background: #1d2530; color: #6b7a8d; }
+      .crew .agent { color: #7fb0d8; }
+      .crew .action { color: #dce3ea; }
+      .crew .at { color: #6b8a6b; margin-left: auto; font-size: 11px; }
+
       .feed { flex: 1; overflow-y: auto; padding-bottom: 12px; }
       .feed h2 { font-size: 12px; margin: 14px 16px 8px; color: #9fb0c4; text-transform: uppercase; letter-spacing: .05em; }
       .feed ul { list-style: none; margin: 0; padding: 0; }

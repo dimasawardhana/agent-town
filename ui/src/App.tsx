@@ -11,10 +11,15 @@ import { TownCanvas } from "./TownCanvas";
 export function App() {
   const town = useTown((s) => s.town);
   const selected = useTown((s) => s.selected);
-  const events = useTown((s) => s.events);
+  const live = useTown((s) => s.live);
+  const rawEvents = useTown((s) => s.events);
+  // The daemon publishes whole snapshots when it has a town to interpret, and
+  // bare events when it does not. Prefer the snapshot: it is the authority.
+  const events = live.events.length > 0 ? live.events : rawEvents;
   const connected = useTown((s) => s.connected);
   const error = useTown((s) => s.error);
   const setTown = useTown((s) => s.setTown);
+  const setLive = useTown((s) => s.setLive);
   const setConnected = useTown((s) => s.setConnected);
   const setError = useTown((s) => s.setError);
   const pushEvent = useTown((s) => s.pushEvent);
@@ -22,8 +27,8 @@ export function App() {
 
   const load = useRef(async () => {
     try {
-      const { town, layout } = await fetchTown();
-      setTown(town, layout);
+      const { town, layout, live } = await fetchTown();
+      setTown(town, layout, live);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -31,8 +36,8 @@ export function App() {
 
   useEffect(() => {
     void load.current();
-    return subscribe(pushEvent, setConnected, () => void load.current());
-  }, [pushEvent, setConnected]);
+    return subscribe(setLive, pushEvent, setConnected, () => void load.current());
+  }, [setLive, pushEvent, setConnected]);
 
   return (
     <div className="app">
@@ -71,6 +76,22 @@ export function App() {
               )}
             </dl>
             <button onClick={() => select(null)}>Close</button>
+          </section>
+        )}
+
+        {live.workers.length > 0 && (
+          <section className="crew">
+            <h2>Crew</h2>
+            <ul>
+              {live.workers.map((w) => (
+                <li key={w.id} className={w.action === "celebrating" ? "done" : ""}>
+                  <span className={`tier ${w.tier}`}>{w.tier}</span>
+                  <span className="agent">{w.agent}</span>
+                  <span className="action">{w.action}</span>
+                  <span className="at">{w.place.replace(/^building:/, "")}</span>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
 
