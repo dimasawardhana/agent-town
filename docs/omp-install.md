@@ -81,12 +81,14 @@ queued frames arrived in order.
 
 Two honest limits:
 
-- **The queue lives in the process.** If omp exits while the daemon is down,
-  those events are gone. There is no disk spool.
-- **A short `-p` run may outlive its own retry window.** omp's `-p` mode can
-  finish in a few seconds; a frame queued at the very end of such a run may
-  never be flushed, because the process is gone before the retry fires. Long
-  interactive sessions are unaffected.
+- **The queue lives in the process.** If the daemon is unreachable for the
+  entire run, those frames die when omp exits. There is no disk spool, by
+  design: ADR-0010 judged one unnecessary for a local tool.
+- **The exit flush needs the daemon to be reachable at exit.** omp fires
+  `session_shutdown` and awaits async handlers in it, so the extension flushes
+  there — verified with the retry timer disabled at 600s, where two frames
+  still arrived. That covers a daemon that came back mid-run. It cannot cover
+  one that is still down when the process ends.
 
 ## Verifying it works
 

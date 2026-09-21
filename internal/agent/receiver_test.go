@@ -176,3 +176,35 @@ func TestHelloResetsDropBaseline(t *testing.T) {
 		t.Errorf("post-restart report = %d, want 4", reported[1])
 	}
 }
+
+// Regression: the drop baseline must be per directory, not process-wide.
+//
+// With a single scalar, a high count from one watched project suppressed the
+// report from another — so a second project's overflow was silently swallowed.
+// Reproduced: /tmp/watched-b reporting dropped:5 produced no OnDrop at all
+// after /tmp/watched-a had reported 20.
+func TestDropBaselineIsPerDirectory(t *testing.T) {
+	r := NewReceiver("/tmp/a", "/tmp/b")
+	var reported []string
+	r.OnDrop = func(dir string, lost int64) {
+		reported = append(reported, dir)
+	}
+
+	post := func(body string) {
+		req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(body))
+		r.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// Directory A reports a large overflow.
+	post(`{"kind":"hello","directory":"/tmp/a","seq":1,"dropped":0}`)
+	post(`{"kind":"event","directory":"/tmp/a","seq":2,"dropped":20,"type":"session.idle"}`)
+
+	// Directory B overflows independently. A process-wide scalar would
+	// swallow this because 5 < 20.
+	post(`{"kind":"hello","directory":"/tmp/b","seq":1,"dropped":0}`)
+	post(`{"kind":"event","directory":"/tmp/b","seq":2,"dropped":5,"type":"session.idle"}`)
+
+	if len(reported) != 2 {
+		t.Fatalf("got %d drop reports %v, want 2 — one per directory", len(reported), reported)
+	}
+}

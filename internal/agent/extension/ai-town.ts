@@ -55,6 +55,10 @@ const RETRY_MS = 2000;
 // The timeout bounds that.
 const FETCH_TIMEOUT_MS = 5000;
 
+// SHUTDOWN_FLUSH_MS bounds the exit flush. Long enough for a loopback post,
+// short enough that a dead daemon cannot visibly delay the agent closing.
+const SHUTDOWN_FLUSH_MS = 1500;
+
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRetry(TARGET: string): void {
@@ -152,6 +156,22 @@ export default function (pi: any) {
     return;
   }
 
+  // A drain that ignores the retry timer, used by the shutdown flush.
+  async function flush(TARGET: string, budgetMs: number): Promise<void> {
+    const deadline = Date.now() + budgetMs;
+    while (queue.length > 0 && Date.now() < deadline && !disabled) {
+      draining = false; // the shutdown flush owns the loop now
+      await drain(TARGET);
+      // If the daemon is still absent, stop rather than spin until the
+      // deadline on a connection that is not coming back.
+      if (queue.length > 0 && retryTimer === null) break;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    }
+  }
+
   pi.on("session_start", async (_event: any, ctx: any) => {
     // The handshake. AI Town treats this as proof the extension loaded, and
     // uses it to reset its sequence baseline.
@@ -186,5 +206,15 @@ export default function (pi: any) {
       // it keeps the timeline honest about when work actually happened.
       time: Date.now(),
     });
+  });
+
+  // omp fires session_shutdown on exit AND awaits async handlers in it
+  // (verified: a 400ms await inside the handler completed before the process
+  // exited). Without this, a short `-p` run discards its queue, because the
+  // retry timer is unref'd and the process is gone before it fires.
+  //
+  // Bounded so a dead daemon cannot stall the agent's exit.
+  pi.on("session_shutdown", async () => {
+    await flush(TARGET, SHUTDOWN_FLUSH_MS);
   });
 }

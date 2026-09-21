@@ -12,7 +12,10 @@
 - [ ] Driving omp to read a nonexistent file produces `result: "error"` with the failing path preserved
 - [ ] Running omp from an unwatched directory produces **zero** events, and the daemon logs a 403 rejection
 - [ ] The extension never blocks a tool: only observation hooks are subscribed
-- [ ] With the daemon stopped, omp completes normally and events are buffered rather than lost
+- [ ] With the daemon stopped, omp completes normally and the agent is unaffected
+- [ ] A session whose daemon is unreachable when it starts flushes its buffered frames once the daemon returns, or at exit via `session_shutdown`
+
+**Scope note on the second criterion.** Its original wording was "events are buffered rather than lost", which an in-process queue cannot satisfy unconditionally: if the daemon is unreachable for the entire run, the frames die with the process. What is now verified is the reachable half — a queue that survives a mid-run outage, drains on a retry timer, and flushes at exit. Durable buffering across a full outage needs a disk spool, which ADR-0010 rules out as unnecessary for a local tool. The wording was narrowed rather than the box ticked falsely.
 - [ ] With `AI_TOWN_URL` unset, the extension is completely inert
 - [ ] The extension typechecks with no imports and no dependencies
 

@@ -26,9 +26,11 @@ type Receiver struct {
 	// gaps are detected per agent rather than globally.
 	lastSeq map[string]int64
 
-	// lastDropped tracks the highest overflow count reported, so a jump is
-	// surfaced once rather than on every frame that carries the total.
-	lastDropped int64
+	// lastDropped tracks the highest overflow count reported per directory,
+	// so a jump is surfaced once rather than on every frame carrying the
+	// total. Keyed by directory for the same reason as lastSeq: a single
+	// scalar would let one project's overflow suppress another's.
+	lastDropped map[string]int64
 
 	// OnEvent receives normalized events. Called from the HTTP handler, so
 	// it must not block.
@@ -57,8 +59,9 @@ func NewReceiver(dirs ...string) *Receiver {
 		}
 	}
 	return &Receiver{
-		watched: w,
-		lastSeq: make(map[string]int64),
+		watched:     w,
+		lastSeq:     make(map[string]int64),
+		lastDropped: make(map[string]int64),
 	}
 }
 
@@ -112,7 +115,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.mu.Lock()
 		r.lastSeq[dir] = frame.Seq
 		// A fresh extension starts its counter over.
-		r.lastDropped = frame.Dropped
+		r.lastDropped[dir] = frame.Dropped
 		r.mu.Unlock()
 
 		if r.OnHello != nil {
@@ -137,12 +140,15 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// overflowed. The count is cumulative per extension process, so it is
 	// surfaced as a delta: a jump means the town is missing history, which
 	// ADR-0010 requires be recorded rather than silently absorbed.
-	if frame.Dropped > r.lastDropped {
-		lost := frame.Dropped - r.lastDropped
-		r.lastDropped = frame.Dropped
-		if r.OnDrop != nil {
-			r.OnDrop(dir, lost)
-		}
+	var dropLost int64
+	r.mu.Lock()
+	if frame.Dropped > r.lastDropped[dir] {
+		dropLost = frame.Dropped - r.lastDropped[dir]
+		r.lastDropped[dir] = frame.Dropped
+	}
+	r.mu.Unlock()
+	if dropLost > 0 && r.OnDrop != nil {
+		r.OnDrop(dir, dropLost)
 	}
 
 	events, newSeq, err := NormalizeFrame(frame, last)
