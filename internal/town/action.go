@@ -7,6 +7,7 @@
 package town
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent"
@@ -21,7 +22,7 @@ import (
 type Action string
 
 const (
-	ActionRead      Action = "inspecting"  // reading, searching, listing
+	ActionRead      Action = "reading"     // reading, searching, listing
 	ActionHammer    Action = "hammering"   // editing an existing thing
 	ActionBuild     Action = "building"    // creating something new
 	ActionDemolish  Action = "demolishing" // deleting
@@ -30,6 +31,27 @@ const (
 	ActionPlan      Action = "planning"    // meta work: dispatch, notes, evaluation
 	ActionCelebrate Action = "celebrating" // a session finished cleanly
 )
+
+// AllActions is every action a worker can be doing, in a stable order.
+//
+// It exists so the vocabulary can be asserted rather than assumed. The daemon
+// names an action as a string and the renderer switches on those strings to
+// pick an animation; the two cannot share a definition across the language
+// boundary, so a test compares this list against the UI's Action type. When
+// they drifted, every read rendered with the default pulse because the action
+// arrived as "inspecting" while the renderer only knew "reading".
+func AllActions() []Action {
+	return []Action{
+		ActionBuild,
+		ActionCelebrate,
+		ActionCommand,
+		ActionDemolish,
+		ActionHammer,
+		ActionPlan,
+		ActionRead,
+		ActionTest,
+	}
+}
 
 // Classification says where an action happens and what it looks like.
 type Classification struct {
@@ -111,9 +133,26 @@ func Classify(ev agent.UnifiedAgentEvent, r *analyzer.Resolver) Classification {
 	tool := ev.Tool
 	switch {
 	case ev.Type == "COMMAND_COMPLETED":
-		// A shell command is site-wide work, except tests, which the town
-		// should look different for.
+		// A shell command is site-wide work. A *test* is the exception, and the
+		// exception is load-bearing: a test that names a directory is evidence
+		// about that building, and the ladder's finishing ranks — glazing, the
+		// door, the completed building — are gated on passing tests. Sending
+		// every test to the Yard made those three ranks unreachable, so a
+		// building could only ever be built, never finished.
 		if isTestCommand(ev) {
+			cmd := strings.ToLower(ev.Target.Command)
+			for _, dir := range testTargets(cmd) {
+				// A test names a directory, not a file, so this is the
+				// directory lookup rather than the file one.
+				if kind, place, reason := r.ResolveDir(dir); kind == analyzer.PlaceBuilding {
+					return Classification{Action: ActionTest, Place: kind, Path: place,
+						Reason: "test-of-building:" + string(reason)}
+				}
+			}
+			// A whole-repo test run — `go test ./...`, `npm test` — names no one
+			// building, so it stays site-wide work in the Yard. Claiming it for
+			// a single building would be a guess, and the town does not guess
+			// about where work happened.
 			return Classification{Action: ActionTest, Place: analyzer.PlaceYard, Reason: "test-command"}
 		}
 		return Classification{Action: ActionCommand, Place: analyzer.PlaceYard, Reason: "shell-tool"}
@@ -138,6 +177,15 @@ func Classify(ev agent.UnifiedAgentEvent, r *analyzer.Resolver) Classification {
 	// missing or generic — an adapter that normalized imperfectly, or a tool
 	// no adapter has classified yet — still knows what its tool was doing,
 	// and losing the distinction would render an edit as mere inspection.
+	//
+	// Only the `inspectTools` and `writeTools`/`editTools` rows here are
+	// reachable from a real frame: the adapter derives an event's Type from the
+	// tool name (`agent.ToolToEventType`) and never reads a supplied one, so the
+	// `ev.Type` cases above match first. A `delete` therefore arrives as
+	// FILE_EDITED and becomes ActionHammer before this switch is consulted. The
+	// Delete row is kept because it is the correct mapping for a
+	// tool-name-keyed event, and reachable from a test that builds one directly
+	// — but its presence is not evidence that demolishing works end to end.
 	switch {
 	case deleteTools[tool]:
 		return viaPath(ActionDemolish, ev, r)
@@ -199,4 +247,68 @@ func isTestCommand(ev agent.UnifiedAgentEvent) bool {
 		}
 	}
 	return false
+}
+
+// testTargets pulls the directory paths a test command names, outermost first.
+//
+// It exists because a test run is the only evidence the town has that a
+// building's work holds together, and a shell tool carries no path field — the
+// command string is the whole signal. So this reads the arguments that look
+// like repo paths and hands them to the resolver, which owns the decision about
+// what a path means.
+//
+// Deliberately conservative. It returns only arguments that start with a path
+// marker (`./`, `../`, or a bare word containing `/`), never bare words: the
+// first token is the program and the rest are flags, and treating `-run` or
+// `-race` as a directory would file a test run against whatever happened to
+// match. A pattern (`./...`, a `*`) is dropped for the same reason the resolver
+// drops one — it names a set, not a place.
+//
+// Outermost first, so `go test ./internal/town/...` resolves the deepest
+// matching building rather than stopping at a shorter prefix that also matches.
+func testTargets(cmd string) []string {
+	fields := strings.Fields(cmd)
+	if len(fields) < 2 {
+		return nil
+	}
+
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range fields[1:] {
+		// Trim the quoting a shell may carry, then normalise the forms that
+		// mean the same directory.
+		arg := strings.Trim(f, `"'`)
+		if strings.HasPrefix(arg, "-") || arg == "" {
+			continue
+		}
+		// A pattern names a set of directories, and an ellipsis is the Go
+		// idiom for "this and everything under it" — the resolver refuses
+		// wildcards, so stripping the ellipsis is what lets a scoped run
+		// resolve to the building it names.
+		arg = strings.TrimSuffix(arg, "/...")
+		arg = strings.TrimSuffix(arg, "...")
+		if arg == "" || strings.ContainsAny(arg, "*?[]") {
+			continue
+		}
+		if !strings.Contains(arg, "/") {
+			continue
+		}
+		arg = strings.TrimPrefix(arg, "./")
+		arg = strings.TrimSuffix(arg, "/")
+		if arg == "" || arg == ".." || arg == "." || seen[arg] {
+			continue
+		}
+		seen[arg] = true
+		out = append(out, arg)
+	}
+
+	// Longest first: `internal/town` is a better answer than `internal` for a
+	// command naming both, because the deeper path is the more specific claim.
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i]) != len(out[j]) {
+			return len(out[i]) > len(out[j])
+		}
+		return out[i] < out[j]
+	})
+	return out
 }

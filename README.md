@@ -22,44 +22,63 @@ a failed tool      →    a construction problem on that building
 
 ## Try it
 
-**1. Build the daemon.** Needs Go 1.27 or later. Nothing else — no npm, no
-database, no service to install. The UI is embedded in the binary.
+Full guide, including troubleshooting: **[docs/install.md](docs/install.md)**.
+
+**1. Install the daemon.** Needs Go 1.27 or later. Nothing else — no npm, no
+database, no service. The UI and the agent extension are both embedded in the
+binary.
 
 ```bash
-go build -o townd ./cmd/townd
+go install ./cmd/townd
 ```
 
-**2. Start it on a project.**
+That puts `townd` in `$(go env GOPATH)/bin`. If `townd: command not found`
+afterwards, that directory is not on your `PATH` — add it:
 
 ```bash
-./townd --dir ~/your/project
+echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc && exec $SHELL
 ```
 
-It prints the address to open, then the exact commands to start watching an
-agent.
-
-**3. Install the extension.** One file, copied once. Global covers every omp
-session on the machine:
+**2. Install the agent extension.** One command. It covers every omp session on
+the machine.
 
 ```bash
-mkdir -p ~/.omp/agent/extensions
-cp internal/agent/extension/ai-town.ts ~/.omp/agent/extensions/
+townd install              # global
+townd install --project .  # or just this repository
 ```
 
-Or per project, scoped to one repository:
+**3. Register the projects you want to watch.**
 
 ```bash
-mkdir -p ~/your/project/.omp/extensions
-cp internal/agent/extension/ai-town.ts ~/your/project/.omp/extensions/
+townd add ~/code/app
+townd add ~/code/lib
 ```
 
-**4. Start your agent with the daemon's URL.**
+Each is analyzed as you add it, so a path that cannot be a town is refused
+there and then rather than showing up as an empty map later. `townd ls` lists
+what is registered, `townd rm <path>` removes one.
+
+**4. Start the daemon.**
 
 ```bash
-AI_TOWN_URL=http://127.0.0.1:<port> omp
+townd
 ```
 
-Then work as you normally would. The town moves.
+It listens on `127.0.0.1:7777` and prints the address to open. To serve a
+project for one run without registering it, add `--dir ~/code/scratch`.
+
+**5. Start your agent. No environment variable needed.**
+
+```bash
+omp
+```
+
+The extension finds the daemon on the default port. Only if you started the
+daemon elsewhere with `--port` do you need to say so:
+`AI_TOWN_URL=http://127.0.0.1:<port> omp`.
+
+Then work as you normally would. The town moves, and switching which project
+you are looking at is a dropdown.
 
 ## What you will see
 
@@ -67,14 +86,22 @@ Then work as you normally would. The town moves.
   sub workers are anything it spawns. Two sessions on one repo are two crews,
   distinguished by colour.
 - **A worker walks before it works.** Reading a file sends it to that building
-  to inspect; editing makes it hammer; running the tests sweeps the Yard.
-  Each action has its own rhythm, so the town reads at a glance.
+  to inspect; editing makes it hammer; a scoped test run makes it check. Each
+  action has its own rhythm, so the town reads at a glance.
+- **Buildings are built one part at a time.** Each building climbs a ladder of
+  eight ranks — plot staked, foundations, frame, walls, roof, windows, door,
+  finished — and each rank adds exactly one part. Making changes raises the
+  structure; *passing tests* fit the finish, which is how a building is gated:
+  a test that names a directory verifies that building. A whole-repo run
+  (`go test ./...`) names no one building and stays in the Yard.
 - **The Yard, Workshop and Depot.** Most of a real session is not file work:
   shell commands are roughly half of all tool calls and planning another
   third. Those are staged in the Yard and the Depot, so an agent that is
   thinking or running tests never looks idle.
-- **Construction problems.** A failed tool damages the building rather than
-  advancing it, and the damage stays until the work succeeds.
+- **Construction problems.** A failed tool damages the building without
+  advancing or un-building it: rubble, a crack, a hole in the roof, each
+  appearing only once there is something to damage. The next success repairs
+  it, and the count of failures stays as history.
 
 ## Options
 
@@ -92,7 +119,18 @@ reachable from the network.
 ## Status
 
 Working: the daemon, the project analyzer, the town renderer, worker movement,
-and the omp extension. 92 tests, no third-party dependencies.
+the building ladder, and the omp extension. No third-party Go dependencies.
+
+Tests: **176 Go tests** (`go test ./...`) and **50 art tests**
+(`npm run test:art` in `ui/`). The art tests exist because every defect that
+shipped from the drawing layer was invisible to `tsc` and to the boot-time
+palette check — a missing colour key drew nothing, a cel was anchored half a
+cel off its plot, a sub worker came out the same height as a chief. They assert
+the invariants the art claims rather than sampling a sprite: every cel
+non-empty and on-palette, no semi-transparency, no artwork on a cel border so
+the outline has room, every stage distinct and climbing, every prop group
+disjoint and total, no two props the same drawing, every place explained in
+words as well as furniture, and a section's kerb closed all the way round.
 
 Known gaps, stated rather than hidden:
 
@@ -102,9 +140,23 @@ Known gaps, stated rather than hidden:
   current is 1.18.31, so treat it as unverified above that.
 - **A session that loses the daemon for its whole run loses its events.** The
   queue lives in the agent process. A daemon that returns mid-run is fine.
-- **Location comes from the path, not the output.** A failing test marks the
-  Yard, not the building that actually failed. Deriving that from command
-  output is the natural next slice.
+- **A test's building comes from the command, not from its output.** A test that
+  names a directory — `go test ./internal/town` — is credited to that building,
+  so it can advance it. A whole-repo run names no building and stays in the Yard,
+  and a test that *fails* still cannot say which building actually broke: the
+  output is not read. Deriving that from the failure text is the natural next
+  slice.
+
+## Guides
+
+| | |
+|---|---|
+| **[docs/install.md](docs/install.md)** | installing, the CLI, troubleshooting, uninstalling |
+| **[docs/building-lifecycle.md](docs/building-lifecycle.md)** | why a building is still a frame, and how to finish it |
+| [docs/omp-extension.md](docs/omp-extension.md) | how the extension works inside the agent |
+| [docs/multi-agent-support.md](docs/multi-agent-support.md) | omp, pi, opencode, hermes — what each exposes |
+| [CONTEXT.md](CONTEXT.md) | the vocabulary, and what not to call things |
+| [docs/adr/](docs/adr/) | decisions, with the alternatives that lost |
 
 ## Where things are
 

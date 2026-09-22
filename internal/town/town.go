@@ -26,31 +26,139 @@ type Worker struct {
 	Since int64 `json:"since"`
 }
 
-// BuildingState is a building's condition, which changes as work lands on it.
+// BuildingState is a building's construction, which changes as work lands on it.
+//
+// Condition and progress are separate fields on purpose. `Problems` is damage:
+// it can appear at any stage and does not move the building backwards. `Status`
+// is the ladder. An earlier shape folded them into one field with a `broken`
+// status, which could not express the difference between a building that was
+// never started and one that was finished and then failed — the second is the
+// more useful fact, and it was unrepresentable.
 type BuildingState struct {
 	Path string `json:"path"`
 	// Touches counts actions that landed here this process.
 	Touches int `json:"touches"`
-	// Problems counts failures. A building with problems is visibly damaged
-	// rather than silently fine, because a failed tool is news.
+	// Problems is the running count of failures here: history, never cleared.
 	Problems int `json:"problems"`
-	// LastAgent is who worked here most recently, so a building can show a
-	// colour per agent when several are running.
+	// Damaged is whether the building is currently damaged. It is a condition
+	// rather than a stage, so damage is drawn over whatever the building has
+	// reached, and a success repairs it without undoing any progress.
+	Damaged   bool   `json:"damaged"`
 	LastAgent string `json:"lastAgent"`
 	Status    Status `json:"status"`
 	Updated   int64  `json:"updated"`
 }
 
-// Status is a building's life stage, following the PRD's vocabulary.
+// Status is how far a building has been built.
+//
+// The ladder is ordered and strictly increasing, and each rank means exactly
+// one more part of the building is standing — which is what makes a glance at
+// the map answer "how finished is this?" rather than only "has anything
+// happened?". Ranks are never skipped, so a building cannot show a roof without
+// walls, and a status alone is enough to draw it.
+//
+// The first four ranks are raised by making changes, the last four by passing
+// tests. That split is not decoration: it is what puts a test run on the
+// building it verified. Before it, every test landed in the Yard as site-wide
+// work, so a building could never be tested, never be glazed, and never be
+// completed — `completed` was declared and ranked but unreachable.
 type Status string
 
 const (
-	StatusUntouched    Status = "untouched"
-	StatusConstructing Status = "constructing"
-	StatusTesting      Status = "testing"
-	StatusCompleted    Status = "completed"
-	StatusBroken       Status = "broken"
+	// Planned: the plot is staked out and nothing is standing. The state a
+	// building is in before any work has landed on it.
+	StatusPlanned Status = "planned"
+	// Foundation: footings dug, spoil heaped. The first edit.
+	StatusFoundation Status = "foundation"
+	// Framed: pillars and beams up, open to the sky.
+	StatusFramed Status = "framed"
+	// Walled: the shell is closed, still open above.
+	StatusWalled Status = "walled"
+	// Roofed: the roof is on and the building is weathertight. The last rank a
+	// change can reach — structure is what a change makes.
+	StatusRoofed Status = "roofed"
+	// Glazed: windows fitted. The first rank a passing test reaches; a test is
+	// what says the work is sound enough to be finished off.
+	StatusGlazed Status = "glazed"
+	// Doored: the door is hung, so the building has an inside.
+	StatusDoored Status = "doored"
+	// Completed: trimmed, painted, and finished. A building only reaches this
+	// by passing tests, which is the whole reason the finish ranks are gated
+	// on them.
+	StatusCompleted Status = "completed"
 )
+
+// AllStatuses is the ladder in order, lowest first.
+//
+// It exists so the order is data rather than a switch statement repeated in
+// three places, and so a test can assert the ladder is complete and strictly
+// increasing without restating it.
+func AllStatuses() []Status {
+	return []Status{
+		StatusPlanned,
+		StatusFoundation,
+		StatusFramed,
+		StatusWalled,
+		StatusRoofed,
+		StatusGlazed,
+		StatusDoored,
+		StatusCompleted,
+	}
+}
+
+// rank is a status's position on the ladder. An unknown status ranks 0, so a
+// status this build does not know about can never claim to be progress.
+func rank(s Status) int {
+	for i, known := range AllStatuses() {
+		if s == known {
+			return i
+		}
+	}
+	return 0
+}
+
+// nextAfter returns the rank one above the given status, or the same status at
+// the top of the ladder.
+func nextAfter(s Status) Status {
+	all := AllStatuses()
+	i := rank(s)
+	if i >= len(all)-1 {
+		return all[len(all)-1]
+	}
+	return all[i+1]
+}
+
+// advanceBy returns the status one *event* of the given action would justify.
+//
+// A change raises the building by one structural rank and no further, because
+// one change is one part: an edit is a course of wall, the next edit is the
+// next thing. A passing test is what adds the finishing trades. A read changes
+// nothing — looking at a building does not build it.
+//
+// This is deliberately not "set the status to the action's level", which is the
+// shape that broke before: it meant a single edit jumped a building to a fully
+// framed one, and a later test could never apply because tests ranked lower
+// than construction.
+func advanceBy(s Status, a Action) (Status, bool) {
+	switch a {
+	case ActionBuild, ActionHammer:
+		// Structure: four ranks, raised one at a time by making changes.
+		if rank(s) >= rank(StatusRoofed) {
+			return s, false
+		}
+		return nextAfter(s), true
+	case ActionTest:
+		// Finish: fitted only once the shell is weathertight, then one trade at
+		// a time. A test on an unfinished building therefore does not glaze a
+		// roofless one; it simply cannot advance it.
+		if rank(s) < rank(StatusRoofed) {
+			return s, false
+		}
+		return nextAfter(s), true
+	default:
+		return s, false
+	}
+}
 
 // Town is the live state: which crews are at work, where their workers stand,
 // and what condition the buildings are in.
@@ -118,27 +226,48 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 	w.Label = ev.Tool
 	w.Since = ev.Timestamp
 
-	// A failed tool damages the place rather than advancing it. This is the
-	// construction problem, and it is the one thing that must never be
-	// smoothed over: a failure is news.
+	// Work on a building moves it up the ladder, or damages it. It is never
+	// moved back down: a building keeps the progress it earned (ADR-0004).
 	if c.Place == analyzer.PlaceBuilding && c.Path != "" {
 		b, ok := t.buildings[c.Path]
 		if !ok {
-			b = &BuildingState{Path: c.Path, Status: StatusUntouched}
+			// A building the town has not seen worked on yet is a staked plot,
+			// not an absent thing: it exists in the map the moment the project
+			// is analyzed, and this is the state it starts in.
+			b = &BuildingState{Path: c.Path, Status: StatusPlanned}
 			t.buildings[c.Path] = b
 		}
 		b.Touches++
 		b.LastAgent = ev.Agent
 		b.Updated = ev.Timestamp
+
 		if ev.Result == "error" {
+			// A failure is damage, never a stage. Problems is the running count
+			// of them, which is history and is never cleared; Damaged is the
+			// current condition, which a later success repairs. Keeping one
+			// field for both made the two unrepresentable together, which is
+			// why a building that failed and was fixed could not be told from
+			// one that had never failed.
 			b.Problems++
-			b.Status = StatusBroken
-		} else if next := statusFor(c.Action); rank(next) > rank(b.Status) {
-			// Progress only moves forward. A status is overwritten solely by
-			// one further along, so reading a file cannot un-build a building
-			// that was already constructed — the town would erase visible
-			// work the moment the agent looked at it again.
-			b.Status = next
+			b.Damaged = true
+			return w
+		}
+
+		switch c.Action {
+		case ActionBuild, ActionHammer, ActionTest:
+			// Work that succeeds repairs the building, whether or not it also
+			// moves it on. These are separate facts: a building at the top of
+			// the ladder cannot advance, and repairing it must not depend on
+			// finding a rank above the one it already holds — coupling the two
+			// left a completed but damaged building permanently damaged, because
+			// there was no next rank to reach.
+			b.Damaged = false
+			// At most one rank per event, so the ladder is climbed part by part
+			// and never skipped. Reads, shell commands and planning events
+			// cannot advance it at all.
+			if next, advanced := advanceBy(b.Status, c.Action); advanced {
+				b.Status = next
+			}
 		}
 	}
 
@@ -152,40 +281,6 @@ func placeKey(c Classification) string {
 		return analyzer.SiteIDBuildingPrefix + c.Path
 	}
 	return string(c.Place)
-}
-
-// statusRank orders the stages so progress can be compared.
-//
-// Broken is excluded deliberately: it is not a stage of construction but a
-// condition, set by a failure and cleared by the next success at whatever
-// rank that success reaches.
-func rank(s Status) int {
-	switch s {
-	case StatusUntouched:
-		return 0
-	case StatusTesting:
-		return 1
-	case StatusConstructing:
-		return 2
-	case StatusCompleted:
-		return 3
-	default:
-		return 0
-	}
-}
-
-// statusFor maps an action onto the building stage it implies.
-func statusFor(a Action) Status {
-	switch a {
-	case ActionBuild, ActionHammer:
-		return StatusConstructing
-	case ActionTest:
-		return StatusTesting
-	case ActionDemolish:
-		return StatusBroken
-	default:
-		return StatusUntouched
-	}
 }
 
 // StartSession creates a crew for a session.

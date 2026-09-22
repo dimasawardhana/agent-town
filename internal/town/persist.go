@@ -8,10 +8,18 @@ import (
 	"time"
 )
 
-// persistenceVersion guards the on-disk shape. A file written by an older
-// build is discarded rather than misread: the town is a cache of what
-// happened, and starting fresh beats starting wrong.
-const persistenceVersion = 1
+// persistenceVersion guards the on-disk shape. A file written by an older build
+// is discarded rather than misread: the town is a cache of what happened, and
+// starting fresh beats starting wrong.
+//
+// Bumped to 2 when damage was split out of the status. A version-1 file holds
+// statuses from the old five-word vocabulary — `untouched`, `constructing`,
+// `broken` — and `broken` is not a rank on the ladder, so loading one would put
+// a value in the field that no stage matches and the building would draw as
+// whatever the fallback happened to be. Discarding is the only honest option:
+// the events themselves are not persisted yet (ADR-0003), so the ladder cannot
+// be reconstructed from a stale file.
+const persistenceVersion = 2
 
 // stored is the on-disk shape of the live state.
 //

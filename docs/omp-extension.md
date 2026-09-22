@@ -1,7 +1,8 @@
-# Installing the AI Town extension for omp
+# The omp extension: how it works inside the agent
 
-AI Town watches an omp session through an extension that runs inside the omp
-process and forwards agent activity to the AI Town daemon.
+**To install it, see [install.md](install.md).** This document is about the
+agent-side mechanics — why an extension is the only option for omp, which hooks
+it uses, and what it cannot do.
 
 ## Why an extension
 
@@ -13,44 +14,23 @@ random bearer token and are not addressable from outside.
 An extension is therefore the **only** way to observe omp live. Unlike
 opencode, there is no server to subscribe to.
 
-## Install
+## Discovery
 
-Project-local, scoped to one repository:
+Two locations, both scanned automatically with no CLI flag:
 
-```bash
-mkdir -p .omp/extensions
-cp internal/agent/extension/ai-town.ts .omp/extensions/ai-town.ts
+```
+.omp/extensions/ai-town.ts          project-local
+~/.omp/agent/extensions/ai-town.ts  global
 ```
 
-Global, covering every omp session on the machine:
-
-```bash
-mkdir -p ~/.omp/agent/extensions
-cp internal/agent/extension/ai-town.ts ~/.omp/agent/extensions/ai-town.ts
-```
-
-Both paths auto-discover with no CLI flag. omp has **no trust gate** — unlike
-pi, whose project-local extensions do not load headlessly without `--approve`.
-
-## How AI Town uses it
-
-1. The daemon listens on a loopback port and prints `AI_TOWN_URL=...` on
-   stdout, plus the UI address on stderr.
-2. Start omp with that variable set:
-
-   ```bash
-   AI_TOWN_URL="http://127.0.0.1:<port>" omp
-   ```
-
-3. The extension loads when the first session starts in a directory, and sends
-   a `hello` frame.
-4. AI Town treats the `hello` as proof the extension is live.
+omp has **no trust gate** — unlike pi, whose project-local extensions do not
+load headlessly without `--approve`.
 
 A globally installed extension runs for **every** omp session, not only the
-ones AI Town watches. That is safe by design: the extension does nothing
-unless `AI_TOWN_URL` is set, and the daemon rejects directories it does not
-watch with 403, at which point the extension stops forwarding entirely rather
-than retrying forever.
+ones AI Town serves. That is safe by design: the daemon rejects directories it
+does not serve with `403`, and the extension stops forwarding for *that
+directory only* — one unwatched project must not silence a watched one in the
+same process.
 
 ## What it forwards
 
@@ -72,12 +52,22 @@ carry the tool's arguments — only `tool_execution_start` does, and
 start and merges them into the end frame. Without that, every event would
 arrive with no file path and no worker would have anywhere to stand.
 
+## How it finds the daemon
+
+`AI_TOWN_URL`, or `http://127.0.0.1:7777` when unset. The default exists so the
+common install needs no configuration (ADR-0016).
+
+One port can be guessed; a search cannot. The extension does **not** scan for a
+daemon, because probing several addresses would make AI Town's presence
+observable through timing and log noise — which is what the fail-closed rule
+exists to prevent. A daemon on a non-default port therefore needs the variable.
+
 ## Durability
 
-The extension keeps an in-memory queue and retries on a timer, so a daemon
-that is restarting costs latency rather than history. Verified: with the
-listener down as a session began and started a few seconds in, all four
-queued frames arrived in order.
+The extension keeps an in-memory queue and retries on a timer, so a daemon that
+is restarting costs latency rather than history. Verified: with the listener
+down as a session began and started a few seconds in, all four queued frames
+arrived in order.
 
 Two honest limits:
 
@@ -94,7 +84,8 @@ Two honest limits:
 
 If the daemon logs no handshake, the extension did not load. Check, in order:
 
-1. `AI_TOWN_URL` is set in the environment omp inherited.
+1. `AI_TOWN_URL` is set in the environment omp inherited — or that the daemon
+   is on the default port.
 2. The file is at `.omp/extensions/ai-town.ts` or
    `~/.omp/agent/extensions/ai-town.ts` — both are scanned, no flag needed.
 3. omp is 18.0.3 or later.

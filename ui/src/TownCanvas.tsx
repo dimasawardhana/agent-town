@@ -19,10 +19,20 @@ export function TownCanvas() {
 
     // Phaser CANVAS is required by the overlay decision (ADR-0002): WebGL and
     // a DOM overlay contend for the same pixels.
+    //
+    // `pixelArt` is load-bearing, not a preference. It makes Phaser set
+    // antialias and antialiasGL false and roundPixels true, and those feed
+    // `TextureSource.init`, which is what sets every texture's filter to
+    // NEAREST. Without it the canvas renderer draws each sprite with
+    // `imageSmoothingEnabled = true` and the whole town is bilinear-filtered:
+    // every edge softens, the 1px ink outlines turn grey, and the art stops
+    // reading as pixel art. Verified against the live game: with this absent,
+    // `config.antialias` was true and the atlas texture's scaleMode was LINEAR.
     const g = new Phaser.Game({
       type: Phaser.CANVAS,
       parent: host.current,
-      backgroundColor: "#11161d",
+      backgroundColor: "#0e141c",
+      pixelArt: true,
       scale: {
         mode: Phaser.Scale.RESIZE,
         autoCenter: Phaser.Scale.NO_CENTER,

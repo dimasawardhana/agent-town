@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,12 +14,21 @@ import (
 // Receiver accepts frames from the AI Town forwarder extension.
 //
 // It enforces the one guarantee the HTTP/SSE transport could not provide:
-// only the directories AI Town explicitly watches are accepted. An extension
-// running globally will fire for unrelated projects; those frames are
-// rejected with 403 and the extension stops forwarding (docs/adr/0009).
+// only the directories AI Town serves are accepted. An extension running
+// globally will fire for unrelated projects; those frames are rejected with
+// 403 and the extension stops forwarding for that directory (docs/adr/0009).
+//
+// A served directory owns everything beneath it, so an agent started in a
+// package of an imported monorepo is still AI Town's to observe. Ownership is
+// decided per frame rather than remembered, so adding a project while its
+// agent is already running takes effect on that agent's next frame.
 type Receiver struct {
-	// watched is the set of absolute directories AI Town is observing.
-	// A frame from any other directory is rejected.
+	// watched is the set of absolute roots AI Town is observing, used by the
+	// single-project daemon where the process serves exactly one town. A frame
+	// is accepted when one of these owns its directory.
+	//
+	// A multi-project daemon leaves this empty and answers through OnOwner
+	// instead, so membership lives in its registry alone.
 	mu      sync.Mutex
 	watched map[string]bool
 
@@ -32,9 +42,18 @@ type Receiver struct {
 	// scalar would let one project's overflow suppress another's.
 	lastDropped map[string]int64
 
-	// OnEvent receives normalized events. Called from the HTTP handler, so
-	// it must not block.
-	OnEvent func(UnifiedAgentEvent)
+	// OnOwner decides whether the daemon wants a frame whose directory is dir,
+	// which is absolute. A false answer is the 403 path.
+	//
+	// When set it is authoritative: a multi-project daemon keeps membership in
+	// its registry (docs/adr/0014), and a second copy of that rule here could
+	// only disagree with it.
+	OnOwner func(dir string) bool
+
+	// OnEvent receives normalized events, along with the directory the frame
+	// came from so the daemon can fold them into the owning project. Called
+	// from the HTTP handler, so it must not block.
+	OnEvent func(directory string, ev UnifiedAgentEvent)
 
 	// OnGap is called when the extension's sequence indicates lost frames.
 	OnGap func(directory string, lost int64)
@@ -48,13 +67,17 @@ type Receiver struct {
 	OnHello func(directory string)
 
 	// OnSessionEnd is called when an extension reports its session finished,
-	// so the crew can be stood down rather than left frozen mid-action.
-	OnSessionEnd func(session string)
+	// so the crew can be stood down rather than left frozen mid-action. The
+	// directory says which crew: a daemon serves several projects (ADR-0014),
+	// and a session id is only unique within the agent that issued it.
+	OnSessionEnd func(directory, session string)
 }
 
 // NewReceiver creates a receiver watching the given directories.
+//
 // Paths are resolved to absolute form so an extension reporting a symlinked or
-// relative path still matches.
+// relative path still matches. A multi-project daemon passes none and sets
+// OnOwner instead, keeping membership in its registry.
 func NewReceiver(dirs ...string) *Receiver {
 	w := make(map[string]bool, len(dirs))
 	for _, d := range dirs {
@@ -67,6 +90,61 @@ func NewReceiver(dirs ...string) *Receiver {
 		lastSeq:     make(map[string]int64),
 		lastDropped: make(map[string]int64),
 	}
+}
+
+// wants reports whether the daemon serves a directory.
+//
+// OnOwner wins when set, so the registry stays the single authority on which
+// projects exist. Otherwise the static set is consulted, which is what the
+// single-project daemon uses.
+func (r *Receiver) wants(dir string) bool {
+	if r.OnOwner != nil {
+		return r.OnOwner(dir)
+	}
+	return r.ProjectFor(dir) != ""
+}
+
+// ProjectFor returns the watched root that owns dir, or "" when none does.
+//
+// The longest match wins, so nested roots — a monorepo and one of its packages
+// both imported — attribute a frame to the package rather than to the monorepo.
+//
+// An empty directory returns "": filepath.Abs("") resolves to the daemon's own
+// working directory, so accepting it would fold an unattributable frame into
+// whichever project townd happened to be started in.
+func (r *Receiver) ProjectFor(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	best := ""
+	for root := range r.watched {
+		if !owns(root, abs) {
+			continue
+		}
+		if len(root) > len(best) {
+			best = root
+		}
+	}
+	return best
+}
+
+// owns reports whether root contains dir, on a path-segment boundary.
+//
+// The separator is what makes this correct: a bare prefix test would accept
+// /repo-other as a child of /repo and hand one project's activity to another.
+func owns(root, dir string) bool {
+	if dir == root {
+		return true
+	}
+	return strings.HasPrefix(dir, root+string(filepath.Separator))
 }
 
 // ServeHTTP implements http.Handler for the /events endpoint.
@@ -96,12 +174,9 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	r.mu.Lock()
-	allowed := r.watched[dir]
-	r.mu.Unlock()
-
-	if !allowed {
-		// Not our project. Reject so the extension stops forwarding.
+	if !r.wants(dir) {
+		// Not a project the daemon serves. Reject so the extension stops
+		// forwarding this directory, and only this one.
 		log.Printf("agent: rejected frame from unwatched directory %q", dir)
 		http.Error(w, "directory not watched", http.StatusForbidden)
 		return
@@ -109,7 +184,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if frame.Kind == "session.end" {
 		if r.OnSessionEnd != nil {
-			r.OnSessionEnd(frame.SessionID)
+			r.OnSessionEnd(dir, frame.SessionID)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -181,7 +256,9 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	for _, ev := range events {
 		if r.OnEvent != nil {
-			r.OnEvent(ev)
+			// The directory travels with the event so the daemon can fold it
+			// into the owning project rather than guessing from the path.
+			r.OnEvent(dir, ev)
 		}
 	}
 

@@ -606,7 +606,8 @@ Districts group related buildings. Each building represents a deployable unit or
 
 # 12. Building Model
 
-Each significant software domain can become a building.
+Each significant software domain can become a building. A directory holding
+source files directly is a building; one holding none is not.
 
 Example:
 
@@ -616,58 +617,78 @@ Example:
   "type": "service",
   "name": "Authentication",
   "path": "internal/auth",
-  "status": "CONSTRUCTING",
-  "progress": 0.72
+  "status": "walled",
+  "damaged": false
 }
 ```
 
-Building states:
+Building states — one ordered ladder, each rank adding exactly one part:
 
 ```text
-PLANNED
-FOUNDATION
-CONSTRUCTING
-TESTING
-COMPLETED
-BROKEN
-ARCHIVED
+PLANNED      the plot is staked out
+   ↓
+FOUNDATION   footings dug, spoil heaped
+   ↓
+FRAMED       pillars and beams up, open to the sky
+   ↓
+WALLED       the shell is closed
+   ↓
+ROOFED       the roof is on, weathertight
+   ↓
+GLAZED       windows fitted
+   ↓
+DOORED       door hung
+   ↓
+COMPLETED    trimmed, plinth, chimney
 ```
+
+The first four ranks are structure and are raised by making changes; the last
+three are finish and are raised by passing tests. See ADR-0018 for why, and for
+what happened to the states named here originally.
+
+Damage is **not** a state. It is a condition held separately (`damaged`), drawn
+over whatever the building has reached, and repaired by the next success. A
+failed tool never moves a building down the ladder.
+
+## Superseded
+
+This section originally described a flat list — PLANNED, FOUNDATION,
+CONSTRUCTING, TESTING, COMPLETED, BROKEN, ARCHIVED — alongside a `progress`
+float, and §13 named a different sequence again (STRUCTURE, FUNCTIONAL). The
+flat list conflated progress with condition, and the two lists disagreed with
+each other; both are replaced above.
+
+`ARCHIVED` is deliberately not implemented: a project whose path disappears is
+*Unreadable* at the project level (ADR-0015), and no event could archive one
+building.
 
 ---
 
 # 13. Construction Progress
 
-Buildings should visually evolve.
+Buildings visibly evolve, and the ladder *is* the progress model.
 
-Example:
+There is no progress number to interpolate, and the `progress` float this
+section originally specified was removed rather than built. Interpolating a
+fraction would draw work that did not happen — a building two-thirds of the way
+up a wall it never had — and the case that motivated the float, "how far along
+is this?", is answered better and more honestly by naming which part is standing.
 
-```text
-PLANNED
-   ↓
-FOUNDATION
-   ↓
-STRUCTURE
-   ↓
-FUNCTIONAL
-   ↓
-TESTING
-   ↓
-COMPLETED
-```
-
-Progress may be calculated using multiple signals:
+Progress is computed from signals that are already in the event stream:
 
 ```text
-Files created
-Files modified
-Tests created
-Tests passing
-Dependencies added
-Git commits
-Architecture classification
+Changes    (FILE_CREATED, FILE_EDITED, and the tools that produce them)
+               → one structural rank each, up to ROOFED
+Tests      (a passing test naming this building)
+               → one finishing rank each, up to COMPLETED
+Failures   (any tool returning an error)
+               → damage, never a rank
 ```
 
-The exact algorithm should initially be simple and deterministic.
+The algorithm is deterministic and deliberately simple: one event advances at
+most one rank, nothing is inferred from file counts, and a whole-repo test run
+(`go test ./...`) advances no single building because it names none. See
+ADR-0018.
 
 ---
 
@@ -1158,7 +1179,7 @@ For MVP: SQLite or a lightweight local database.
 **Materialized state stores**:
 
 ```text
-current buildings (id, type, name, path, status, progress)
+current buildings (id, type, name, path, status, damaged, problems, touches)
 current workers (id, session_id, agent, state, target)
 current districts
 town visual layout
@@ -1318,7 +1339,7 @@ The MVP should be deliberately small.
 ✓ Spawn worker
 ✓ Worker animations
 ✓ Map events to buildings
-✓ Update building progress
+✓ Advance building progress up the ladder
 ✓ Session completion
 ✓ Persist town
 ✓ View building details

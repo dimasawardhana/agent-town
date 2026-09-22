@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite build --watch"
+    "dev": "vite build --watch",
+    "test:art": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-art.test.mjs test/art.test.ts --log-level=warning && node --test ui-art.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "phaser": "^4.2.1",

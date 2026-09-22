@@ -11,7 +11,9 @@
 //     `fetch().catch(() => {})` discards events silently; this queue does not.
 //  3. Every frame carries a monotonic `seq` so AI Town can detect gaps.
 //  4. It must never forward a project AI Town is not watching. The daemon
-//     rejects unknown directories with 403, and this stops on that.
+//     rejects unknown directories with 403, and this stops forwarding for
+//     that directory only — one unwatched project must not silence a watched
+//     one in the same process.
 //  5. It must never break the agent. ONLY observation hooks are used:
 //     `tool_execution_start` / `tool_execution_end`. omp's `tool_call` hook
 //     fails CLOSED — a throwing handler blocks the developer's tool.
@@ -29,16 +31,33 @@ let seq = 0;
 let draining = false;
 let redrain = false;
 let dropped = 0;
-let disabled = false;
+// Directories the daemon has refused. Keyed per directory rather than held as
+// one flag: a single process can answer several directories, and a rejection
+// for one must not blind the others.
+const refused = new Set<string>();
+
+function isRefused(dir: string): boolean {
+  return refused.has(dir);
+}
 
 // toolCallId -> args, captured at tool start. Required because omp omits args
 // from the end event (verified live: end keys are
 // ['type','toolCallId','toolName','result','isError']).
 const pendingArgs: Record<string, unknown> = {};
 
+// DEFAULT_URL is where the daemon listens when it is not told otherwise.
+//
+// ADR-0016 relaxes the fail-closed rule far enough to *attempt* a default
+// address, which removes the environment variable from the common install.
+//
+// AI_TOWN_URL is still needed when the daemon was started on another port with
+// --port, and for nothing else: the extension cannot look up what port a
+// daemon actually chose, so it can only guess the default. Silence on failure
+// is still required, which is why a wrong guess produces no diagnostic.
+const DEFAULT_URL = "http://127.0.0.1:7777";
+
 function target(): string {
-  const base = process.env.AI_TOWN_URL;
-  if (!base) return "";
+  const base = process.env.AI_TOWN_URL || DEFAULT_URL;
   return base.replace(/\/$/, "") + "/events";
 }
 
@@ -62,7 +81,7 @@ const SHUTDOWN_FLUSH_MS = 1500;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRetry(TARGET: string): void {
-  if (retryTimer || disabled) return;
+  if (retryTimer) return;
   retryTimer = setTimeout(() => {
     retryTimer = null;
     void drain(TARGET);
@@ -104,18 +123,15 @@ async function drain(TARGET: string): Promise<void> {
         clearTimeout(abort);
       }
       if (res.status === 403) {
-        // AI Town does not watch this directory. Drop this frame and stop
-        // forwarding from here, so an unrelated project is never shipped.
-        //
-        // Note this is process-wide, which is correct only because omp
-        // answers one directory per process: each directory gets its own
-        // module instance (verified — two directories spawned separately
-        // both reported load #1). If a future omp ever drove two watched and
-        // unwatched directories in one process, this would need to key on
-        // the frame's directory rather than a module-level flag.
-        disabled = true;
-        queue = [];
-        break;
+        // AI Town does not serve this directory. Stop forwarding for it, so an
+        // unrelated project is never shipped, while leaving every other
+        // directory in this process forwarding normally.
+        const dir = String(frame.directory ?? "");
+        if (dir) refused.add(dir);
+        // Drop only this directory's frames; the rest of the queue is for
+        // projects the daemon still wants.
+        queue = queue.filter((f) => String(f.directory ?? "") !== dir);
+        continue;
       }
       if (!res.ok) {
         stalled = true;
@@ -128,7 +144,7 @@ async function drain(TARGET: string): Promise<void> {
   }
 
   // Work that arrived while this drain was in flight.
-  if (redrain && !disabled) {
+  if (redrain) {
     redrain = false;
     void drain(TARGET);
     return;
@@ -137,7 +153,10 @@ async function drain(TARGET: string): Promise<void> {
 }
 
 function send(TARGET: string, frame: Frame): void {
-  if (disabled || !TARGET) return;
+  if (!TARGET) return;
+  // A refused directory stops queueing entirely, so a globally-installed
+  // extension does not accumulate frames for a project nobody is watching.
+  if (isRefused(String(frame.directory ?? ""))) return;
   seq += 1;
   queue.push({ ...frame, seq, dropped });
   if (queue.length > MAX_QUEUE) {
@@ -150,11 +169,6 @@ function send(TARGET: string, frame: Frame): void {
 
 export default function (pi: any) {
   const TARGET = target();
-  if (!TARGET) {
-    // No daemon configured. Stay completely inert: the agent must behave
-    // identically whether or not AI Town is installed.
-    return;
-  }
 
   // flush drains what is left at session end, ignoring the retry timer.
   //
@@ -173,12 +187,14 @@ export default function (pi: any) {
     }
 
     const deadline = Date.now() + budgetMs;
-    while (Date.now() < deadline && !disabled) {
+    while (Date.now() < deadline) {
       // Wait out a drain already in progress rather than racing it.
       while (draining && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 10));
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 10);
+        await promise;
       }
-      if (queue.length === 0 || disabled) return;
+      if (queue.length === 0) return;
 
       const before = queue.length;
       await drain(TARGET);

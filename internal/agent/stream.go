@@ -22,23 +22,32 @@ import (
 //     frame let it detect what it missed.
 type Broadcaster struct {
 	mu   sync.Mutex
-	subs map[chan []byte]struct{}
+	subs map[chan []byte]string // channel -> the project it wants, "" for all
 }
 
 // NewBroadcaster creates an empty broadcaster.
 func NewBroadcaster() *Broadcaster {
-	return &Broadcaster{subs: make(map[chan []byte]struct{})}
+	return &Broadcaster{subs: make(map[chan []byte]string)}
 }
 
-// Publish delivers a frame to every subscriber.
+// Publish delivers a frame to the subscribers watching that project.
+//
+// project scopes the delivery: a daemon serves several towns (ADR-0014), and a
+// client viewing one must never be handed another's snapshot, which would
+// redraw the wrong town. Filtering here rather than in the browser keeps the
+// daemon the single authority on routing, as ADR-0013 requires. An empty
+// project means the frame belongs to no particular one and goes to everyone.
 //
 // A subscriber whose channel is full is skipped, not waited on. Dropping one
 // frame is recoverable — the sequence number exposes the gap — whereas
 // blocking would stall every other subscriber and the ingest path with them.
-func (b *Broadcaster) Publish(frame []byte) {
+func (b *Broadcaster) Publish(project string, frame []byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for ch := range b.subs {
+	for ch, want := range b.subs {
+		if want != "" && project != "" && want != project {
+			continue
+		}
 		select {
 		case ch <- frame:
 		default:
@@ -47,12 +56,13 @@ func (b *Broadcaster) Publish(frame []byte) {
 	}
 }
 
-// Subscribe registers a new subscriber and returns its channel plus a
-// function to call on disconnect. The unsubscribe function is idempotent.
-func (b *Broadcaster) Subscribe() (<-chan []byte, func()) {
+// Subscribe registers a subscriber for one project and returns its channel
+// plus a function to call on disconnect. An empty project receives every
+// frame. The unsubscribe function is idempotent.
+func (b *Broadcaster) Subscribe(project string) (<-chan []byte, func()) {
 	ch := make(chan []byte, 256)
 	b.mu.Lock()
-	b.subs[ch] = struct{}{}
+	b.subs[ch] = project
 	b.mu.Unlock()
 
 	return ch, func() {
@@ -104,7 +114,9 @@ func (b *Broadcaster) StreamHandler() http.Handler {
 		fmt.Fprint(w, ": connected\n\n")
 		flusher.Flush()
 
-		frames, unsubscribe := b.Subscribe()
+		// The UI names the project it is viewing. An absent parameter means
+		// every project, which is what the single-project path always wanted.
+		frames, unsubscribe := b.Subscribe(r.URL.Query().Get("project"))
 		defer unsubscribe()
 
 		// Keepalive: a comment line every 15s keeps intermediaries from
