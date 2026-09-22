@@ -37,6 +37,16 @@ func ev(session, tool, path, result string) agent.UnifiedAgentEvent {
 	}
 }
 
+// testEvent is a shell event running a test command. It carries a command
+// rather than a path, which is the whole reason `Classify` has to read the
+// command string to find out which building a test is about.
+func testEvent(session, cmd, result string) agent.UnifiedAgentEvent {
+	e := ev(session, "bash", "", result)
+	e.Type = "COMMAND_COMPLETED"
+	e.Target.Command = cmd
+	return e
+}
+
 func TestSessionSpawnsOneWorker(t *testing.T) {
 	tw := liveTown(t, "src/a.ts")
 
@@ -73,11 +83,16 @@ func TestTwoSessionsAreTwoCrews(t *testing.T) {
 	}
 }
 
-// A failed tool damages the place rather than advancing it.
-func TestFailureLeavesAConstructionProblem(t *testing.T) {
+// A failed tool damages the place rather than advancing it, and does not undo
+// the progress it had. Damage and progress are separate facts: a building can
+// be half-built and broken at once, which the earlier single-status shape could
+// not express.
+func TestFailureDamagesWithoutRollingBackProgress(t *testing.T) {
 	tw := liveTown(t, "src/a.ts")
 
 	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	built := tw.Snapshot().Buildings[0].Status
+
 	tw.Apply(ev("s1", "edit", "src/a.ts", "error"))
 
 	snap := tw.Snapshot()
@@ -88,8 +103,24 @@ func TestFailureLeavesAConstructionProblem(t *testing.T) {
 	if b.Problems != 1 {
 		t.Errorf("problems = %d, want 1", b.Problems)
 	}
-	if b.Status != StatusBroken {
-		t.Errorf("status = %q, want broken", b.Status)
+	if !b.Damaged {
+		t.Error("a failed tool must leave the building damaged")
+	}
+	if b.Status != built {
+		t.Errorf("status = %q after a failure, want it unchanged at %q; a failure is damage, not a stage", b.Status, built)
+	}
+
+	// A later success repairs it, without undoing the climb.
+	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	b = tw.Snapshot().Buildings[0]
+	if b.Damaged {
+		t.Error("a successful change must clear the damage")
+	}
+	if b.Problems != 1 {
+		t.Errorf("problems = %d, want the historical count 1", b.Problems)
+	}
+	if rank(b.Status) <= rank(built) {
+		t.Errorf("status = %q, want to have advanced past %q", b.Status, built)
 	}
 }
 
@@ -329,15 +360,226 @@ func TestStatePathIsStableAndProjectSpecific(t *testing.T) {
 	}
 }
 
+// A read must not un-build a building: looking at work is not doing it.
 func TestStatusDoesNotRegress(t *testing.T) {
 	tw := liveTown(t, "src/a.ts")
 	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
-	if got := tw.Snapshot().Buildings[0].Status; got != StatusConstructing {
-		t.Fatalf("after edit status = %q, want constructing", got)
+	afterEdit := tw.Snapshot().Buildings[0].Status
+	if afterEdit != StatusFoundation {
+		t.Fatalf("after one edit status = %q, want foundation", afterEdit)
 	}
-	// A later read must not un-build the building.
+
+	// A read changes nothing, however many times it happens.
+	for range 5 {
+		tw.Apply(ev("s1", "read", "src/a.ts", "success"))
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != afterEdit {
+		t.Errorf("reads moved status to %q, want it unchanged at %q", got, afterEdit)
+	}
+}
+
+// Every rank must be reachable, and reached one part at a time.
+//
+// This is the test that would have caught the original defect. The ladder
+// declared `completed`, ranked it highest, and nothing could ever set it —
+// because tests were classified to the Yard and so never reached a building,
+// and because the ranks were ordered so that `constructing` sat above
+// `testing`. A ladder with an unreachable top is not a ladder.
+func TestEveryRankIsReachableOnePartAtATime(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	ladder := AllStatuses()
+
+	// A new building starts at the bottom.
 	tw.Apply(ev("s1", "read", "src/a.ts", "success"))
-	if got := tw.Snapshot().Buildings[0].Status; got != StatusConstructing {
-		t.Errorf("a read regressed status to %q; a building that was built does not become unbuilt by being looked at", got)
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusPlanned {
+		t.Fatalf("a building that only has been read is %q, want planned", got)
+	}
+
+	// Climb with changes alone: that reaches the roofed rank and stops there.
+	for range ladder {
+		tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusRoofed {
+		t.Fatalf("after %d edits status = %q, want roofed; a change makes structure, not finish", len(ladder), got)
+	}
+
+	// The finish ranks need passing tests.
+	for range ladder {
+		tw.Apply(testEvent("s1", "go test ./src", "success"))
+	}
+	got := tw.Snapshot().Buildings[0].Status
+	if got != StatusCompleted {
+		t.Fatalf("after tests status = %q, want completed; the top of the ladder must be reachable", got)
+	}
+
+	// And no single event may skip a rank.
+	tw2 := liveTown(t, "src/a.ts")
+	prev := StatusPlanned
+	for i := 1; i < len(ladder); i++ {
+		if i <= rank(StatusRoofed) {
+			tw2.Apply(ev("s1", "edit", "src/a.ts", "success"))
+		} else {
+			tw2.Apply(testEvent("s1", "go test ./src", "success"))
+		}
+		now := tw2.Snapshot().Buildings[0].Status
+		if rank(now) != rank(prev)+1 {
+			t.Fatalf("step %d went from %q to %q, want exactly one rank up", i, prev, now)
+		}
+		prev = now
+	}
+}
+
+// A test cannot finish a building that has no roof on it.
+func TestTestsDoNotFinishAnUnbuiltBuilding(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	early := tw.Snapshot().Buildings[0].Status
+
+	for range 10 {
+		tw.Apply(testEvent("s1", "go test ./src", "success"))
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != early {
+		t.Errorf("tests advanced a roofless building from %q to %q; a test verifies work, it does not raise a roof", early, got)
+	}
+}
+
+// The ladder itself must be ordered, unique and complete.
+func TestStatusLadderIsStrictlyIncreasing(t *testing.T) {
+	ladder := AllStatuses()
+	if len(ladder) != 8 {
+		t.Errorf("ladder has %d ranks, want 8: %v", len(ladder), ladder)
+	}
+	seen := map[Status]bool{}
+	for i, s := range ladder {
+		if s == "" {
+			t.Error("an empty status is on the ladder")
+		}
+		if seen[s] {
+			t.Errorf("duplicate status %q", s)
+		}
+		seen[s] = true
+		if rank(s) != i {
+			t.Errorf("rank(%q) = %d, want its index %d", s, rank(s), i)
+		}
+	}
+	if rank(Status("not-a-real-status")) != 0 {
+		t.Error("an unknown status must rank 0, so it can never claim progress")
+	}
+	if nextAfter(StatusCompleted) != StatusCompleted {
+		t.Error("the top of the ladder must be a fixed point")
+	}
+}
+
+// A state file written by the previous vocabulary must be discarded, not
+// misread. The old `broken` is not a rank on the ladder, so loading one would
+// seat a value no stage matches and the building would draw as the fallback.
+func TestLoadDiscardsAStateFileFromTheOldVocabulary(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "src/a.ts")
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A version-1 file, exactly as the previous build wrote it, carrying the
+	// old statuses.
+	legacy := `{"version":1,"updated":1,"buildings":[{"path":"src","touches":9,"problems":1,"lastAgent":"omp","status":"broken","updated":1}]}`
+	path := filepath.Join(root, "state.json")
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	if err := tw.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := tw.Snapshot().Buildings; len(got) != 0 {
+		t.Errorf("loaded %d building(s) from a stale file, want none: %+v", len(got), got)
+	}
+}
+
+// The current shape round-trips, including the damage flag.
+func TestSaveAndLoadRoundTripTheLadder(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "src/a.ts")
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	tw.Apply(ev("s1", "edit", "src/a.ts", "error")) // damages it
+	want := tw.Snapshot().Buildings[0]
+
+	path := filepath.Join(root, "state.json")
+	if err := tw.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	restored := New(at)
+	if err := restored.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := restored.Snapshot().Buildings
+	if len(got) != 1 {
+		t.Fatalf("got %d buildings, want 1", len(got))
+	}
+	if got[0].Status != want.Status {
+		t.Errorf("status = %q, want %q", got[0].Status, want.Status)
+	}
+	if got[0].Damaged != want.Damaged {
+		t.Errorf("damaged = %v, want %v", got[0].Damaged, want.Damaged)
+	}
+	if got[0].Problems != want.Problems {
+		t.Errorf("problems = %d, want %d", got[0].Problems, want.Problems)
+	}
+}
+
+// writeSource puts a source file in a throwaway repo.
+func writeSource(t *testing.T, root, rel string) {
+	t.Helper()
+	full := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Repairing must not depend on advancing. A building at the top of the ladder
+// has nowhere to go, and coupling the two left a completed but damaged building
+// permanently damaged — there was no next rank to reach, so the repair never ran.
+func TestRepairWorksAtTheTopOfTheLadder(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+
+	// Climb to the top.
+	for range AllStatuses() {
+		tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	}
+	for range AllStatuses() {
+		tw.Apply(testEvent("s1", "go test ./src", "success"))
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusCompleted {
+		t.Fatalf("status = %q, want completed", got)
+	}
+
+	// Break it, then repair it with work that cannot advance anything.
+	tw.Apply(testEvent("s1", "go test ./src", "error"))
+	if !tw.Snapshot().Buildings[0].Damaged {
+		t.Fatal("a failed test must damage the building")
+	}
+	tw.Apply(testEvent("s1", "go test ./src", "success"))
+
+	b := tw.Snapshot().Buildings[0]
+	if b.Damaged {
+		t.Error("a successful test must repair a completed building; there is no rank above it to advance to")
+	}
+	if b.Status != StatusCompleted {
+		t.Errorf("status = %q, want it to stay completed", b.Status)
+	}
+	if b.Problems != 1 {
+		t.Errorf("problems = %d, want the historical count 1", b.Problems)
 	}
 }

@@ -71,9 +71,23 @@ export interface Worker {
 export interface BuildingState {
   path: string;
   touches: number;
+  /** The running count of failures here: history, never cleared. */
   problems: number;
+  /** Whether the building is currently damaged. A condition, not a stage. */
+  damaged: boolean;
   lastAgent: string;
-  status: "untouched" | "constructing" | "testing" | "completed" | "broken";
+  // The construction ladder, mirroring internal/town's Status values in order.
+  // Kept as a union rather than a string so a stage the daemon can emit but the
+  // renderer cannot draw is a type error rather than a blank building.
+  status:
+    | "planned"
+    | "foundation"
+    | "framed"
+    | "walled"
+    | "roofed"
+    | "glazed"
+    | "doored"
+    | "completed";
   updated: number;
 }
 

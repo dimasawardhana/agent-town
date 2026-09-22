@@ -17,16 +17,36 @@ A domain boundary within a town, grouping related buildings. Districts map to ar
 _Avoid_: module, folder, namespace, group
 
 **Building**:
-A single deployable unit or service within a district. Each building has a lifecycle state (PLANNED → FOUNDATION → CONSTRUCTING → TESTING → COMPLETED → BROKEN → ARCHIVED) and tracks construction progress.
+A single deployable unit or service within a district. A building appears the moment its project is analyzed: a directory holding source files directly is a building, and one holding none is not. It is then built up a ladder, one part per rank, and never skips a rank:
+
+PLANNED → FOUNDATION → FRAMED → WALLED → ROOFED → GLAZED → DOORED → COMPLETED
+
+The first four ranks are structure and are raised by making changes: a change adds one course. The last three are finish and are raised by *passing tests*: a test is what says the work is sound enough to be fitted off. That split is what puts a test run on the building it verified, and it is the only way COMPLETED is reached.
 _Avoid_: service, package, component, module
 
+**Damage**:
+A building's current condition, not a stage: whether the most recent work on it failed. Damage is drawn *over* whatever the building has reached — rubble, a crack, a hole in the roof — and a later successful change or test repairs it. It never rolls the ladder back, because a failed command must not erase the progress it did not cause. The count of failures is kept separately as history.
+_Avoid_: broken, error state, health
+
 **Construction Problem**:
-A physical defect in a building representing a failure or error. Triggered by a failed tool call, a test failure, or an agent error.
+A physical defect in a building representing a failure or error. Triggered by a failed tool call, a test failure, or an agent error. It is what *damage* shows: the defect is the event, the damage is what is visible on the building because of it.
 _Avoid_: bug, error, issue, defect
 
 **Construction Activity**:
 The visual representation of a normalized event mapped to a building. A FILE_EDITED event becomes a worker hammering; a failed tool becomes a construction problem.
 _Avoid_: action, task, animation, interaction
+
+**Section**:
+Any rectangle of ground the map draws as its own place: a district's plate, or one of the three special places. Every section carries a **Kerb** — a hard ring of pixels along its own outline, a dark outer line with a bright inner one. It is what says where a section ends, and it is separate from the dithered band `terrain.ts` draws where two kinds of ground meet: the band marks a change of material, the kerb marks a boundary, and a boundary has to be legible at the fitted zoom where a whole district is ninety pixels across.
+_Avoid_: border, box, outline, frame
+
+**Placard**:
+A label with a board behind it. Every name the map letters — a district, a building, a place, or what a worker is doing — is set on a placard rather than as bare type, because bare type over grass and pebbles is genuinely hard to find at the fitted zoom. The board is dark and the type light, one pixel of ink bounds the board, and the type sits on a fixed baseline so labels on one street line up.
+_Avoid_: badge, chip, tooltip, caption box
+
+**Action Caption**:
+The placard above a worker saying what it is doing and to what — "Hammering / town" — where "Hammering" is the world's word for the animation being played and "town" is the building's own directory name. It exists so the map alone answers what a session is doing, without the side panel. Distinct from the panel's reading of the same action, which says the developer's word instead — "editing an existing file" — because the map is allowed to speak in the town's own terms and the panel is not.
+_Avoid_: label, tag, status text
 
 ### The work
 
@@ -137,6 +157,7 @@ _Avoid_: server, backend, collector, listener
 
 **Worker State Distinction**: THINKING = no tool calls, the agent is reasoning. READING = file access. IDLE = no activity within a timeout. See ADR-0004.
 
+**Building Lifecycle**: One ordered ladder of eight ranks, each adding exactly one part. Damage is a condition held separately, not a rank. The first four ranks are raised by changes, the last three by passing tests. See ADR-0018.
 **Metaphor Boundaries**: Ignore lists, empty directories, agent death, and multi-agent work are all defined. See ADR-0004.
 
 **Event Mapping Edge Cases**: Read/write cycles, rapid edits, nested tool calls, failed tool calls, multi-failure tests, infrastructure commands, mid-construction session end, duplicate events, large files. See ADR-0005.
@@ -164,6 +185,7 @@ _Avoid_: server, backend, collector, listener
 - ADR-0015: Analysis is bounded by a file budget, and detail is a display concern
 - ADR-0016: The extension may default its target address, but still fails silent
 - ADR-0017: The daemon checks Host and Origin on every request
+- ADR-0018: The building lifecycle is one ordered ladder, and damage is not a rank
 
 ## Resolved Questions
 

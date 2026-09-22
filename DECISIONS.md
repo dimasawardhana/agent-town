@@ -2,6 +2,14 @@
 
 All decisions made during the domain-modeling grilling session. These supersede ambiguous sections of the original PRD.
 
+> **Implementation status.** This is the transcript of the original grilling
+> session, kept for its reasoning. Some of it was never built, and where the
+> code and this file disagree, the code and `CONTEXT.md` are authoritative.
+> Notably: damage is now cleared by the next success rather than persisting to
+> session end (ADR-0018), and the rapid-edit batching in §14 and the inspection
+> progress in §17 were never implemented — no event is coalesced, and a read
+> advances nothing.
+
 ## 1. Town Scope
 
 - **One town = one git repository** (confirmed)

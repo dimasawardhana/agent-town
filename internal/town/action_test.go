@@ -3,6 +3,7 @@ package town
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent"
@@ -108,7 +109,9 @@ func TestSiteWideWorkLandsInTheYard(t *testing.T) {
 	}
 }
 
-func TestTestCommandGetsItsOwnAction(t *testing.T) {
+// A whole-repo test run names no one building, so it stays site-wide work.
+// Claiming it for a building would be a guess.
+func TestWholeRepoTestCommandGetsTheYard(t *testing.T) {
 	r := project(t, "src/a.ts")
 
 	for _, cmd := range []string{
@@ -120,7 +123,62 @@ func TestTestCommandGetsItsOwnAction(t *testing.T) {
 			t.Errorf("%q -> action %q, want testing", cmd, c.Action)
 		}
 		if c.Place != analyzer.PlaceYard {
-			t.Errorf("%q -> place %q, want yard", cmd, c.Place)
+			t.Errorf("%q -> place %q, want yard; it names no one building", cmd, c.Place)
+		}
+	}
+}
+
+// A test that names a directory is evidence about that building, so it must
+// resolve there. This is what puts a test run on the building it verified —
+// without it the finishing ranks of the ladder are unreachable.
+func TestScopedTestCommandResolvesToItsBuilding(t *testing.T) {
+	r := project(t, "internal/town/a.go", "internal/analyzer/b.go")
+
+	cases := map[string]string{
+		"go test ./internal/town":         "internal/town",
+		"go test ./internal/town/...":     "internal/town",
+		"go test internal/town":           "internal/town",
+		"go test -race ./internal/town":   "internal/town",
+		"vitest run internal/analyzer":    "internal/analyzer",
+		"pytest internal/town/persist.go": "internal/town",
+	}
+	for cmd, want := range cases {
+		t.Run(cmd, func(t *testing.T) {
+			c := classify("bash", map[string]any{"command": cmd}, r)
+			if c.Action != ActionTest {
+				t.Fatalf("action = %q, want testing", c.Action)
+			}
+			if c.Place != analyzer.PlaceBuilding {
+				t.Fatalf("place = %q (reason %q), want building", c.Place, c.Reason)
+			}
+			if c.Path != want {
+				t.Errorf("path = %q, want %q", c.Path, want)
+			}
+		})
+	}
+}
+
+// Floats, flags and bare words must never be mistaken for a directory: filing
+// a test run against whatever happened to match would be worse than not knowing.
+func TestTestCommandIgnoresFlagsAndBareWords(t *testing.T) {
+	r := project(t, "src/a.ts", "run/b.go", "race/c.go")
+
+	for _, cmd := range []string{
+		"go test -run TestThing ./src",
+		"go test -count=1 ./src",
+		"pytest -q src",
+	} {
+		c := classify("bash", map[string]any{"command": cmd}, r)
+		if c.Action != ActionTest {
+			t.Errorf("%q -> action %q, want testing", cmd, c.Action)
+		}
+		// The first two name ./src and must resolve there; the third names a
+		// bare directory, which is deliberately not read as a path.
+		if strings.Contains(cmd, "go test") && c.Path != "src" {
+			t.Errorf("%q -> path %q, want src; a flag must not be read as a target", cmd, c.Path)
+		}
+		if strings.Contains(cmd, "-run") && c.Path == "run" {
+			t.Errorf("%q resolved to the flag's own word, not a directory", cmd)
 		}
 	}
 }

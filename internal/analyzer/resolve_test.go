@@ -117,6 +117,200 @@ func TestResolveOmpEditHashline(t *testing.T) {
 	}
 }
 
+// TestResolveHarnessBracketHeader is the regression for the defect that left
+// every building unfinishable.
+//
+// The edit tool's payload names its target on the first line, and the harness
+// writes that line as `[path#tag]` rather than as `§path`. Unrecognised, the
+// header was treated as an ordinary path, so the wildcard test scanned the
+// whole payload — and any edit whose *body* contained a `*` was classified as a
+// glob and filed in the Yard. Real work therefore never landed on its building,
+// which is why no building could rise: the town was not dropping the work, it
+// was misfiling it as site-wide.
+func TestResolveHarnessBracketHeader(t *testing.T) {
+	root := build(t, map[string]string{"internal/analyzer/resolve.go": "1"})
+	r := resolverFor(t, root)
+
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"header alone", "[internal/analyzer/resolve.go#A920]"},
+		{"header with a body", "[internal/analyzer/resolve.go#A920]\nPUT 1.=1:\n+\tx := a * b"},
+		// The body is what actually triggered the misroute: a `*` anywhere in
+		// the patch made the whole edit look like a pattern.
+		{"a glob inside the body", "[internal/analyzer/resolve.go#A920]\n+\t// see src/**/*.ts"},
+		{"a comment mentioning a wildcard", "[internal/analyzer/resolve.go#A920]\n+\t// hide the * thing"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			kind, place, reason := r.Resolve(c.in)
+			if kind != PlaceBuilding {
+				t.Fatalf("kind = %q (reason %q), want building — a bracket header names a file, not a pattern", kind, reason)
+			}
+			if place != "internal/analyzer" {
+				t.Errorf("place = %q, want internal/analyzer", place)
+			}
+		})
+	}
+}
+
+// TestResolveHeaderStripsTheHashTag pins the tag's removal on its own, because
+// a stray `#D006` left on the path would put the edit in whatever directory
+// happened to match a prefix — or in none at all.
+func TestResolveHeaderStripsTheHashTag(t *testing.T) {
+	root := build(t, map[string]string{"src/auth/service.ts": "1"})
+	r := resolverFor(t, root)
+
+	for _, in := range []string{
+		"[src/auth/service.ts#D006]",
+		"§src/auth/service.ts#D006",
+		"[src/auth/service.ts#D006]\nPUT >1:",
+	} {
+		kind, place, reason := r.Resolve(in)
+		if kind != PlaceBuilding || place != "src/auth" {
+			t.Errorf("Resolve(%q) = (%s,%q,%s), want building src/auth", in, kind, place, reason)
+		}
+	}
+}
+
+// TestResolveBracketInsideAPathIsNotAHeader guards the other direction: the
+// bracket form must not start swallowing `[slug]` route directories, which are
+// real paths whose bracket sits in the middle rather than at the head.
+func TestResolveBracketInsideAPathIsNotAHeader(t *testing.T) {
+	root := build(t, map[string]string{"app/[slug]/page.tsx": "1"})
+	r := resolverFor(t, root)
+
+	kind, place, reason := r.Resolve("app/[slug]/page.tsx")
+	if kind != PlaceBuilding || place != "app/[slug]" {
+		t.Errorf("Resolve(app/[slug]/page.tsx) = (%s,%q,%s), want building app/[slug]", kind, place, reason)
+	}
+}
+
+// TestResolveRealGlobsStillGlob makes sure the header work did not blunt the
+// glob rule: a pattern with no header must still be refused a building.
+func TestResolveRealGlobsStillGlob(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "1"})
+	r := resolverFor(t, root)
+
+	for _, in := range []string{"src/**/*.ts", "internal/*/x.go", "*.go"} {
+		kind, _, reason := r.Resolve(in)
+		if kind != PlaceYard || reason != ReasonGlob {
+			t.Errorf("Resolve(%q) = (%s,%s), want yard/glob", in, kind, reason)
+		}
+	}
+}
+
+// TestResolveTruncatedHeaderStillFindsItsFile covers the malformed shape of the
+// same defect: a header whose closing bracket never arrived — a log line cut
+// mid-write, a client that dropped the tail.
+//
+// It matters for the same reason the well-formed case does. Left whole, the
+// payload would put its edit body in front of the wildcard test, so a `*` in
+// the body would misfile the edit as a glob. The payload shape is untrusted
+// input; a missing bracket must not be able to route work to the wrong place.
+func TestResolveTruncatedHeaderStillFindsItsFile(t *testing.T) {
+	root := build(t, map[string]string{"internal/analyzer/resolve.go": "1"})
+	r := resolverFor(t, root)
+
+	kind, place, reason := r.Resolve("[internal/analyzer/resolve.go\nPUT 1.=1:\n+\t// a * star")
+	if kind != PlaceBuilding || place != "internal/analyzer" {
+		t.Errorf("truncated header = (%s,%q,%s), want building internal/analyzer", kind, place, reason)
+	}
+}
+
+// TestResolveHeaderIsOnlyTheFirstLine is the invariant underneath all of the
+// above: nothing below the header line may influence where the edit lands.
+func TestResolveHeaderIsOnlyTheFirstLine(t *testing.T) {
+	root := build(t, map[string]string{"src/auth/service.ts": "1"})
+	r := resolverFor(t, root)
+
+	// A body naming a *different* building must not move the edit. The payload
+	// names one file; the body is content.
+	bodies := []string{
+		"+\t// see ui/src/art/building.ts",
+		"+\timport { X } from '../town/town'",
+		"+\tsrc/**/*.ts",
+		"",
+	}
+	for _, body := range bodies {
+		in := "[src/auth/service.ts#B4F0]\nPUT 1.=1:\n" + body
+		kind, place, reason := r.Resolve(in)
+		if kind != PlaceBuilding || place != "src/auth" {
+			t.Errorf("Resolve with body %q = (%s,%q,%s), want building src/auth", body, kind, place, reason)
+		}
+	}
+}
+
+// TestResolvePathSpellings covers the ways a tool writes the same file.
+//
+// Each spelling here arrives from a real tool, and each silently misrouted work
+// before it was normalised — the path matched no building, fell through to the
+// Yard, and the building it belonged to stayed unbuilt while the agent worked
+// on it. A miss here is not a cosmetic difference: it is work landing in the
+// wrong place.
+func TestResolvePathSpellings(t *testing.T) {
+	root := build(t, map[string]string{"internal/analyzer/resolve.go": "1"})
+	r := resolverFor(t, root)
+
+	for _, in := range []string{
+		"internal/analyzer/resolve.go",   // plain
+		"./internal/analyzer/resolve.go", // a shell tool's spelling
+		"././internal/analyzer/resolve.go",
+		`internal\analyzer\resolve.go`, // Windows separators
+		`.\internal\analyzer\resolve.go`,
+		`"internal/analyzer/resolve.go"`, // quoted
+		`'internal/analyzer/resolve.go'`,
+		"internal/analyzer/resolve.go:104-141",             // omp's read carries a line range
+		"[./internal/analyzer/resolve.go#A920]\nPUT 1.=1:", // header, normalised
+	} {
+		kind, place, reason := r.Resolve(in)
+		if kind != PlaceBuilding || place != "internal/analyzer" {
+			t.Errorf("Resolve(%q) = (%s,%q,%s), want building internal/analyzer", in, kind, place, reason)
+		}
+	}
+}
+
+// TestResolveQuotesDoNotMakeAGlob is the same class again: quoting is how a
+// shell protects a path, and a quoted glob must still be refused.
+func TestResolveQuotesDoNotMakeAGlob(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "1"})
+	r := resolverFor(t, root)
+
+	kind, _, reason := r.Resolve(`"src/**/*.ts"`)
+	if kind != PlaceYard || reason != ReasonGlob {
+		t.Errorf("quoted glob = (%s,%s), want yard/glob — quoting must not turn a pattern into a path", kind, reason)
+	}
+}
+
+// TestNormalisePathLeavesMeaningAlone pins the boundary of the normaliser: it
+// may change characters, never meaning. Two paths that name different files
+// must stay different.
+func TestNormalisePathLeavesMeaningAlone(t *testing.T) {
+	cases := map[string]string{
+		"a/b":      "a/b",
+		"./a/b":    "a/b",
+		"a/b/":     "a/b",
+		"a/b//":    "a/b",
+		`a\b`:      "a/b",
+		`"a/b"`:    "a/b",
+		"":         "",
+		"   ":      "",
+		"..":       "..",
+		"../a":     "../a",
+		"./../a":   "../a",
+		"a b/c d":  "a b/c d",
+		"[slug]/x": "[slug]/x",
+		"a/b.ts#X": "a/b.ts#X",
+		"./././a":  "a",
+	}
+	for in, want := range cases {
+		if got := normalisePath(in); got != want {
+			t.Errorf("normalisePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestResolveAlwaysReturnsAPlace(t *testing.T) {
 	// The contract that matters most: an event never vanishes for want of
 	// somewhere to stand.
@@ -153,6 +347,94 @@ func TestResolveUnmappedRealPathGoesToYard(t *testing.T) {
 	}
 	if reason != ReasonUnmapped {
 		t.Errorf("reason = %q, want %q", reason, ReasonUnmapped)
+	}
+}
+
+// A test command names a directory, not a file. Resolving it through Resolve
+// would take the *parent* of the directory and credit the test to the wrong
+// building — which is exactly what happened, and why the ladder's finishing
+// ranks could never be reached.
+func TestResolveDirMapsADirectoryToItsBuilding(t *testing.T) {
+	root := build(t, map[string]string{"internal/town/a.go": "1"})
+	r := resolverFor(t, root)
+
+	kind, place, reason := r.ResolveDir("internal/town")
+	if kind != PlaceBuilding {
+		t.Fatalf("kind = %q, want building (reason %q)", kind, reason)
+	}
+	if place != "internal/town" {
+		t.Errorf("place = %q, want internal/town", place)
+	}
+}
+
+// The deepest match wins for a directory too, so a test of a nested package
+// lands on that package rather than on its parent.
+func TestResolveDirPrefersTheDeepestBuilding(t *testing.T) {
+	root := build(t, map[string]string{
+		"internal/a.go":      "1",
+		"internal/town/b.go": "1",
+	})
+	r := resolverFor(t, root)
+
+	// The directory given is the nested one, so it must resolve to itself.
+	if _, place, _ := r.ResolveDir("internal/town"); place != "internal/town" {
+		t.Errorf("place = %q, want internal/town", place)
+	}
+	// A path *inside* the nested building resolves to it as well.
+	if _, place, _ := r.ResolveDir("internal/town/sub"); place != "internal/town" {
+		t.Errorf("place = %q, want the deepest building internal/town", place)
+	}
+	// And the parent still resolves to itself when named directly.
+	if _, place, _ := r.ResolveDir("internal"); place != "internal" {
+		t.Errorf("place = %q, want internal", place)
+	}
+}
+
+func TestResolveDirNormalisesTheFormsThatMeanTheSamePlace(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "1"})
+	r := resolverFor(t, root)
+
+	for _, in := range []string{"src", "./src", "src/", root + "/src"} {
+		_, place, reason := r.ResolveDir(in)
+		if place != "src" {
+			t.Errorf("ResolveDir(%q) = %q (reason %q), want src", in, place, reason)
+		}
+	}
+}
+
+// A directory that holds no source of its own belongs to no building, and the
+// repo root is not a building.
+func TestResolveDirFallsBackToTheYard(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "1"})
+	r := resolverFor(t, root)
+
+	for _, in := range []string{"", ".", "assets", "scripts/tools"} {
+		kind, place, reason := r.ResolveDir(in)
+		if kind != PlaceYard {
+			t.Errorf("ResolveDir(%q) kind = %q, want yard", in, kind)
+		}
+		if place != "" {
+			t.Errorf("ResolveDir(%q) place = %q, want empty", in, place)
+		}
+		if reason == "" {
+			t.Errorf("ResolveDir(%q) returned no reason; a miss must never be silent", in)
+		}
+	}
+}
+
+// The same refusals Resolve makes apply to a directory, for the same reasons.
+func TestResolveDirRefusesWhatIsNotADirectory(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "1"})
+	r := resolverFor(t, root)
+
+	if kind, _, reason := r.ResolveDir("skill://foo"); kind != PlaceDepot {
+		t.Errorf("kind = %q (reason %q), want depot for an internal URI", kind, reason)
+	}
+	if kind, _, reason := r.ResolveDir("src/*"); kind != PlaceYard {
+		t.Errorf("kind = %q (reason %q), want yard for a pattern", kind, reason)
+	}
+	if kind, _, reason := r.ResolveDir("../../elsewhere"); kind != PlaceYard {
+		t.Errorf("kind = %q (reason %q), want yard outside the repo", kind, reason)
 	}
 }
 

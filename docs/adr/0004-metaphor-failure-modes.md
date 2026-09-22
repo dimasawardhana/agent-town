@@ -34,7 +34,9 @@ Symlinks between packages create roads that loop or buildings that reference eac
 ### 6. Failed construction without recovery
 When a test fails or an agent errors, the building gets a construction problem (hole/crack). But what if the agent never fixes it? The building stays damaged indefinitely.
 
-**Mitigation**: Damaged buildings are visually marked but don't block progress. The building state reflects the last known status. A damaged building with CONSTRUCTING progress means the agent is still working on it. A damaged COMPLETED building means it passed tests initially but later broke.
+**Mitigation**: Damage is a *condition*, held separately from the building's progress, and drawn over whatever has been built — rubble at the base, a crack up the wall, a hole in the roof, each appearing only once there is something for it to damage. It never blocks progress and never rolls it back: a damaged building keeps the rank it had, so a building at ROOFED that fails a test stays ROOFED and gains a hole in its roof, and a COMPLETED building that later breaks is visibly a broken *finished* building rather than one that was never built. The next successful change or test repairs it, and the count of failures is kept separately as history.
+
+Implemented by ADR-0018; the split of `Damaged` from `Status` is what makes this describeable. Before it, `broken` was a rank, so the two cases above were the same picture and a failure erased the progress it did not cause.
 
 ### 7. Agent death mid-construction
 When an agent crashes, the worker disappears. The building it was working on is mid-construction with no one to finish it.
@@ -57,7 +59,7 @@ At some complexity level, the town metaphor adds no clarity over a file tree. Th
 - Directories with zero source files produce no buildings
 - Generated/config files contribute to infrastructure, not buildings
 - Symlink resolution uses real path resolution
-- Damaged buildings persist until explicitly fixed or session ends
+- Damage is a condition, not a rank: it persists until the next success repairs it or the session ends, and it never moves a building down the ladder (ADR-0018)
 - Agent death = worker LEAVING, building retains progress
 - Multi-agent work on one building = multiple worker icons
 - Metaphor intensity is a user setting (low/medium/high)
