@@ -181,8 +181,8 @@ export const PLACE_PROPS: Record<string, readonly PropKind[]> = {
  * throw inside the bake would take the whole town down over one misnamed prop,
  * and an empty cel is the failure a test can find.
  */
-export function buildProp(kind: PropKind, variant = 0): Pix {
-  const iso = new IsoPix(CEL, CEL, PROP_ORIGIN.x, PROP_ORIGIN.y);
+export function buildProp(kind: PropKind, variant = 0, turn = 0): Pix {
+  const iso = new IsoPix(CEL, CEL, PROP_ORIGIN.x, PROP_ORIGIN.y, turn);
   const draw = DRAWERS[kind];
   if (draw) draw(iso, variant);
   // One outline pass over the assembled prop, never per part: per part would put

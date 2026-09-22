@@ -62,3 +62,63 @@ export function visibleAt(s: VisibleSite, filter: number): boolean {
 export function labelVisible(id: string, hovered: string | null, focused: string | null): boolean {
   return id === focused || id === hovered;
 }
+
+/**
+ * landBox is the picture-space box the town's land occupies.
+ *
+ * The ground a town stands on does not come and go with the detail filter: the
+ * field is there whether or not a deep directory inside it is being drawn. So
+ * this is a function of the layout's own extent and the tile pad `drawGround`
+ * paints, and takes no filter.
+ *
+ * It exists because leaving it out was a real defect with a visible symptom. The
+ * ground texture's canvas is sized from the box everything needs room for, while
+ * `drawGround` paints this box — so a canvas sized from the *sites* alone is
+ * smaller than the land it has to hold, and the town's own fields come out cut
+ * off mid-tile. Measured here: the canvas reached picture-x 308 where the land
+ * reached 522.
+ *
+ * Every corner is projected and the extremes taken, rather than a hand-picked
+ * pair. That is not defensive: the leftmost point of a projected rectangle is its
+ * `(x0, y1)` corner, not its `(x0, y0)` one, so picking two corners silently
+ * loses half the rectangle's span on one axis. The first version of the fix did
+ * exactly that and lost 353 pixels off the left of the town.
+ */
+export function landBox(
+  width: number,
+  height: number,
+  pad: number,
+  project: (x: number, y: number) => { x: number; y: number },
+): { minX: number; maxX: number; minY: number; maxY: number } {
+  const corners = [
+    project(-pad, -pad),
+    project(width + pad, -pad),
+    project(-pad, height + pad),
+    project(width + pad, height + pad),
+  ];
+  return {
+    minX: Math.min(...corners.map((c) => c.x)),
+    maxX: Math.max(...corners.map((c) => c.x)),
+    minY: Math.min(...corners.map((c) => c.y)),
+    maxY: Math.max(...corners.map((c) => c.y)),
+  };
+}
+
+/**
+ * boxContains reports whether outer encloses inner, within a pixel of slack.
+ *
+ * The slack is for the rounding on both sides rather than tolerance for a real
+ * gap: the two boxes are computed by different code paths, and a fraction of a
+ * pixel must not read as a missing edge.
+ */
+export function boxContains(
+  outer: { minX: number; maxX: number; minY: number; maxY: number },
+  inner: { minX: number; maxX: number; minY: number; maxY: number },
+): boolean {
+  return (
+    outer.minX <= inner.minX + 1 &&
+    outer.maxX >= inner.maxX - 1 &&
+    outer.minY <= inner.minY + 1 &&
+    outer.maxY >= inner.maxY - 1
+  );
+}

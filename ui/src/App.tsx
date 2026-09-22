@@ -52,6 +52,9 @@ export function App() {
   const layout = useTown((s) => s.layout);
   const depth = useTown((s) => s.depth);
   const setDepth = useTown((s) => s.setDepth);
+  const turn = useTown((s) => s.turn);
+  const turnBy = useTown((s) => s.turnBy);
+  const setTurn = useTown((s) => s.setTurn);
 
 
   // The selected site's building state, if it is a building the town knows
@@ -182,6 +185,36 @@ export function App() {
               value={depth === Number.POSITIVE_INFINITY ? maxDepth : depth}
               onChange={(e) => setDepth(Number(e.target.value))}
             />
+          </section>
+        )}
+
+        {/* The view controls. Both are preferences over how the *same* town is
+            shown: neither is sent anywhere, and neither can change what the map
+            says. Turning is offered only when there is a town to turn, and the
+            reset appears only once the view is off its default, so the panel
+            does not carry a control that would do nothing. */}
+        {town && (
+          <section className="view-control">
+            <h2>View</h2>
+            <div className="turn-row">
+              <button className="bevel" onClick={() => turnBy(-1)} title="Turn left">
+                Turn left
+              </button>
+              <button className="bevel" onClick={() => turnBy(1)} title="Turn right">
+                Turn right
+              </button>
+            </div>
+            <p className="muted">
+              {turn === 0 ? "Upright" : `Turned ${turn * 90}°`}
+              {turn !== 0 && (
+                <>
+                  {" · "}
+                  <button className="link" onClick={() => setTurn(0)}>
+                    reset
+                  </button>
+                </>
+              )}
+            </p>
           </section>
         )}
 

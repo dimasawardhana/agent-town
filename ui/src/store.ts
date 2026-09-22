@@ -30,6 +30,7 @@ export interface Site {
    *  Sent rather than derived, because the layout is the single source of
    *  truth for geometry (ADR-0012) and a second derivation would drift. */
   depth: number;
+
   /** Total source bytes, and the storeys derived from them. Distinct from
    *  `files`, which drives the footprint: `files` is how many parts a building
    *  is divided into, `bytes` is how much there is of it. Sent by the daemon
@@ -198,6 +199,16 @@ interface State {
    */
   depth: number;
 
+  /**
+   * Which way round the town is drawn: a quarter turn, 0 to 3.
+   *
+   * A view preference like `depth`, and never sent to the daemon. Turning the
+   * view does not move anything — the layout is the daemon's and is turned on the
+   * way *out* of it — so a turn cannot change what the town says, only how the
+   * reader is looking at it.
+   */
+  turn: number;
+
   setProjects: (p: ProjectRef[], current: string) => void;
   setCurrent: (path: string) => void;
   setTown: (t: Town | null, l: Layout | null, live?: Live) => void;
@@ -212,6 +223,10 @@ interface State {
   setError: (e: string | null) => void;
   /** setDepth changes how much of the town is drawn, by building depth. */
   setDepth: (d: number) => void;
+  /** turnBy steps the view by one quarter turn, in either direction. */
+  turnBy: (delta: number) => void;
+  /** setTurn selects an orientation outright, for resetting to the default. */
+  setTurn: (t: number) => void;
 }
 
 // A bounded event log. The town is the point; the feed is supporting detail,
@@ -235,6 +250,9 @@ export const useTown = create<State>((set) => ({
   // Everything drawn by default, for the reason in the field's own comment: a
   // numeric default's failure mode is silently hiding work.
   depth: Number.POSITIVE_INFINITY,
+  // Upright, which is the orientation the art was authored at and the one that
+  // shows the daemon's own idea of the town.
+  turn: 0,
   setTown: (town, layout, live) =>
     set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
   setProjects: (projects, current) => set({ projects, current }),
@@ -263,4 +281,6 @@ export const useTown = create<State>((set) => ({
   setConnected: (connected) => set({ connected }),
   setError: (error) => set({ error }),
   setDepth: (depth) => set({ depth }),
+  turnBy: (delta) => set((s) => ({ turn: (((s.turn + delta) % 4) + 4) % 4 })),
+  setTurn: (turn) => set({ turn: (((turn % 4) + 4) % 4) }),
 }));

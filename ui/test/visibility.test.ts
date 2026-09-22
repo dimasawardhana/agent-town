@@ -8,7 +8,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { labelVisible, visibleAt } from "../src/visibility";
+import { boxContains, labelVisible, landBox, visibleAt } from "../src/visibility";
+import { TURNS, turnLayout, turnPoint } from "../src/view";
 
 /** A top-level building: depth 1, nothing under it. */
 const building = (depth: number) => ({ depth });
@@ -112,4 +113,193 @@ test("a hover and a focus can both be lit", () => {
 test("losing the focus leaves only the hover standing", () => {
   assert.equal(labelVisible("b1", null, null), false);
   assert.equal(labelVisible("b1", "b1", null), true, "a hover alone still shows its label");
+});
+
+// --- the land --------------------------------------------------------------
+//
+// The land is sized by a different rule from the sites: it is always in the
+// picture, because the field a town stands on does not come and go with the
+// detail filter. Sizing it from the sites alone was a real defect whose symptom
+// is the town's own fields cut off mid-tile.
+
+const proj = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
+/** The projection inverted, for asserting the box against known world corners. */
+const unproj = (x: number, y: number) => ({ x: 2 * y + x, y: 2 * y - x });
+
+test("the land box is the layout's own extent, padded", () => {
+  const box = landBox(948, 610, 48, proj);
+  // The four world corners of the padded land, projected.
+  const want = [
+    proj(-48, -48),
+    proj(948 + 48, -48),
+    proj(-48, 610 + 48),
+    proj(948 + 48, 610 + 48),
+  ];
+  assert.equal(box.minX, Math.min(...want.map((p) => p.x)), "the land's left edge is wrong");
+  assert.equal(box.maxX, Math.max(...want.map((p) => p.x)), "the land's right edge is wrong");
+  assert.equal(box.minY, Math.min(...want.map((p) => p.y)), "the land's top edge is wrong");
+  assert.equal(box.maxY, Math.max(...want.map((p) => p.y)), "the land's bottom edge is wrong");
+});
+
+test("the land box covers the whole rectangle, not a pair of corners", () => {
+  // The defect this defends against: deriving the box from two hand-picked
+  // corners instead of all four. For a 2:1 projection the extreme x is reached
+  // at a different world corner than the extreme y, so a pair loses half the
+  // span on one axis — measured at 353 pixels off the left of this repository.
+  //
+  // Asserting the four corners land inside the box would be circular, since the
+  // box is defined as their extremes. The real property is that the box is WIDE
+  // ENOUGH for the rectangle, which is only true if all four contributed.
+  const width = 948;
+  const height = 610;
+  const pad = 48;
+  const box = landBox(width, height, pad, proj);
+  // A projected rectangle spans exactly (w + h) / 2 in x — every world corner
+  // contributes to that, so a two-corner derivation comes up short whenever the
+  // rectangle is not square.
+  const spanX = (width + 2 * pad + height + 2 * pad) / 2;
+  assert.equal(box.maxX - box.minX, spanX, "the land box is not as wide as the land");
+  // The same for y, which spans (w + h) / 4.
+  const spanY = (width + 2 * pad + (height + 2 * pad)) / 4;
+  assert.equal(box.maxY - box.minY, spanY, "the land box is not as tall as the land");
+
+  // A two-corner derivation, for the record: it spans only half the rectangle's
+  // height in x, which is the bug.
+  const pair = [proj(-pad, -pad), proj(width + pad, height + pad)];
+  const pairSpan = Math.max(...pair.map((p) => p.x)) - Math.min(...pair.map((p) => p.x));
+  assert.ok(pairSpan < spanX, "the pair derivation should be measurably short");
+});
+
+test("a box contains itself, and a smaller one inside it", () => {
+  const outer = landBox(948, 610, 48, proj);
+  assert.equal(boxContains(outer, outer), true, "a box must contain itself");
+  const inner = landBox(400, 300, 48, proj);
+  assert.equal(boxContains(outer, inner), true, "the land must contain a town inside it");
+  assert.equal(boxContains(inner, outer), false, "a smaller box must not be said to contain a bigger one");
+});
+
+test("the sites of a town must fit inside its land", () => {
+  // The property that was broken: the ground canvas is sized from the land, and
+  // every site's drawn footprint has to fall inside it or the map has buildings
+  // standing beyond the edge of the world.
+  const land = landBox(948, 610, 48, proj);
+  for (const [x, y, w, h] of [[40, 238, 302, 332], [370, 238, 302, 240], [700, 238, 142, 170]]) {
+    const corners = [proj(x, y), proj(x + w, y), proj(x, y + h), proj(x + w, y + h)];
+    const box = {
+      minX: Math.min(...corners.map((p) => p.x)), maxX: Math.max(...corners.map((p) => p.x)),
+      minY: Math.min(...corners.map((p) => p.y)), maxY: Math.max(...corners.map((p) => p.y)),
+    };
+    assert.equal(boxContains(land, box), true, `district at ${x},${y} falls outside the land`);
+  }
+});
+
+// --- turning the view ------------------------------------------------------
+//
+// The turn is applied to the layout rather than threaded through the camera,
+// the kerbs, the ground, the workers and the hit zones. That is only safe if
+// turning is linear and re-basing is uniform, which is what these hold.
+
+test("turning a layout shifts every rectangle by one shared amount", () => {
+  // The property that matters, and the one a per-rectangle re-base would break:
+  // every turned corner is the rotated corner plus a single shift shared by the
+  // whole town. If each rectangle were re-based on its own, buildings would slide
+  // off the districts they stand on while every rectangle still looked sane.
+  //
+  // The shift is *solved* per rectangle — from its own turned corners — and the
+  // rectangles must then agree on it. Solving it independently is what makes
+  // this a real cross-check rather than a restatement of the implementation.
+  //
+  // Corners are handled as a set: a rotation permutes them, so a turned
+  // rectangle's minimum corner is generally the image of a different corner than
+  // its own minimum. Comparing minimums directly was the first version of this
+  // test, and it was wrong.
+  const layout = {
+    sites: [
+      { x: 60, y: 288, w: 78, h: 78 },
+      { x: 244, y: 288, w: 78, h: 78 },
+      { x: 700, y: 238, w: 142, h: 170 },
+    ],
+    districts: [{ x: 40, y: 238, w: 302, h: 332 }],
+    width: 948,
+    height: 610,
+  };
+  const corners = (r: { x: number; y: number; w: number; h: number }) =>
+    [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]];
+
+  for (const turn of TURNS) {
+    if (turn === 0) continue;
+    const t = turnLayout(turn, layout);
+    const rects = [...layout.sites, ...layout.districts];
+    const after = [...t.sites, ...t.districts];
+
+    const shared: { x: number; y: number }[] = [];
+    for (let i = 0; i < rects.length; i++) {
+      const rotCorners: { x: number; y: number }[] = corners(rects[i]).map(([x, y]) => turnPoint(turn, x, y));
+      // The turned set's own minimum corner, which is what the produced
+      // rectangle's origin must be, plus the town-wide shift.
+      const minX = Math.min(...rotCorners.map((c) => c.x));
+      const minY = Math.min(...rotCorners.map((c) => c.y));
+      const shift = { x: after[i].x - minX, y: after[i].y - minY };
+      if (shared.length === 0) shared.push(shift);
+      const s0 = shared[0];
+      assert.ok(
+        Math.abs(shift.x - s0.x) < 1e-9 && Math.abs(shift.y - s0.y) < 1e-9,
+        `turn ${turn}: rect ${i} was shifted by ${shift.x},${shift.y} where the town used ${s0.x},${s0.y}`,
+      );
+      // And every turned corner must be present in the produced rectangle.
+      for (const w of rotCorners) {
+        const hit = corners(after[i]).some(
+          (g) => Math.abs(g[0] - (w.x + s0.x)) < 1e-9 && Math.abs(g[1] - (w.y + s0.y)) < 1e-9,
+        );
+        assert.ok(hit, `turn ${turn}: rect ${i} lost the corner ${w.x},${w.y}`);
+      }
+    }
+    // The shift is what makes the town start at the origin.
+    const allX = after.flatMap((r) => [r.x, r.x + r.w]);
+    const allY = after.flatMap((r) => [r.y, r.y + r.h]);
+    assert.ok(Math.min(...allX) >= 0 && Math.min(...allY) >= 0, `turn ${turn}: the town starts outside the origin`);
+  }
+});
+
+test("a turned layout starts at the origin and swaps its extent", () => {
+  const layout = { sites: [{ x: 40, y: 238, w: 302, h: 332 }], districts: [], width: 948, height: 610 };
+  const one = turnLayout(1, layout);
+  assert.equal(one.width, 610, "an odd turn must swap the width");
+  assert.equal(one.height, 948, "an odd turn must swap the height");
+  // Every rect is inside the declared extent, which is what the ground painter
+  // and the land box assume.
+  for (const s of one.sites) {
+    assert.ok(s.x >= 0 && s.y >= 0, `turn 1: a site starts at ${s.x},${s.y}, outside the layout`);
+    assert.ok(s.x + s.w <= one.width + 1e-9 && s.y + s.h <= one.height + 1e-9, "turn 1: a site escapes the layout");
+  }
+  // And an even turn is the original box.
+  const two = turnLayout(2, layout);
+  assert.equal(two.width, 948, "two turns must not swap the extent");
+  assert.equal(two.height, 610);
+});
+
+test("four turns are the identity", () => {
+  const layout = {
+    sites: [{ x: 60, y: 288, w: 78, h: 78 }, { x: 700, y: 238, w: 142, h: 170 }],
+    districts: [{ x: 40, y: 238, w: 302, h: 332 }],
+    width: 948,
+    height: 610,
+  };
+  const back = turnLayout(4, layout);
+  assert.deepEqual(back, layout, "four turns must return the town exactly");
+});
+
+test("turning never changes a site's size", () => {
+  // Every footprint is square and a square projects to the same bounding box at
+  // every quarter turn, which is why one cel size serves all four orientations.
+  const layout = { sites: [{ x: 40, y: 238, w: 302, h: 332 }], districts: [], width: 948, height: 610 };
+  for (const turn of TURNS) {
+    const t = turnLayout(turn, layout);
+    const before = layout.sites[0];
+    const after = t.sites[0];
+    assert.ok(
+      (after.w === before.w && after.h === before.h) || (after.w === before.h && after.h === before.w),
+      `turn ${turn}: a rectangle's size changed unexpectedly`,
+    );
+  }
 });

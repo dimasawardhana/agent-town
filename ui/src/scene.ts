@@ -14,6 +14,7 @@ import { P } from "./art/palette";
 import {
   ATLAS,
   type Atlas,
+  atlasKey,
   bake,
   shadowFrame,
   baseFrame,
@@ -23,9 +24,10 @@ import {
   groundEdgeFrame,
   propFrame,
 } from "./art/bake";
+import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
 import { type Stage, skinVariant } from "./art/building";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
-import { labelVisible, visibleAt } from "./visibility";
+import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
 import { PLACE_PROPS } from "./art/props";
 import { PLACARD, type PlacardRole, placard } from "./art/placard";
@@ -79,8 +81,37 @@ const DEPTH = {
 } as const;
 
 export class TownScene extends Phaser.Scene {
+  /**
+   * The atlas for the orientation currently drawn.
+   *
+   * One texture per orientation rather than one holding all four, because the
+   * art genuinely differs — a wall is only visible when the camera faces it, so
+   * a turned building is a different picture and not a moved one. It is swapped
+   * in `ensureAtlas`, which bakes an orientation the first time it is asked for.
+   */
   private atlas: Atlas = {};
+  /** The orientation `atlas` holds, so `ensureAtlas` knows when to swap. */
+  private atlasTurn: number = 0;
+  /**
+   * Every orientation baked so far, by turn.
+   *
+   * Kept because `bake` registers a texture and the frame table cannot be
+   * recovered from a registered texture without re-deriving every frame's size
+   * and origin. Re-baking to learn the table again would also throw, since the
+   * texture key would already exist — which is exactly how the first version of
+   * this failed: it baked twice, the second call threw, and the abort left a town
+   * with one sprite and no rotation.
+   */
+  private atlases = new Map<number, Atlas>();
   private layout: Layout | null = null;
+  /**
+   * The layout as the daemon sent it.
+   *
+   * Kept separately from `this.layout`, which holds the *turned* view of it.
+   * Redrawing after a turn would otherwise turn an already-turned layout, so
+   * every draw starts from this untouched copy.
+   */
+  private sourceLayout: Layout | null = null;
   private workers: WorkerLayer | null = null;
   // Each building's sprite stack, by site id. A tower is a Container holding one
   // base, N identical bands and a cap, so a status change swaps frames inside
@@ -128,6 +159,14 @@ export class TownScene extends Phaser.Scene {
    */
   private depth = Number.POSITIVE_INFINITY;
 
+  /**
+   * The orientation the town is drawn at, mirrored from the store.
+   *
+   * A view preference like `depth`, and applied the same way: the layout is
+   * always the daemon's, and this decides how it is *shown*.
+   */
+  private turn: Turn = 0;
+
   constructor() {
     super("town");
   }
@@ -136,7 +175,8 @@ export class TownScene extends Phaser.Scene {
     // The void: a cold near-black, so the lit town sits on something that reads
     // as unlit rather than as part of the picture.
     this.cameras.main.setBackgroundColor(P.void);
-    this.atlas = bake(this);
+    this.turn = normaliseTurn(useTown.getState().turn);
+    this.ensureAtlas();
     this.controls();
     this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
 
@@ -152,9 +192,18 @@ export class TownScene extends Phaser.Scene {
       // visibility toggle: the camera bounds and the fit are both derived from
       // what is drawn, so revealing deep buildings has to re-run that framing
       // or the new buildings would be outside the reachable area.
-      if (s.depth !== prev.depth && this.layout) {
+      if (s.depth !== prev.depth && this.sourceLayout) {
         this.depth = s.depth;
-        this.draw(this.layout);
+        this.draw(this.sourceLayout);
+        return;
+      }
+      // A turn redraws for the same reason a depth change does: the artwork and
+      // the geometry both change, and the camera's framing is derived from what
+      // is drawn. It redraws from the daemon's layout rather than the turned one,
+      // so turns compose as "which orientation" rather than accumulating.
+      if (s.turn !== prev.turn && this.sourceLayout) {
+        this.turn = normaliseTurn(s.turn);
+        this.draw(this.sourceLayout);
         return;
       }
       if (s.live !== prev.live && this.layout) this.syncLive();
@@ -173,13 +222,22 @@ export class TownScene extends Phaser.Scene {
    * a session — while live updates arrive hundreds of times and only move
    * workers. Rebuilding on those is what would flicker the town.
    */
-  draw(layout: Layout): void {
+  draw(source: Layout): void {
     // The registry holds the very objects `removeAll` just destroyed, so it is
     // cleared here rather than left to be overwritten: a stale entry would keep
     // a destroyed Image alive and the sweep would then call `setVisible` on it,
     // which is the kind of bug that only shows up as a label that stops
     // responding on the *second* town of a session.
     this.labels.clear();
+    // The daemon's own layout is kept, and everything below works on its turned
+    // view. Turning the *layout* rather than threading a turn through the camera,
+    // the kerbs, the ground, the workers and the hit zones means every one of
+    // those goes on reading a layout exactly as it always did — one transformed
+    // input instead of a dozen places that could each apply it in the projection
+    // and forget it in the coordinates.
+    this.sourceLayout = source;
+    this.ensureAtlas();
+    const layout = turnLayout(this.turn, source);
     this.layout = layout;
     this.children.removeAll(true);
     this.buildingSprites.clear();
@@ -238,6 +296,35 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
+   * ensureAtlas loads the current orientation's art, baking it if it is new.
+   *
+   * Baked on demand rather than all four at boot, because the bake is not free:
+   * measured at 422 ms for one orientation and 628 cels, so four would add
+   * 1.7 s to every session's start for three pictures most readers never look
+   * at. A reader who never turns pays for exactly the one they use.
+   *
+   * The cost is a hitch on the first turn to a new orientation. That is the
+   * right trade: a turn is a deliberate act with a moment of anticipation around
+   * it, where a slow boot is a cost every visit pays.
+   */
+  private ensureAtlas(): void {
+    // The map of baked orientations is the authority on what exists, not a
+    // comparison against `atlasTurn`. Guarding on `atlasTurn === turn` looked
+    // right and was wrong at boot, where both are 0: it returned before ever
+    // baking, leaving an empty atlas, a town of invisible buildings and the
+    // single stray sprite that drew from a missing frame.
+    const cached = this.atlases.get(this.turn);
+    if (cached) {
+      this.atlas = cached;
+      this.atlasTurn = this.turn;
+      return;
+    }
+    this.atlas = bake(this, this.turn);
+    this.atlases.set(this.turn, this.atlas);
+    this.atlasTurn = this.turn;
+  }
+
+  /**
    * project maps a world unit to a picture pixel.
    *
    * This is the projection, written once per layer. The art layer's
@@ -266,7 +353,7 @@ export class TownScene extends Phaser.Scene {
     const f = this.atlas[key];
     if (!f) return null;
     const p = this.project(wx, wy, z);
-    return this.add.image(p.x - f.ox, p.y - f.oy, ATLAS, key).setOrigin(0, 0);
+    return this.add.image(p.x - f.ox, p.y - f.oy, atlasKey(this.atlasTurn), key).setOrigin(0, 0);
   }
 
   /**
@@ -464,7 +551,7 @@ export class TownScene extends Phaser.Scene {
     const cx = c.getContext("2d");
     if (cx) {
       cx.imageSmoothingEnabled = false;
-      const src = this.textures.get(ATLAS).getSourceImage() as HTMLCanvasElement;
+      const src = this.textures.get(atlasKey(this.atlasTurn)).getSourceImage() as HTMLCanvasElement;
       cx.drawImage(src, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
     }
     this.tileCanvases.set(key, c);
@@ -526,7 +613,7 @@ export class TownScene extends Phaser.Scene {
       // The contact shadow first, so the building stands on the map rather than
       // floating over it. It is a separate sprite because it must not move or
       // restage with the building; it is the ground's reaction to it.
-      const shadow = this.place(shadowFrame(s.w), s.x, s.y);
+      const shadow = this.place(shadowFrame(s.w, this.atlasTurn), s.x, s.y);
       shadow?.setDepth(near.y - 1);
 
       // The stack is registered under the site's name so a later status change
@@ -637,7 +724,7 @@ export class TownScene extends Phaser.Scene {
     for (let i = 0; i < rows * cols; i++) if (i !== signSlot) slots.push(i);
 
     const signAt = cellAt(signSlot);
-    const sign = this.place(propFrame("signpost"), signAt.x, signAt.y);
+    const sign = this.place(propFrame("signpost", 0, this.atlasTurn), signAt.x, signAt.y);
     sign?.setDepth(this.project(signAt.x, signAt.y).y);
 
     place.props.forEach((kind, i) => {
@@ -649,7 +736,7 @@ export class TownScene extends Phaser.Scene {
       // rather than as one object printed twice. It is keyed to the cell rather
       // than to the prop's index so the alternation follows the layout a reader
       // sees, rather than the order of a list they never see.
-      const prop = this.place(propFrame(kind, slot % 2), at.x, at.y);
+      const prop = this.place(propFrame(kind, slot % 2, this.atlasTurn), at.x, at.y);
       prop?.setDepth(this.project(at.x, at.y).y);
     });
 
@@ -862,14 +949,25 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
-   * extents is the picture-space box of everything *drawn*.
+   * extents is the picture-space box of everything the town needs room for.
    *
-   * It filters by the current display depth for the same reason `draw` does:
-   * a hidden building must not hold the camera's bounds open, or revealing
-   * detail would appear to do nothing while the view stays framed for a town
-   * larger than what is on screen. Conversely, when detail is raised the bounds
-   * must grow to include it, which is why this is recomputed rather than fixed
-   * at the first draw.
+   * It includes two different things, and they are sized by different rules:
+   *
+   *   - The **land**, which is the layout's own box. It is always in the picture,
+   *     because the ground does not come and go with the detail filter — the
+   *     field a town stands in is there whether or not a deep directory inside it
+   *     is being drawn.
+   *   - The **sites that are drawn**, filtered by the display depth, so a hidden
+   *     building does not hold the camera open. Revealing detail must grow the
+   *     bounds, which is why this is recomputed rather than fixed at the first
+   *     draw.
+   *
+   * The land half is the correction of a real defect. `paintGround` sizes its
+   * canvas from this box while `drawGround` paints the layout's own box, so
+   * leaving the land out meant the texture was smaller than the land it painted:
+   * measured on this repository, the ground canvas reached picture-x 308 where
+   * the land reached 522 — 213 pixels of land with no ground drawn under it at
+   * all, which a reader sees as the town's own fields being cut off mid-tile.
    */
   private extents(l: Layout): {
     minX: number;
@@ -879,33 +977,47 @@ export class TownScene extends Phaser.Scene {
     w: number;
     h: number;
   } {
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
+    // The land, from the layout's box plus the pad `drawGround` tiles. The pad
+    // is restated here rather than shared, because this function must be able to
+    // measure the land *before* the ground plan exists — it is what sizes the
+    // canvas that plan is painted into.
+    //
+    // All four corners are projected and the extremes taken, in both halves of
+    // this function. That is not belt-and-braces: the leftmost point of a
+    // projected rectangle is the `(x, y+h)` corner, not the `(x, y)` one, so
+    // taking the extremes of a hand-picked pair silently under-measures one
+    // whole axis. The previous version did exactly that and lost `h/2` on the
+    // left of every rectangle, which is the same class of error as the land
+    // being left out entirely, and it hid behind it.
+    const land = landBox(l.width, l.height, TILE * 3, (x, y) => this.project(x, y));
+    let minX = land.minX;
+    let maxX = land.maxX;
+    let minY = land.minY;
+    let maxY = land.maxY;
+
     for (const s of l.sites) {
-      // Only what is actually drawn counts, for the reason in this function's
-      // doc comment: a hidden building must not hold the camera open.
       if (!visibleAt(s, this.depth)) continue;
-      const far = this.project(s.x, s.y);
-      const right = this.project(s.x + s.w, s.y);
-      const bottom = this.project(s.x, s.y + s.h);
-      const near = this.project(s.x + s.w, s.y + s.h);
-      minX = Math.min(minX, far.x, right.x);
-      maxX = Math.max(maxX, bottom.x, near.x);
+      const corners = [
+        this.project(s.x, s.y),
+        this.project(s.x + s.w, s.y),
+        this.project(s.x, s.y + s.h),
+        this.project(s.x + s.w, s.y + s.h),
+      ];
+      minX = Math.min(minX, ...corners.map((p) => p.x));
+      maxX = Math.max(maxX, ...corners.map((p) => p.x));
       // The top must leave room for the tallest thing that can stand on the
-      // site, and that is now the site's own tower: floors arrive from the
-      // daemon, so this is a per-site reservation rather than the fixed
-      // allowance for a single-storey hall it used to be. 150 was measured for
-      // the old tallest building and is kept as the floor, because the place
-      // buildings are not towers and still need their roof and chimney.
+      // site, and that is the site's own tower: floors arrive from the daemon, so
+      // this is a per-site reservation rather than the fixed allowance for a
+      // single-storey hall it used to be. 150 was measured for the old tallest
+      // building and is kept as the floor, because the place buildings are not
+      // towers and still need their roof and chimney.
       //
       // Undersizing this is not a cosmetic bug: the camera would crop the top
       // of the tallest building in the town, which is the one building the view
       // exists to show.
       const floors = s.kind === "building" ? clampFloors(s.floors) : 1;
-      minY = Math.min(minY, far.y - Math.max(150, floors * STOREY + 60));
-      maxY = Math.max(maxY, near.y);
+      minY = Math.min(minY, this.project(s.x, s.y).y - Math.max(150, floors * STOREY + 60));
+      maxY = Math.max(maxY, ...corners.map((p) => p.y));
     }
     return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
   }
@@ -1082,7 +1194,7 @@ export class TownScene extends Phaser.Scene {
       // to origin 0.5, so the cel's *centre* lands where its top-left was meant
       // to go. `place()` has the same call and the same comment, because this
       // bites in every code path that forgets it — the two must agree.
-      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, ATLAS, keys[i]).setOrigin(0, 0));
+      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), keys[i]).setOrigin(0, 0));
     }
     box.setDepth(depth);
     box.setName(siteName(s));
@@ -1107,22 +1219,22 @@ export class TownScene extends Phaser.Scene {
     // sizes and centres the site itself, so the renderer never has to guess
     // which art a site wants.
     const size = s.w;
-    const keys = [baseFrame(size, "completed", v, false)];
-    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v));
-    keys.push(capFrame(size, "completed", v, false));
+    const keys = [baseFrame(size, "completed", v, false, this.atlasTurn)];
+    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v, this.atlasTurn));
+    keys.push(capFrame(size, "completed", v, false, this.atlasTurn));
     return keys;
   }
 
   private baseKey(s: Site): string {
-    return baseFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path));
+    return baseFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path), this.atlasTurn);
   }
 
   private bandKey(s: Site): string {
-    return bandFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""));
+    return bandFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.atlasTurn);
   }
 
   private capKey(s: Site): string {
-    return capFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path));
+    return capFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path), this.atlasTurn);
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the

@@ -107,3 +107,51 @@ Depth-keyed labelling (`depth <= 1` wears its name outright) was measured agains
 this repository and produced thirteen boards for eighteen sites — a wall of type
 whose skyline was the thing it obscured. Replaced by hover to reveal, click to pin,
 one focus at a time. See ADR-0019.
+
+## Follow-up: the land must always be whole
+
+Separate from filtering, and reported as "the land is cut for some reason".
+
+`paintGround` sizes its canvas from the box everything needs room for, while
+`drawGround` paints the **layout's** box. `extents` sized that box from the
+visible *sites* alone, so the canvas was smaller than the land it had to hold:
+measured here, the canvas reached picture-x 308 where the land reached 522 — the
+town's own fields cut off mid-tile. Fixed by sizing the land from the layout,
+always, independent of the detail filter; a deeper directory being hidden must
+not shrink the world.
+
+A second defect hid inside the fix: the box was derived from two hand-picked
+corners. The leftmost point of a projected rectangle is its `(x0, y1)` corner,
+not its `(x0, y0)` one, so that lost **353 pixels off the left**. Both are now one
+tested rule — `landBox` / `boxContains` in `ui/src/visibility.ts` — with four
+tests, proven to fail when either defect is reintroduced.
+
+Verified live: every district and every site is inside the ground the canvas
+covers, at depth 1, 2, 5 and "everything".
+
+## Follow-up: the view turns
+
+Asked as "is it possible to rotate the camera?". The answer implemented is that
+the *town* turns and the camera does not — a rotated camera would draw baked
+rasters and baked placards at an angle, which is the one thing this art direction
+must never do. See ADR-0020.
+
+Two defects were found by measurement while building it, both of which had drawn
+a plausible-looking wrong picture rather than failing:
+
+- `ensureAtlas` guarded on `atlasTurn === turn`. Both are 0 at boot, so it
+  returned before ever baking — an empty atlas, invisible buildings, and the
+  single stray sprite that drew from a missing frame. The map of baked
+  orientations is the authority on what exists, not a comparison.
+- `boxFor` / `bandBox` / `capBox` padded each cel from the **unrotated** footprint
+  corners. A square footprint projects to the same size box at every turn but not
+  the same box, so a turned cel's origin was 39 px off for a 78-unit footprint.
+  Measured at turn 1: 16 opaque pixels on the lit flank against 800 on the
+  shadowed one — almost the whole lit wall outside its own cel.
+  `ui/test/light.test.ts` now measures both flanks' mean brightness at every turn.
+
+Verified live: at all four turns, 15 sprites drawn, `offPlot: 0`,
+`outsidePlate: 0`; the extent swaps `948x610` → `610x948` and returns; and the
+building mass' centroid sweeps across the frame (x 384 → 451 → 512 → 568), which
+is what confirms the town genuinely rotates rather than redrawing in place.
+

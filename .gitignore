@@ -17,3 +17,4 @@ ui/node_modules/
 # it is an artifact rather than a source file.
 ui/ui-art.test.mjs
 ui/ui-visibility.test.mjs
+ui/ui-light.test.mjs

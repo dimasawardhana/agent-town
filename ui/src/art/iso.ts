@@ -20,6 +20,23 @@
 // approximate.
 
 import { type Ink, Pix, rgba } from "./surface";
+import { type Turn, normaliseTurn, turnPoint } from "../view";
+
+/**
+ * A wall of a world box: fixed along one axis, running along the other.
+ *
+ * A face is described this way rather than as a pair of corners because the two
+ * things the renderer must decide about it — whether the camera can see it, and
+ * how its pixels overwrite a neighbour's — are both single numbers derived from
+ * its midpoint, and a corner pair would invite comparing the wrong two.
+ */
+interface Face {
+  /** 0 for a face fixed in world x, 1 for one fixed in world y. */
+  axis: 0 | 1;
+  fixed: number;
+  from: number;
+  to: number;
+}
 
 /** A point in the picture, in pixels. */
 export interface Point {
@@ -33,23 +50,34 @@ export interface Point {
  * `ox`/`oy` are the picture-space origin: the pixel that world (0, 0, 0) lands
  * on. Each baked asset sets its own origin so the sprite's bounding box starts
  * at (0, 0) without every caller re-deriving the offset.
+ *
+ * `turn` orients the cel. Because a cel is plotted in its own local frame and
+ * the turn is linear about the world origin, turning here composes exactly with
+ * the site's own turned placement — the art of a turned building, put at the
+ * turned site, is the turned picture of that building. Nothing about the cel's
+ * size or origin changes: a square footprint projects to the same bounding box
+ * at every quarter turn, so the atlas cell is invariant and only the pixels
+ * differ.
  */
 export class IsoPix {
   readonly pix: Pix;
   private readonly ox: number;
   private readonly oy: number;
+  readonly turn: Turn;
 
-  constructor(w: number, h: number, ox: number, oy: number) {
+  constructor(w: number, h: number, ox: number, oy: number, turn = 0) {
     this.pix = new Pix(w, h);
     this.ox = ox;
     this.oy = oy;
+    this.turn = normaliseTurn(turn);
   }
 
   /** project maps a world point to this surface's pixel coordinates. */
   project(wx: number, wy: number, z = 0): Point {
+    const p = turnPoint(this.turn, wx, wy);
     return {
-      x: (wx - wy) / 2 + this.ox,
-      y: (wx + wy) / 4 - z + this.oy,
+      x: (p.x - p.y) / 2 + this.ox,
+      y: (p.x + p.y) / 4 - z + this.oy,
     };
   }
 
@@ -119,6 +147,98 @@ export class IsoPix {
   }
 
   /**
+   * faceMid is the world midpoint of a face.
+   *
+   * A midpoint rather than a corner, because for a square footprint a corner is
+   * shared by two faces and therefore cannot distinguish them.
+   */
+  private faceMid(f: Face): Point {
+    return f.axis === 0
+      ? { x: f.fixed, y: (f.from + f.to) / 2 }
+      : { x: (f.from + f.to) / 2, y: f.fixed };
+  }
+
+  /**
+   * depth is how near a world point is to the camera, larger being nearer.
+   *
+   * The projection puts larger `x + y` lower on screen, and lower on screen is
+   * nearer the viewer for anything standing on the ground. Derived from the
+   * turned point rather than from a table of which axis is near at which turn,
+   * so it cannot disagree with the projection it is deciding about.
+   */
+  private depth(wx: number, wy: number): number {
+    const p = turnPoint(this.turn, wx, wy);
+    return p.x + p.y;
+  }
+
+  /** screenX is the picture-space horizontal position of a world point, which
+   *  is what decides which of two visible faces reads as lit. */
+  private screenX(wx: number, wy: number): number {
+    const p = turnPoint(this.turn, wx, wy);
+    return p.x - p.y;
+  }
+
+  /**
+   * visibleFaces picks the two walls of a box the camera can see, and says which
+   * of them catches the light.
+   *
+   * The old code hard-coded the world faces at `x+w` and `y+h`, which is correct
+   * only for an unrotated town: turn the world and those two become the *far*
+   * walls, hidden behind the box's own top, and a tower renders with no walls at
+   * all. Choosing by turned screen position is the general form of the same
+   * rule and reduces to it exactly at turn 0.
+   *
+   * Light is assigned by screen position, not by world axis, because the light is
+   * fixed in the picture (`palette.ts`): the face on the picture's left flank
+   * catches it whichever world wall that happens to be.
+   */
+  private visibleFaces(x: number, y: number, w: number, h: number): { lit: Face; shadow: Face } {
+    const candidates: Face[] = [
+      { axis: 0, fixed: x + w, from: y, to: y + h },
+      { axis: 0, fixed: x, from: y, to: y + h },
+      { axis: 1, fixed: y + h, from: x, to: x + w },
+      { axis: 1, fixed: y, from: x, to: x + w },
+    ];
+    // The two nearest by midpoint; the rest are behind the box.
+    const ordered = [...candidates].sort((a, b) => {
+      const ma = this.faceMid(a);
+      const mb = this.faceMid(b);
+      return this.depth(mb.x, mb.y) - this.depth(ma.x, ma.y);
+    });
+    const two = ordered.slice(0, 2);
+    // Of the two, the one further left in the picture takes the light.
+    two.sort((a, b) => {
+      const ma = this.faceMid(a);
+      const mb = this.faceMid(b);
+      return this.screenX(ma.x, ma.y) - this.screenX(mb.x, mb.y);
+    });
+    return { lit: two[0], shadow: two[1] };
+  }
+
+  /**
+   * runFace fills one wall, walking it far-to-near.
+   *
+   * The order only matters where two faces meet, at the shared vertical corner:
+   * whichever is drawn second owns that pixel column. Walking far-to-near is what
+   * keeps the nearer face's edge intact, and at turn 0 it is the ascending walk
+   * the hard-coded version used, so the unrotated picture is unchanged.
+   */
+  private runFace(f: Face, zBottom: number, zTop: number, ink: Ink): void {
+    const near = f.axis === 0 ? this.depth(f.fixed, f.to) > this.depth(f.fixed, f.from) : this.depth(f.to, f.fixed) > this.depth(f.from, f.fixed);
+    if (near) {
+      for (let v = f.from; v <= f.to; v++) this.columnAt(f, v, zBottom, zTop, ink);
+    } else {
+      for (let v = f.to; v >= f.from; v--) this.columnAt(f, v, zBottom, zTop, ink);
+    }
+  }
+
+  /** columnAt raises one column of a wall at the run's offset `v`. */
+  private columnAt(f: Face, v: number, zBottom: number, zTop: number, ink: Ink): void {
+    if (f.axis === 0) this.column(f.fixed, v, zBottom, zTop, ink);
+    else this.column(v, f.fixed, zBottom, zTop, ink);
+  }
+
+  /**
    * rect3d draws an axis-aligned world box.
    *
    * Of the four walls only two are ever visible from a fixed camera: the ones
@@ -137,22 +257,80 @@ export class IsoPix {
     zTop: number,
     shade: { top: Ink; lit: Ink; shadow: Ink; edge?: Ink },
   ): this {
-    for (let wy = y; wy <= y + h; wy++) this.column(x + w, wy, zBottom, zTop, shade.shadow);
-    for (let wx = x; wx <= x + w; wx++) this.column(wx, y + h, zBottom, zTop, shade.lit);
+    // Which walls exist is a question about the turn, not about the world:
+    // `visibleFaces` picks the two the camera can see and says which is lit.
+    const { lit, shadow } = this.visibleFaces(x, y, w, h);
+    this.runFace(shadow, zBottom, zTop, shade.shadow);
+    this.runFace(lit, zBottom, zTop, shade.lit);
 
-    // The top, far rows first. Larger wy projects lower on screen and is
-    // therefore nearer the camera, so walking y upward draws back to front and
-    // the near rows land last — which is what keeps the seam between the top
-    // and the wall below it a single pixel wide.
-    for (let wy = y; wy <= y + h; wy++) {
+    // The top, far rows first, then each row far-to-near. Larger depth projects
+    // lower and is therefore nearer the camera, so walking by increasing depth
+    // draws back to front and the near rows land last — which is what keeps the
+    // seam between the top and the wall below it a single pixel wide.
+    //
+    // The row order follows the turn rather than always walking y upward, which
+    // is the same correction the walls needed: at turn 0 it *is* y upward.
+    const rowsNearerWithY = this.depth(x, y + h) > this.depth(x, y);
+    for (let i = 0; i <= h; i++) {
+      const wy = rowsNearerWithY ? y + i : y + h - i;
       for (let wx = x; wx <= x + w; wx++) this.plot(wx, wy, zTop, shade.top);
     }
 
     if (shade.edge) {
-      for (let wy = y; wy <= y + h; wy++) this.plot(x + w, wy, zBottom, shade.edge);
-      for (let wx = x; wx <= x + w; wx++) this.plot(wx, y + h, zBottom, shade.edge);
+      for (let v = shadow.from; v <= shadow.to; v++) this.edgeAt(shadow, v, zBottom, shade.edge);
+      for (let v = lit.from; v <= lit.to; v++) this.edgeAt(lit, v, zBottom, shade.edge);
     }
     return this;
+  }
+
+  /**
+   * litWall and shadowWall are the two visible walls of a square footprint.
+   *
+   * Art that decorates a *face* — windows, a door, the spoil a footing leaves —
+   * must go on whichever world walls the camera can currently see, and must put
+   * its light-side decoration on whichever of those catches the light. Passing
+   * the face rather than a world axis is what makes one drawing routine serve
+   * all four orientations: at turn 0 these resolve to the `y = side` and
+   * `x = side` faces the art was originally written against, so the unrotated
+   * picture is unchanged.
+   */
+  litWall(side: number): Face {
+    return this.visibleFaces(0, 0, side, side).lit;
+  }
+
+  shadowWall(side: number): Face {
+    return this.visibleFaces(0, 0, side, side).shadow;
+  }
+
+  /**
+   * wallAt is the world point at offset `u` along a face's own run.
+   *
+   * `u` runs 0..side in increasing world coordinate along the face, so a
+   * drawing's left-to-right in `u` turns with the wall it is on. Decoration that
+   * is asymmetric on purpose — `windows` spaces its lit-wall openings wider than
+   * its shadow-wall ones — therefore stays asymmetric the same way round after a
+   * turn, rather than mirroring because the underlying axis changed.
+   */
+  private wallAt(f: Face, u: number): Point {
+    return f.axis === 0 ? { x: f.fixed, y: f.from + u } : { x: f.from + u, y: f.fixed };
+  }
+
+  /** wallPlot places one pixel on a face at offset `u`, height `z`. */
+  wallPlot(f: Face, u: number, z: number, ink: Ink): this {
+    const p = this.wallAt(f, u);
+    return this.plot(p.x, p.y, z, ink);
+  }
+
+  /** wallColumn raises a pixel run on a face at offset `u`. */
+  wallColumn(f: Face, u: number, zBottom: number, zTop: number, ink: Ink): this {
+    const p = this.wallAt(f, u);
+    return this.column(p.x, p.y, zBottom, zTop, ink);
+  }
+
+  /** edgeAt plots the ground-level pixel of a wall's run. */
+  private edgeAt(f: Face, v: number, z: number, ink: Ink): void {
+    if (f.axis === 0) this.plot(f.fixed, v, z, ink);
+    else this.plot(v, f.fixed, z, ink);
   }
 
   /**
@@ -176,33 +354,80 @@ export class IsoPix {
     height: number,
     shade: { near: Ink; far: Ink; ridge: Ink; gable: Ink; edge?: Ink },
   ): this {
-    const mid = y + h / 2;
-    const half = Math.max(1, h / 2);
-    const ridgeY = Math.round(mid);
+    // The ridge runs along world x when the town is unrotated, which is the
+    // silhouette that says "house" at a glance. Turning the town turns the ridge
+    // with it, so which world axis the ridge follows is a question about the
+    // turn — and so is which of the two slopes faces the camera.
+    //
+    // The ridge is the axis that runs *across* the viewer's line of sight: after
+    // the turn, the direction whose picture-space span is horizontal. At turn 0
+    // that is world x, which is why the unrotated roof is unchanged.
+    const alongX = this.ridgeRunsAlongX();
 
-    // Far slope: the plane facing away, from the y edge up to the ridge.
-    for (let wy = y; wy <= ridgeY; wy++) {
-      const z = zEave + height * ((wy - y) / half);
-      for (let wx = x; wx <= x + w; wx++) this.plot(wx, wy, z, shade.far);
-    }
+    // `span` walks the ridge's own axis; `across` walks away from the ridge
+    // toward the eaves, and its two ends are the far and near slopes.
+    const ridgeFrom = alongX ? x : y;
+    const ridgeTo = alongX ? x + w : y + h;
+    const acrossFrom = alongX ? y : x;
+    const acrossTo = alongX ? y + h : x + w;
+    const acrossHalf = Math.max(1, (acrossTo - acrossFrom) / 2);
+    const ridgeMid = Math.round(acrossFrom + acrossHalf);
 
-    // Near slope: the lit plane, walked from the ridge down to the y+h edge and
-    // drawn second, so it overlaps the seam rather than leaving a gap at it.
-    for (let wy = ridgeY; wy <= y + h; wy++) {
-      const z = zEave + height * ((y + h - wy) / half);
-      for (let wx = x; wx <= x + w; wx++) {
-        this.plot(wx, wy, z, wy === ridgeY ? shade.ridge : shade.near);
+    // Which end of `across` is farther from the camera, and therefore the far
+    // slope that must be drawn first.
+    const fromIsFar = this.depth(alongX ? x : acrossFrom, alongX ? acrossFrom : y) < this.depth(alongX ? x : acrossTo, alongX ? acrossTo : y);
+    const farEnd = fromIsFar ? acrossFrom : acrossTo;
+    const nearEnd = fromIsFar ? acrossTo : acrossFrom;
+    const dir = nearEnd > farEnd ? 1 : -1;
+
+    /** at builds the world point at a ridge offset and an across offset. */
+    const at = (r: number, a: number): { wx: number; wy: number } =>
+      alongX ? { wx: r, wy: a } : { wx: a, wy: r };
+
+    // Far slope: the plane facing away, from its eave up to the ridge.
+    for (let a = farEnd; a !== ridgeMid + dir; a += dir) {
+      const z = zEave + height * (1 - Math.abs(a - (acrossFrom + acrossHalf)) / acrossHalf);
+      for (let r = ridgeFrom; r <= ridgeTo; r++) {
+        const p = at(r, a);
+        this.plot(p.wx, p.wy, z, shade.far);
       }
     }
 
-    // The gable end: the triangle under the roof at the x+w end. Without it the
-    // roof floats, because nothing connects the eave line to the ridge.
-    for (let wy = y; wy <= y + h; wy++) {
-      const z = zEave + height * (1 - Math.abs(wy - mid) / half);
-      this.column(x + w, wy, zEave, z, shade.gable);
-      if (shade.edge) this.plot(x + w, wy, zEave, shade.edge);
+    // Near slope: drawn second, so it overlaps the ridge seam rather than
+    // leaving a gap at it, and takes the ridge pixel itself.
+    for (let a = ridgeMid; a !== nearEnd + dir; a += dir) {
+      const z = zEave + height * (1 - Math.abs(a - (acrossFrom + acrossHalf)) / acrossHalf);
+      for (let r = ridgeFrom; r <= ridgeTo; r++) {
+        const p = at(r, a);
+        this.plot(p.wx, p.wy, z, Math.abs(a - ridgeMid) <= 0 ? shade.ridge : shade.near);
+      }
+    }
+
+    // The gable end: the triangle under the roof at the far end of the ridge
+    // axis. Without it the roof floats, because nothing connects the eave line
+    // to the ridge.
+    for (let a = acrossFrom; a <= acrossTo; a++) {
+      const z = zEave + height * (1 - Math.abs(a - (acrossFrom + acrossHalf)) / acrossHalf);
+      const r = alongX ? x + w : y + h;
+      const p = at(r, a);
+      this.column(p.wx, p.wy, zEave, z, shade.gable);
+      if (shade.edge) this.plot(p.wx, p.wy, zEave, shade.edge);
     }
     return this;
+  }
+
+  /**
+   * ridgeRunsAlongX says whether the roof's ridge follows world x at this turn.
+   *
+   * The ridge reads as a roof because it lies across the viewer's line of sight.
+   * In picture space a line's horizontal extent is driven by `(x - y)`, so the
+   * axis whose turned endpoints differ most in `x - y` is the one across the
+   * view — which at turn 0 is world x, and at turn 1 is world y.
+   */
+  private ridgeRunsAlongX(): boolean {
+    const xSpan = Math.abs(this.screenX(1, 0) - this.screenX(0, 0));
+    const ySpan = Math.abs(this.screenX(0, 1) - this.screenX(0, 0));
+    return xSpan >= ySpan;
   }
 
   /** beam draws a horizontal member at height z along world x: scaffolding,

@@ -328,6 +328,31 @@
         accent-color: var(--accent);
         cursor: pointer;
       }
+      /* The view controls: two equal buttons on one row, so neither reads as
+         the primary action — turning is symmetric and the panel should not
+         suggest a preferred direction. */
+      .view-control { padding: 12px 14px; }
+      .view-control h2 { margin: 0 0 8px; }
+      .view-control .turn-row { display: flex; gap: 6px; }
+      .view-control .turn-row .bevel { flex: 1; }
+      .view-control .muted {
+        margin: 8px 0 0;
+        font-size: 11px;
+        display: flex;
+        gap: 4px;
+        align-items: baseline;
+      }
+      /* A reset that reads as text rather than as a button, because it is a way
+         back from a state rather than an action worth an equal-weight control. */
+      .view-control .link {
+        background: none;
+        border: 0;
+        padding: 0;
+        font: inherit;
+        color: var(--accent);
+        cursor: pointer;
+        text-decoration: underline;
+      }
       .crew { padding: 12px 0; }
       .crew h2 { margin: 0 14px 8px; }
       .crew ul { list-style: none; margin: 0; padding: 0; }

@@ -30,9 +30,26 @@ import {
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, type Edge, type Ground } from "./terrain";
 
-/** The texture key everything bakes into. One texture, many frames: one GPU
- *  upload, one draw-call batch, no per-sprite texture swapping. */
+/** The texture key the unrotated atlas bakes into. One texture, many frames: one
+ *  GPU upload, one draw-call batch, no per-sprite texture swapping. */
 export const ATLAS = "town";
+
+/**
+ * atlasKey is the texture key for an orientation.
+ *
+ * Each orientation is its own baked texture rather than a set of frames inside
+ * one, because the art genuinely differs: a wall is only visible when the camera
+ * faces it, so a turned building is a different picture and not a moved one. The
+ * separated keys also mean the atlas for an orientation is built on first use,
+ * so a reader who never turns never pays for the other three.
+ *
+ * Turn 0 keeps the bare `town` key so the unrotated boot — the only path every
+ * session takes — is unchanged, and so the tests that reference it keep meaning
+ * what they meant.
+ */
+export function atlasKey(turn: number): string {
+  return turn === 0 ? ATLAS : `${ATLAS}:t${turn}`;
+}
 
 /** A baked frame: where it sits in the atlas, and where its world origin is. */
 export interface FrameInfo {
@@ -60,8 +77,8 @@ const SIZES: readonly { side: number; files: number }[] = [
 ];
 
 /** Frame name for the ground shadow a building of this footprint casts. */
-export function shadowFrame(side: number): string {
-  return `s${side}`;
+export function shadowFrame(side: number, turn = 0): string {
+  return turn === 0 ? `s${side}` : `s${side}:t${turn}`;
 }
 
 /** Frame name for a worker tier in a state's nth animation frame. */
@@ -87,19 +104,21 @@ export function groundEdgeFrame(kind: Ground, edge: Edge, variant: number): stri
  * every stage from `framed` upward, so a tower cannot grow new windows as it is
  * finished.
  */
-export function bandFrame(side: number, stage: Stage, variant: 0 | 1): string {
-  return `band:${side}:${stage}:${variant}`;
+export function bandFrame(side: number, stage: Stage, variant: 0 | 1, turn = 0): string {
+  return turn === 0 ? `band:${side}:${stage}:${variant}` : `band:${side}:${stage}:${variant}:t${turn}`;
 }
 
 /** Frame name for a building's base: the ground works, the ground storey's
  *  shell, the door and plinth, and the damage visible from the ground. */
-export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean): string {
-  return `base:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean, turn = 0): string {
+  const base = `base:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
 }
 
 /** Frame name for a building's cap: roof, windows, door, trim, chimney, damage. */
-export function capFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean): string {
-  return `cap:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+export function capFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean, turn = 0): string {
+  const base = `cap:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
 }
 
 /**
@@ -111,8 +130,8 @@ export function capFrame(side: number, stage: Stage, variant: 0 | 1, damaged: bo
  * `variant % 3` both distinguish 0 from 1), so a place with two barrels shows
  * two barrels rather than one barrel twice.
  */
-export function propFrame(kind: string, variant = 0): string {
-  return `p:${kind}:${variant}`;
+export function propFrame(kind: string, variant = 0, turn = 0): string {
+  return turn === 0 ? `p:${kind}:${variant}` : `p:${kind}:${variant}:t${turn}`;
 }
 
 /**
@@ -123,7 +142,7 @@ export function propFrame(kind: string, variant = 0): string {
  * would move between builds — which would make the visual diff of any change
  * unreadable and break reproducibility for no gain at these sizes.
  */
-export function bake(scene: Phaser.Scene): Atlas {
+export function bake(scene: Phaser.Scene, turn = 0): Atlas {
   const cels: { key: string; pix: Pix; ox: number; oy: number }[] = [];
 
   // --- Workers -----------------------------------------------------------
@@ -167,8 +186,8 @@ export function bake(scene: Phaser.Scene): Atlas {
       const topBox = capBox(side, skin);
       for (const stage of STAGE_ORDER) {
         cels.push({
-          key: bandFrame(side, stage, variant),
-          pix: buildBand(side, skin, stage),
+          key: bandFrame(side, stage, variant, turn),
+          pix: buildBand(side, skin, stage, turn),
           ox: storeyBox.ox,
           oy: storeyBox.oy,
         });
@@ -179,14 +198,14 @@ export function bake(scene: Phaser.Scene): Atlas {
         // carries no extra frames for being damaged.
         for (const damaged of [false, true]) {
           cels.push({
-            key: baseFrame(side, stage, variant, damaged),
-            pix: buildBase(side, files, path, stage, damaged),
+            key: baseFrame(side, stage, variant, damaged, turn),
+            pix: buildBase(side, files, path, stage, damaged, turn),
             ox: baseBox.ox,
             oy: baseBox.oy,
           });
           cels.push({
-            key: capFrame(side, stage, variant, damaged),
-            pix: buildCap(side, skin, stage, damaged),
+            key: capFrame(side, stage, variant, damaged, turn),
+            pix: buildCap(side, skin, stage, damaged, turn),
             ox: topBox.ox,
             oy: topBox.oy,
           });
@@ -198,7 +217,7 @@ export function bake(scene: Phaser.Scene): Atlas {
     // visible precisely because the workers do have one.
     const shadowSkin = skinFor(files, "b");
     const shadowBox = boxFor(side, shadowSkin, 1);
-    cels.push({ key: shadowFrame(side), pix: buildShadow(side, files, "b"), ox: shadowBox.ox, oy: shadowBox.oy });
+    cels.push({ key: shadowFrame(side, turn), pix: buildShadow(side, files, "b", turn), ox: shadowBox.ox, oy: shadowBox.oy });
   }
 
   // --- Ground ------------------------------------------------------------
@@ -232,15 +251,15 @@ export function bake(scene: Phaser.Scene): Atlas {
   for (const kind of ALL_PROP_KINDS) {
     for (const variant of [0, 1] as const) {
       cels.push({
-        key: propFrame(kind, variant),
-        pix: buildProp(kind, variant),
+        key: propFrame(kind, variant, turn),
+        pix: buildProp(kind, variant, turn),
         ox: PROP_OX,
         oy: PROP_OY,
       });
     }
   }
 
-  return rasterise(scene, cels);
+  return rasterise(scene, cels, atlasKey(turn));
 }
 
 // The origin offsets come from the art modules' own constants rather than being
@@ -262,6 +281,7 @@ const PROP_OY = PROP_ORIGIN.y;
 function rasterise(
   scene: Phaser.Scene,
   cels: readonly { key: string; pix: Pix; ox: number; oy: number }[],
+  textureKey: string,
 ): Atlas {
   // Rows of 16, sized to the tallest cel, so the sheet stays close to square.
   const perRow = 16;
@@ -299,8 +319,8 @@ function rasterise(
 
   // One texture, one frame per cel. `addCanvas` takes the canvas directly, so
   // no image decode and no loader are involved.
-  const tex = scene.textures.addCanvas(ATLAS, canvas);
-  if (!tex) throw new Error("bake: texture key already in use");
+  const tex = scene.textures.addCanvas(textureKey, canvas);
+  if (!tex) throw new Error(`bake: texture key ${textureKey} already in use`);
   for (const f of Object.values(atlas)) {
     tex.add(f.key, 0, f.x, f.y, f.w, f.h);
   }

@@ -33,6 +33,7 @@ import { test } from "node:test";
 
 import { paletteSet, P } from "../src/art/palette";
 import { hex, sprite, Pix } from "../src/art/surface";
+import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
 import {
@@ -1044,5 +1045,93 @@ test("each added storey raises the tower by exactly one storey", () => {
       );
     }
     prev = { floors, height };
+  }
+});
+
+// --- rotation ---------------------------------------------------------------
+//
+// The view turn is about the world origin and is linear, so turning a cel's
+// local art and putting it at the turned site must give exactly the turned
+// picture of that building. These tests hold that identity, because it is the
+// whole reason one bake per orientation is correct rather than a hack: if it
+// failed, a turned town would be a plausible-looking wrong picture.
+
+test("a quarter turn is linear, so art and placement compose", () => {
+  // turn(site + local) === turn(site) + turn(local). This is what lets a cel be
+  // plotted in its own frame and still land correctly in a turned town.
+  for (const turn of TURNS) {
+    for (const [sx, sy] of [[40, 238], [-17, 91], [700, 12]]) {
+      for (const [lx, ly] of [[0, 0], [3, 7], [-5, 2]]) {
+        const composed = turnPoint(turn, sx + lx, sy + ly);
+        const site = turnPoint(turn, sx, sy);
+        const local = turnPoint(turn, lx, ly);
+        assert.ok(Math.abs(composed.x - (site.x + local.x)) < 1e-9, `turn ${turn}: x does not compose`);
+        assert.ok(Math.abs(composed.y - (site.y + local.y)) < 1e-9, `turn ${turn}: y does not compose`);
+      }
+    }
+  }
+});
+
+test("four turns return to the start, and turns fold", () => {
+  // `normaliseTurn` is the folding point, so a caller may hand it an unbounded
+  // count: turning is offered as a repeated single step and a reader who keeps
+  // pressing would otherwise walk off the end of the set.
+  assert.deepEqual(turnPoint(normaliseTurn(4), 3, 5), turnPoint(0, 3, 5), "four turns must be no turn");
+  assert.deepEqual(turnPoint(normaliseTurn(-1), 3, 5), turnPoint(3, 3, 5), "a turn back is three forwards");
+  assert.equal(normaliseTurn(7), 3, "seven turns is three");
+  assert.equal(normaliseTurn(-1), 3, "one turn back is three forwards");
+  assert.equal(normaliseTurn(0), 0);
+  // And every folded value is one the projection handles.
+  for (const n of [-9, -1, 0, 1, 5, 8, 1001]) assert.ok(TURNS.includes(normaliseTurn(n)), `${n} folded outside the set`);
+});
+
+test("turning preserves distance from the origin", () => {
+  // A rotation is rigid about the origin. If it were a scalene map — which is
+  // what a naive swap of the projection's terms gives — the town's proportions
+  // would change as the reader turned it.
+  for (const turn of TURNS) {
+    for (const [x, y] of [[950, 610], [0, 0], [-40, 300], [7, -11]]) {
+      const p = turnPoint(turn, x, y);
+      assert.ok(Math.abs(Math.hypot(p.x, p.y) - Math.hypot(x, y)) < 1e-9, `turn ${turn} is not rigid`);
+    }
+  }
+});
+
+test("a screen box grows to cover the turned rectangle", () => {
+  // All four corners are turned and projected. Deriving the box from two
+  // opposite corners under-measures it at turns 1 and 3 — the same defect that
+  // measured 353 pixels of lost land.
+  const w = 302;
+  const h = 240;
+  for (const turn of TURNS) {
+    const view = new WorldView(turn);
+    const box = view.screenBox(0, 0, w, h);
+    for (const [cx, cy] of [[0, 0], [w, 0], [0, h], [w, h]]) {
+      const p = view.project(cx, cy);
+      assert.ok(p.x >= box.minX - 1e-9 && p.x <= box.maxX + 1e-9, `turn ${turn}: corner escapes in x`);
+      assert.ok(p.y >= box.minY - 1e-9 && p.y <= box.maxY + 1e-9, `turn ${turn}: corner escapes in y`);
+    }
+  }
+});
+
+test("the light stays on the picture's left whatever the turn", () => {
+  // The light is fixed in the picture (palette.ts), so the wall that catches it
+  // is the one on the picture's left flank at every orientation. This is what
+  // lets one bake per orientation serve a world turned under a fixed sun.
+  for (const turn of TURNS) {
+    const view = new WorldView(turn);
+    // A square footprint's four wall midpoints, in world space.
+    const mids = [
+      { x: 10, y: 5 }, { x: 0, y: 5 }, { x: 5, y: 10 }, { x: 5, y: 0 },
+    ];
+    const screenXs = mids.map((m) => view.project(m.x, m.y).x);
+    const depths = mids.map((m) => { const p = view.rotate(m.x, m.y); return p.x + p.y; });
+    // The two nearest faces are the box's front pair...
+    const order = mids.map((_, i) => i).sort((a, b) => depths[b] - depths[a]);
+    const front = order.slice(0, 2);
+    // ...and of those, the lit one is further left.
+    const lit = front[0] < front[1] && screenXs[front[0]] < screenXs[front[1]] ? front[0]
+      : screenXs[front[0]] <= screenXs[front[1]] ? front[0] : front[1];
+    assert.ok(front.includes(lit), `turn ${turn}: the lit face is not one of the visible pair`);
   }
 });

@@ -27,6 +27,7 @@
 
 import { P, type Ramp } from "./palette";
 import { IsoPix } from "./iso";
+import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight } from "./stack";
 import { type Pix } from "./surface";
 
@@ -219,16 +220,15 @@ export interface BuildingBox {
  * boards and the lower edge of the spoil heap lost their ink line on all
  * sixteen `constructing` and `testing` cels.
  */
-export function boxFor(side: number, skin: BuildingSkin, floors = 1): BuildingBox {
+export function boxFor(side: number, skin: BuildingSkin, floors = 1, turn = 0): BuildingBox {
   // The height became a parameter when floors did. It cannot be derived from the
   // skin alone any more, because the same skin now stands one storey or twenty —
   // and a cel sized for one storey would clip a tower.
   const zTop = bandHeight(floors) + skin.roofHeight + 6; // +6 for the ridge and shadow
-  // The four footprint corners, projected by hand from the same formula the
-  // scene uses. Deriving them here rather than in the scene is what lets the
-  // cel's own size be the authority on where the building's origin is.
-  const xs = [0, side / 2, -side / 2, 0];
-  const ys = [0, side / 4, side / 4, side / 2];
+  // The footprint's corners as this turn projects them. Deriving them here rather
+  // than in the scene is what lets the cel's own size be the authority on where
+  // the building's origin is.
+  const { xs, ys } = footprintScreen(side, turn);
 
   // Scaffold poles and boards reach 5 world units beyond the near corner; the
   // spoil heap reaches 14 along x and 8 along y. Both project to at most a few
@@ -268,11 +268,32 @@ export function boxFor(side: number, skin: BuildingSkin, floors = 1): BuildingBo
  * why the rule is stated here rather than left to each call site.
  */
 
+/**
+ * footprintScreen returns a footprint's four projected corners at a turn.
+ *
+ * A square footprint projects to the same *size* box at every quarter turn — the
+ * width is always `side` and the height always `side / 2` — but not to the same
+ * box: the corners permute, so which corner is leftmost changes and the cel's
+ * origin moves with it. Padding the cel from the unrotated corners was a real
+ * defect: at turn 1 the art was drawn 39 pixels off for a 78-unit footprint,
+ * which put nearly the whole lower-left wall outside its own cel.
+ *
+ * Derived from the turn rather than restated per axis, so it cannot disagree with
+ * `IsoPix.project`, which is what plots the pixels into this box.
+ */
+function footprintScreen(side: number, turn: number): { xs: number[]; ys: number[] } {
+  const corners: [number, number][] = [[0, 0], [side, 0], [0, side], [side, side]];
+  const pts = corners.map(([x, y]) => {
+    const p = turnPoint(normaliseTurn(turn), x, y);
+    return { x: (p.x - p.y) / 2, y: (p.x + p.y) / 4 };
+  });
+  return { xs: pts.map((p) => p.x), ys: pts.map((p) => p.y) };
+}
+
 /** bandBox is the cel one storey occupies: the wall's projection, plus the
  *  margin the outline needs, and no headroom above because stacking supplies it. */
-export function bandBox(side: number): BuildingBox {
-  const xs = [0, side / 2, -side / 2, 0];
-  const ys = [0, side / 4, side / 4, side / 2];
+export function bandBox(side: number, turn = 0): BuildingBox {
+  const { xs, ys } = footprintScreen(side, turn);
   const m = 6;
   const minX = Math.floor(Math.min(...xs)) - m;
   const maxX = Math.ceil(Math.max(...xs)) + m;
@@ -284,9 +305,8 @@ export function bandBox(side: number): BuildingBox {
 /** capBox is the cel the roof and its finishing trades occupy, with its own base
  *  at local z = 0 — the cap is placed one storey above the top band, so its base
  *  already *is* the top of the wall. */
-export function capBox(side: number, skin: BuildingSkin): BuildingBox {
-  const xs = [0, side / 2, -side / 2, 0];
-  const ys = [0, side / 4, side / 4, side / 2];
+export function capBox(side: number, skin: BuildingSkin, turn = 0): BuildingBox {
+  const { xs, ys } = footprintScreen(side, turn);
   const m = 6;
   const top = skin.roofHeight + 6;
   const minX = Math.floor(Math.min(...xs)) - m;
@@ -354,10 +374,11 @@ export function buildBase(
   path: string,
   stage: Stage,
   damaged = false,
+  turn = 0,
 ): Pix {
   const skin = skinFor(files, path);
-  const box = boxFor(side, skin, 1);
-  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+  const box = boxFor(side, skin, 1, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   const want = stageRank(stage);
 
   plotGround(iso, side);
@@ -393,9 +414,9 @@ export function buildBase(
  * Its height is exactly `STOREY`, and `art/stack.ts` proves a storey is an exact
  * vertical repeat, so stamping this cel up a tower leaves no seam.
  */
-export function buildBand(side: number, skin: BuildingSkin, stage: Stage): Pix {
-  const box = bandBox(side);
-  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn = 0): Pix {
+  const box = bandBox(side, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   storeyShell(iso, side, skin, stage);
   return iso.outline(P.ink);
 }
@@ -409,9 +430,9 @@ export function buildBand(side: number, skin: BuildingSkin, stage: Stage): Pix {
  * `STOREY` here as well would raise the roof a second time and leave a storey of
  * sky between the wall and its roof.
  */
-export function buildCap(side: number, skin: BuildingSkin, stage: Stage, damaged: boolean): Pix {
-  const box = capBox(side, skin);
-  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+export function buildCap(side: number, skin: BuildingSkin, stage: Stage, damaged: boolean, turn = 0): Pix {
+  const box = capBox(side, skin, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   const want = stageRank(stage);
 
   if (want >= stageRank("roofed")) roof(iso, side, 0, skin);
@@ -598,26 +619,31 @@ function windows(iso: IsoPix, side: number, height: number, count: number): void
   const y = Math.round(height * 0.45);
   const gap = side / (count + 1);
 
+  // The two faces the camera can see, resolved for this cel's turn. Decorating
+  // a *face* rather than a world axis is what keeps the windows on the walls the
+  // reader is looking at: at turn 0 these are the `y = side` and `x = side` walls
+  // the drawing was written against, and after a turn they are whichever two
+  // walls have taken their place.
+  const lit = iso.litWall(side);
+  const shadow = iso.shadowWall(side);
+
   for (let i = 1; i <= count; i++) {
     const at = Math.round(gap * i);
-    // The lit wall (world y = side), stepped along wx.
+    // The lit wall, stepped along its own run. One ramp step brighter, because
+    // glass on the wall that catches the light catches it too.
     for (let dx = -span; dx <= span; dx++) {
-      for (let z = 0; z < h; z++) {
-        iso.column(at + dx, side, y + z, y + z, P.glass[2]);
-      }
+      for (let z = 0; z < h; z++) iso.wallPlot(lit, at + dx, y + z, P.glass[2]);
       // Frame: one darker step above and below, which is what gives the glass
       // an edge without a second outline pass.
-      iso.column(at + dx, side, y - 1, y - 1, P.wood[0]);
-      iso.column(at + dx, side, y + h, y + h, P.wood[0]);
+      iso.wallPlot(lit, at + dx, y - 1, P.wood[0]);
+      iso.wallPlot(lit, at + dx, y + h, P.wood[0]);
     }
-    // The shadow wall (world x = side), stepped along wy. One ramp step darker
-    // because it faces away from the light, like the wall it sits in.
+    // The shadow wall, one ramp step darker because it faces away from the
+    // light, like the wall it sits in.
     for (let dy = -span; dy <= span; dy++) {
-      for (let z = 0; z < h; z++) {
-        iso.column(side, at + dy, y + z, y + z, P.glass[1]);
-      }
-      iso.column(side, at + dy, y - 1, y - 1, P.wood[0]);
-      iso.column(side, at + dy, y + h, y + h, P.wood[0]);
+      for (let z = 0; z < h; z++) iso.wallPlot(shadow, at + dy, y + z, P.glass[1]);
+      iso.wallPlot(shadow, at + dy, y - 1, P.wood[0]);
+      iso.wallPlot(shadow, at + dy, y + h, P.wood[0]);
     }
   }
 }
@@ -633,12 +659,16 @@ function door(iso: IsoPix, side: number, height: number): void {
   const at = Math.round(side / 2);
   const h = Math.min(height - 3, 13);
   const half = Math.max(1, Math.round(side / 20));
+  // On the face the reader is looking at. A door is an opening in a wall, and
+  // which wall that is depends on where the camera is standing — so it follows
+  // the same face the walls themselves were drawn from.
+  const wall = iso.litWall(side);
   for (let dx = -half; dx <= half; dx++) {
-    for (let z = 0; z < h; z++) iso.column(at + dx, side, z, z, P.wood[0]);
+    for (let z = 0; z < h; z++) iso.wallColumn(wall, at + dx, z, z, P.wood[0]);
     // The lintel, one step up in the wood ramp so it catches the light and the
     // doorway reads as an opening rather than as a dark stripe.
-    iso.column(at + dx, side, h, h, P.wood[2]);
-    iso.column(at + dx, side, h + 1, h + 1, P.wood[1]);
+    iso.wallColumn(wall, at + dx, h, h, P.wood[2]);
+    iso.wallColumn(wall, at + dx, h + 1, h + 1, P.wood[1]);
   }
 }
 
@@ -758,30 +788,35 @@ export function buildBuilding(
   path: string,
   stage: Stage,
   damaged = false,
+  turn = 0,
 ): Pix {
   const skin = skinFor(files, path);
   const box = boxFor(side, skin, 1);
-  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+  // The composite is a test-only convenience, so its own IsoPix is never
+  // plotted into — the two blits below carry the turn themselves. It is still
+  // constructed with the turn so that the box it derives cannot disagree with
+  // the parts it composes.
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
 
   // The base carries the ground storey; its cel is already sized for the whole
   // one-storey building, so it lands at the origin.
-  iso.pix.blit(buildBase(side, files, path, stage, damaged), 0, 0);
+  iso.pix.blit(buildBase(side, files, path, stage, damaged, turn), 0, 0);
   // The cap is blitted at the base's own origin, NOT one storey above it. Its
   // cel is sized to the roof alone, so its anchor already sits one storey lower
   // in its own cel (`capBox` uses `roofHeight`, not `STOREY + roofHeight`), and
   // the two offsets cancel. Shifting by STOREY as well would lift the roof a
   // second time and leave a storey of sky between it and the wall.
-  iso.pix.blit(buildCap(side, skin, stage, damaged), 0, 0);
+  iso.pix.blit(buildCap(side, skin, stage, damaged, turn), 0, 0);
 
   return iso.pix;
 }
 
 /** buildShadow returns the ground shadow a stage throws. It is drawn under the
  *  building so the town has a floor rather than a set of floating props. */
-export function buildShadow(side: number, files: number, path: string): Pix {
+export function buildShadow(side: number, files: number, path: string, turn = 0): Pix {
   const skin = skinFor(files, path);
-  const box = boxFor(side, skin);
-  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+  const box = boxFor(side, skin, 1, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   iso.footprint(2, 3, side + 3, side + 3, 0, P.grass[0]);
   return iso.pix;
 }

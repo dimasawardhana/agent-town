@@ -36,6 +36,14 @@ A directory that holds source *below* it but none of its own. It is not a buildi
 A container's height comes from **hand-written** bytes rather than its total, because the common case is a module that embeds a built UI: `internal/` totals 2.0 MB of which 1.68 MB is the bundle, so sizing from the total would collapse it to one storey and hide the 317 kB of authored code a reader is looking for. A container steps aside the moment the buildings it summarises are drawn beside it — never both at once, which would show the same bytes twice.
 _Avoid_: group, folder, parent, namespace, node
 
+**Turn**:
+Which way round the town is drawn, in quarter turns. A view preference like detail depth: the layout from the daemon is never changed, only turned on the way *out* of it, so a turn cannot change what the town says — only how the reader is looking at it. The turn is about the world origin and linear, which is what lets a building's art be plotted in its own frame and still land correctly. The light does not turn with the town: it is fixed at the picture's top-left, so the wall that catches it changes as the world turns under a fixed sun.
+_Avoid_: rotation angle, compass, orientation, bearing
+
+**Land**:
+The field a town stands on, and the ground texture painted into one canvas. It is sized from the **layout's own extent**, never from the sites, because the field does not come and go with the detail filter — a deeper directory being hidden must not shrink the world. The canvas must cover the land: sizing it from the sites alone leaves the town's own fields cut off mid-tile.
+_Avoid_: terrain, map, ground texture, background
+
 **Hover Label**:
 What a site is called, shown when it is asked for and hidden otherwise. Nothing wears its name at rest: pointing at a building, a container, a district plate or a worker reveals that object's label, and pointing away hides it again. Clicking pins the label open so it can be read without holding the cursor still, and focusing something else moves the light — the previously pinned label goes dark. Exactly one label is pinned at a time, because that is what "show it on the thing we are focusing on instead" means.
 

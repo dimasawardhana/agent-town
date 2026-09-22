@@ -298,6 +298,34 @@ tested against the cases that matter rather than through a renderer:
   `depth <= filter < minChildDepth`. The second half is a correction: with a plain rule,
   `internal` and its ten packages drew together at filter 2 — a tower standing on the plate of
   the things it stood for, so the map showed the same bytes twice.
+- **Turning the view** is `ui/src/view.ts`: `WorldView`/`turnPoint` for the projection,
+  `turnLayout` for the geometry. The turn is **linear about the world origin**, so
+  `turn(site + local) = turn(site) + turn(local)` — which is what lets a cel be plotted in the
+  building's own frame and still land correctly, with no per-building correction. The turn is
+  applied to the **layout**, not threaded through the camera, the kerbs, the ground, the workers
+  and the hit zones: one transformed input instead of a dozen places that could each apply it to
+  the coordinates and forget it in the projection.
+- **The light does not turn.** `palette.ts` fixes it at the picture's top-left, so the wall that
+  catches it is whichever one is on the picture's left flank at that orientation. `IsoPix.box`
+  therefore chooses its two visible walls by *turned screen position* rather than by world axis,
+  and the cel's own origin comes from `footprintScreen(side, turn)`. Both were real defects when
+  hard-coded: the cel origin was 39 px off for a 78-unit footprint at turn 1, leaving 16 opaque
+  pixels on the lit flank against 800 on the shadowed one. `ui/test/light.test.ts` measures the two
+  flanks' mean brightness at every turn and fails if the light moves with the world.
+- **One atlas per orientation**, keyed `town` / `town:t1`… . A turned building is a *different
+  picture*, not a moved one, so it must be re-baked; `bake(scene, turn)` does that and
+  `TownScene.ensureAtlas` bakes each orientation on first use. Boot pays for one (measured 422 ms,
+  628 cels), not four (1.7 s).
+- `landBox(width, height, pad, project)` is the picture-space box the land occupies, and
+  `boxContains` is the coverage test. The land is sized from the **layout**, not from the sites,
+  because the field a town stands on does not come and go with the detail filter. Getting this
+  wrong is a visually obvious defect: `paintGround` sizes its canvas from the box everything needs
+  room for, while `drawGround` paints the layout's box, so a canvas sized from the sites alone is
+  smaller than the land it holds and the town's own fields come out cut off mid-tile. Measured on
+  this repository, the canvas reached picture-x 308 where the land reached 522.
+  Every corner is projected and the extremes taken. A hand-picked pair loses half the rectangle's
+  span on one axis — the leftmost point of a projected rectangle is its `(x0, y1)` corner, not its
+  `(x0, y0)` one — which measured 353 pixels off the left of this town.
 - `labelVisible(id, hovered, focused)` shows a label when its object is hovered *or* focused, and
   hides it otherwise. Nothing is named at rest. Showing the top level outright was tried and
   abandoned — measured on one real town it left thirteen boards on screen at once, a wall of type
