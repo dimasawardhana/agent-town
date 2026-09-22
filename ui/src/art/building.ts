@@ -27,6 +27,7 @@
 
 import { P, type Ramp } from "./palette";
 import { IsoPix } from "./iso";
+import { STOREY, bandHeight } from "./stack";
 import { type Pix } from "./surface";
 
 /**
@@ -136,8 +137,11 @@ function hasSpoil(s: Stage): boolean {
 export interface BuildingSkin {
   wall: Ramp;
   roof: Ramp;
-  /** Wall height in world units, before the roof. */
-  wallHeight: number;
+  // There is deliberately no `wallHeight` here any more. A storey is a fixed 20
+  // world units (`art/stack.ts`), so the wall's height is a property of the
+  // building's floor count and not of its skin. Keeping a per-skin wall height
+  // alongside floors would be two numbers for one fact, and the skin's copy
+  // would be the one nothing read — it was, before this was removed.
   /** Roof height in world units. */
   roofHeight: number;
   /** Whether the walls are exposed framed timber rather than plastered. */
@@ -175,18 +179,18 @@ export function skinFor(files: number, path: string): BuildingSkin {
 
   if (files <= 2) {
     // A hut: low walls, a steep thatch roof, mostly roof from this angle.
-    return { wall: P.plaster, roof: P.thatch, wallHeight: 14, roofHeight: 12, framed: true };
+    return { wall: P.plaster, roof: P.thatch, roofHeight: 12, framed: true };
   }
   if (files <= 5) {
-    return { wall: P.plaster, roof: warm ? P.roof : P.thatch, wallHeight: 20, roofHeight: 16, framed: true };
+    return { wall: P.plaster, roof: warm ? P.roof : P.thatch, roofHeight: 16, framed: true };
   }
   if (files <= 12) {
     // A workshop: taller walls, tile roof. Two materials, so a district of
     // mid-sized buildings is not a row of identical boxes.
-    return { wall: warm ? P.stone : P.plaster, roof: P.roof, wallHeight: 28, roofHeight: 20, framed: !warm };
+    return { wall: warm ? P.stone : P.plaster, roof: P.roof, roofHeight: 20, framed: !warm };
   }
   // A hall: stone, high walls, a shallow roof, so its mass reads as width.
-  return { wall: P.stone, roof: P.roof, wallHeight: 36, roofHeight: 22, framed: false };
+  return { wall: P.stone, roof: P.roof, roofHeight: 22, framed: false };
 }
 
 /** The picture-space box a skin occupies over a footprint of side `s`. */
@@ -215,8 +219,11 @@ export interface BuildingBox {
  * boards and the lower edge of the spoil heap lost their ink line on all
  * sixteen `constructing` and `testing` cels.
  */
-export function boxFor(side: number, skin: BuildingSkin): BuildingBox {
-  const zTop = skin.wallHeight + skin.roofHeight + 6; // +6 for the ridge and shadow
+export function boxFor(side: number, skin: BuildingSkin, floors = 1): BuildingBox {
+  // The height became a parameter when floors did. It cannot be derived from the
+  // skin alone any more, because the same skin now stands one storey or twenty —
+  // and a cel sized for one storey would clip a tower.
+  const zTop = bandHeight(floors) + skin.roofHeight + 6; // +6 for the ridge and shadow
   // The four footprint corners, projected by hand from the same formula the
   // scene uses. Deriving them here rather than in the scene is what lets the
   // cel's own size be the authority on where the building's origin is.
@@ -240,6 +247,181 @@ export function boxFor(side: number, skin: BuildingSkin): BuildingBox {
     oy: -minY,
     zTop,
   };
+}
+
+/**
+ * The three parts a building is assembled from.
+ *
+ * A building is drawn as a base, a run of identical storey bands, and a cap,
+ * held in one container by the scene. The split is by **how a part tiles**, not
+ * by which rank introduces it: base and cap occur once, the band repeats.
+ *
+ * That is forced by arithmetic rather than chosen for elegance. A storey is
+ * `STOREY` world units, so a 20-storey tower on a 100-unit footprint occupies a
+ * 113x427 cel; one baked cel per (footprint, height, stage, damage) combination
+ * is unbounded memory for a picture that is a vertical repeat. `art/stack.ts`
+ * proves the repeat is exact, which is what makes stacking safe.
+ *
+ * Every part draws its own base at local z = 0, so placement is one rule for all
+ * three: put it at `i * STOREY` and its own origin lands where it belongs. Getting
+ * this wrong by one storey is invisible on a single-storey building, which is
+ * why the rule is stated here rather than left to each call site.
+ */
+
+/** bandBox is the cel one storey occupies: the wall's projection, plus the
+ *  margin the outline needs, and no headroom above because stacking supplies it. */
+export function bandBox(side: number): BuildingBox {
+  const xs = [0, side / 2, -side / 2, 0];
+  const ys = [0, side / 4, side / 4, side / 2];
+  const m = 6;
+  const minX = Math.floor(Math.min(...xs)) - m;
+  const maxX = Math.ceil(Math.max(...xs)) + m;
+  const minY = Math.floor(Math.min(...ys) - STOREY) - m;
+  const maxY = Math.ceil(Math.max(...ys)) + m;
+  return { w: maxX - minX + 1, h: maxY - minY + 1, ox: -minX, oy: -minY, zTop: STOREY };
+}
+
+/** capBox is the cel the roof and its finishing trades occupy, with its own base
+ *  at local z = 0 — the cap is placed one storey above the top band, so its base
+ *  already *is* the top of the wall. */
+export function capBox(side: number, skin: BuildingSkin): BuildingBox {
+  const xs = [0, side / 2, -side / 2, 0];
+  const ys = [0, side / 4, side / 4, side / 2];
+  const m = 6;
+  const top = skin.roofHeight + 6;
+  const minX = Math.floor(Math.min(...xs)) - m;
+  const maxX = Math.ceil(Math.max(...xs)) + m;
+  const minY = Math.floor(Math.min(...ys) - top) - m;
+  const maxY = Math.ceil(Math.max(...ys)) + m;
+  return { w: maxX - minX + 1, h: maxY - minY + 1, ox: -minX, oy: -minY, zTop: top };
+}
+
+/**
+ * storeyShell is the shell of exactly one storey, drawn at local z 0..STOREY.
+ *
+ * Every storey of a building is this same function, which is the property that
+ * makes a tower expressible: floor 0's shell is drawn into the base's cel and
+ * every floor above it into the band's, and because both are the same drawing at
+ * the same height the facade is continuous across the join.
+ *
+ * Scaffolding is here rather than in the base because a building under
+ * construction is scaffolded up its whole height, not just at its foot: with the
+ * posts drawn per storey they stack into continuous runs, which is what a
+ * scaffold around a tower actually is.
+ */
+function storeyShell(iso: IsoPix, side: number, skin: BuildingSkin, stage: Stage): void {
+  const want = stageRank(stage);
+  if (want >= stageRank("framed")) framing(iso, side, STOREY);
+  if (want >= stageRank("walled")) walls(iso, side, STOREY, skin);
+  // Windows are per storey, which is the one place this deliberately departs
+  // from the ladder's "one part per rank" reading of a facade: a tower with a
+  // single row of windows at the top reads as a mistake, and the band is the
+  // only part that repeats, so a per-storey window has to live in it.
+  if (want >= stageRank("glazed")) windows(iso, side, STOREY, side >= 60 ? 3 : 2);
+  if (want >= stageRank("completed")) cornerBoards(iso, side, skin);
+  if (hasScaffold(stage)) scaffold(iso, side, STOREY + 8);
+}
+
+/** cornerBoards is the completed rank's vertical trim, one storey's worth. Drawn
+ *  per storey so the boards run the full height of a finished tower. */
+function cornerBoards(iso: IsoPix, side: number, skin: BuildingSkin): void {
+  for (let z = 0; z <= STOREY; z++) {
+    iso.plot(side, side, z, skin.wall[0]);
+    iso.plot(side + 1, side, z, skin.wall[1]);
+  }
+}
+
+/**
+ * buildBase is everything that happens exactly once, at the foot of the
+ * building: the ground works, the ground storey's shell, the street door, and
+ * whatever damage is visible from the ground.
+ *
+ * **It owns the ground storey**, and that is a correction of a real defect
+ * rather than a stylistic choice. Splitting the wall so that the base carries
+ * none and the bands start one storey up leaves a one-storey building — the
+ * common case, since most directories hold one file — as a plot with its roof
+ * hovering twenty units above it: measured as a 40-pixel hole in the silhouette
+ * at every footprint. Every function involved is individually correct, which is
+ * why it is worth stating here.
+ *
+ * The plinth belongs here rather than with the top trim because it is the bottom
+ * course of the wall's footing; drawing it per storey would put a step at the
+ * base of every floor and a tower would gain a ring at each.
+ */
+export function buildBase(
+  side: number,
+  files: number,
+  path: string,
+  stage: Stage,
+  damaged = false,
+): Pix {
+  const skin = skinFor(files, path);
+  const box = boxFor(side, skin, 1);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+  const want = stageRank(stage);
+
+  plotGround(iso, side);
+  // The spoil heap sits on the ground beside the plot, so it goes down before
+  // anything standing — otherwise a building would be drawn on top of its own
+  // rubble.
+  if (hasSpoil(stage)) spoil(iso, side);
+  if (want >= stageRank("planned")) cornerStakes(iso, side);
+  if (want >= stageRank("foundation")) footings(iso, side);
+
+  storeyShell(iso, side, skin, stage);
+
+  // The door is at street level, which is the base's storey by definition.
+  // Putting it in the cap instead — as the first version did — hangs the front
+  // door of a tower a hundred units up its face.
+  if (want >= stageRank("doored")) door(iso, side, STOREY);
+  if (want >= stageRank("completed")) plinth(iso, side, skin);
+
+  if (damaged && hasDamage(stage)) {
+    rubble(iso, side);
+    // The crack goes on the ground storey so a damaged tower is cracked once, at
+    // the base, rather than repeating a crack on every floor — which would read
+    // as a facade pattern instead of as damage.
+    if (want >= stageRank("walled")) crack(iso, side);
+  }
+
+  return iso.outline(P.ink);
+}
+
+/**
+ * buildBand is one storey of wall: the part that repeats.
+ *
+ * Its height is exactly `STOREY`, and `art/stack.ts` proves a storey is an exact
+ * vertical repeat, so stamping this cel up a tower leaves no seam.
+ */
+export function buildBand(side: number, skin: BuildingSkin, stage: Stage): Pix {
+  const box = bandBox(side);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+  storeyShell(iso, side, skin, stage);
+  return iso.outline(P.ink);
+}
+
+/**
+ * buildCap is everything that happens once, at the top: the roof and its
+ * finishing trades.
+ *
+ * Its own base is the top of the topmost band, so the roof's eave sits at local
+ * z = 0. The cap is placed one storey above the last band, so drawing the eave at
+ * `STOREY` here as well would raise the roof a second time and leave a storey of
+ * sky between the wall and its roof.
+ */
+export function buildCap(side: number, skin: BuildingSkin, stage: Stage, damaged: boolean): Pix {
+  const box = capBox(side, skin);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
+  const want = stageRank(stage);
+
+  if (want >= stageRank("roofed")) roof(iso, side, 0, skin);
+  if (want >= stageRank("completed")) {
+    trim(iso, side, skin);
+    chimney(iso, side, 0, skin);
+  }
+  if (damaged && want >= stageRank("roofed")) roofDamage(iso, side, skin);
+
+  return iso.outline(P.ink);
 }
 
 /** The footprint line a building sits on: the near two edges, drawn as a strip
@@ -379,33 +561,26 @@ function footings(iso: IsoPix, side: number): void {
   }
 }
 
-/**
- * trim is the completed building's finish: a plinth at the base, corner boards,
- * and a chimney.
- *
- * It is the last rank's one part, and it is deliberately the only place the
- * *paint* of the building appears: the plinth and corner boards are the same
- * wall colour one ramp step deeper, which reads as a building that has been
- * finished off rather than one that simply stopped.
- */
-function trim(iso: IsoPix, side: number, height: number, skin: BuildingSkin): void {
-  // Plinth: a course round the base, one step deeper than the wall, which is
-  // what stops the walls meeting the ground in a straight seam.
+/** plinth is the base course of the wall: a step out at the foot of the whole
+ *  building, drawn once rather than per storey. Drawing it per floor would put a
+ *  step at the bottom of every storey and a tower would gain a ring at each. */
+function plinth(iso: IsoPix, side: number, skin: BuildingSkin): void {
   iso.box(-1, -1, side + 2, side + 2, 0, 2, {
     top: skin.wall[1],
     lit: skin.wall[2],
     shadow: skin.wall[0],
     edge: P.ink,
   });
-  // Corner boards up both visible edges, and a fascia under the eave.
-  for (let z = 2; z <= height; z++) {
-    iso.plot(side, side, z, skin.wall[0]);
-    iso.plot(side + 1, side, z, skin.wall[1]);
-  }
-  iso.beamX(0, side, side, height - 1, skin.wall[0], 1);
-  iso.beamY(0, side, side, height - 1, skin.wall[0], 1);
 }
 
+/** trim is the fascia under the eave: the one piece of finishing that belongs to
+ *  the top of the building rather than to a storey of it. The corner boards run
+ *  per storey (see `cornerBoards`), and the plinth belongs to the base, because
+ *  each of those three repeats a different number of times. */
+function trim(iso: IsoPix, side: number, skin: BuildingSkin): void {
+  iso.beamX(0, side, side, 0, skin.wall[0], 1);
+  iso.beamY(0, side, side, 0, skin.wall[0], 1);
+}
 /**
  * windows punches lit openings into the two visible walls.
  *
@@ -513,57 +688,69 @@ function spoil(iso: IsoPix, side: number): void {
 }
 
 /**
- * damage draws a construction problem over whatever has been built.
+ * Damage is a condition, not a stage (ADR-0004), so it is laid *over* whatever
+ * has been built rather than replacing it: a half-built building that breaks
+ * stays half-built and gains rubble and a crack, and a finished one keeps its
+ * roof and gains a hole in it. Treating "broken" as a rank could not express
+ * either — every broken building looked the same and lost its history.
  *
- * Damage is a condition, not a stage (ADR-0004), so it is laid *over* the
- * building rather than replacing it: a half-built building that breaks stays
- * half-built and gains rubble and a crack, and a finished one keeps its roof and
- * gains a hole in it. The earlier shape made "broken" a rank, which could not
- * express either — every broken building looked the same and lost its history.
- *
- * Each part of the damage only appears if there is something for it to damage,
- * so a staked plot with a failed tool does not acquire a crack in a wall that
- * does not exist.
+ * It is split three ways because damage now lands in three cels: the ground
+ * storey's rubble and crack are in the base, and the hole in the roof is in the
+ * cap. Each piece is drawn only where there is something for it to damage, so a
+ * staked plot with a failed tool acquires no crack in a wall that does not exist.
  */
-function damage(iso: IsoPix, side: number, height: number, skin: BuildingSkin, stage: Stage): void {
-  const r = stageRank(stage);
 
-  // Rubble at the base, once there is anything standing to have fallen.
-  if (r >= stageRank("framed")) {
-    const rx = Math.round(side * 0.3);
-    iso.footprint(rx, side + 2, 9, 6, 0, P.stone[1]);
-    iso.footprint(rx + 1, side + 3, 6, 4, 1, P.stone[2]);
-    iso.footprint(rx + 2, side + 4, 3, 2, 2, P.stone[3]);
-  }
-
-  // A crack up the lit wall, once there is a wall to crack.
-  if (r >= stageRank("walled")) {
-    let x = Math.round(side * 0.7);
-    for (let z = 1; z < height - 1; z++) {
-      iso.column(x, side, z, z, P.ink);
-      if (z%3 === 0) x += z%2 === 0 ? 1 : -1;
-    }
-  }
-
-  // A hole in the roof, once there is a roof.
-  if (r >= stageRank("roofed")) {
-    const hx = Math.round(side / 2);
-    const hy = Math.round(side / 2);
-    iso.footprint(hx, hy, 6, 6, height + skin.roofHeight, P.roof[0]);
-    iso.beamX(hx, hx + 6, hy + 3, height + skin.roofHeight, P.wood[1], 1);
-  }
+/** rubble is the pile fallen off a building that got as far as a frame. */
+function rubble(iso: IsoPix, side: number): void {
+  const rx = Math.round(side * 0.3);
+  iso.footprint(rx, side + 2, 9, 6, 0, P.stone[1]);
+  iso.footprint(rx + 1, side + 3, 6, 4, 1, P.stone[2]);
+  iso.footprint(rx + 2, side + 4, 3, 2, 2, P.stone[3]);
 }
 
 /**
- * buildBuilding renders one stage of one building.
+ * crack is a fault line up one storey of the lit wall.
  *
- * Every part up to and including the stage's own is drawn, in the order the
- * parts go up. That is the entire stage model: the stage argument selects how
- * far down the list to draw, so a stage is by construction the one below it plus
- * exactly one part, and no stage can skip one.
+ * Drawn within a single storey rather than across the building's full height,
+ * because it is stamped into the base's cel: a crack spanning the tower would be
+ * a crack in the wind. It is jittered by a deterministic walk, never by
+ * `Math.random`, so the same repo draws the same crack (ADR-0012).
+ */
+function crack(iso: IsoPix, side: number): void {
+  let x = Math.round(side * 0.7);
+  for (let z = 1; z < STOREY - 1; z++) {
+    iso.column(x, side, z, z, P.ink);
+    if (z % 3 === 0) x += z % 2 === 0 ? 1 : -1;
+  }
+}
+
+/** roofDamage is the hole in the roof, drawn in the cap's own cel. */
+function roofDamage(iso: IsoPix, side: number, skin: BuildingSkin): void {
+  const hx = Math.round(side / 2);
+  const hy = Math.round(side / 2);
+  iso.footprint(hx, hy, 6, 6, skin.roofHeight, P.roof[0]);
+  iso.beamX(hx, hx + 6, hy + 3, skin.roofHeight, P.wood[1], 1);
+}
+
+/** hasDamage is whether the stage has anything standing to be damaged. */
+function hasDamage(stage: Stage): boolean {
+  return stageRank(stage) >= stageRank("framed");
+}
+
+/**
+ * buildBuilding renders one stage of one building as a single cel.
  *
- * `damaged` is separate because damage is separate: it never changes what has
- * been built, only what condition it is in.
+ * It is a **composite of the three parts the scene actually draws**, not a
+ * second implementation of them, and that is the point rather than a
+ * convenience: the ladder tests below assert that each rank adds exactly one
+ * part and never removes one, and if this function drew the building its own way
+ * those tests would be validating art the town never shows. Round-tripping
+ * through the real parts means a change to the band or the cap is caught here.
+ *
+ * It renders a **one-storey** building, because a single cel cannot express the
+ * floors — those are composed at runtime from the same parts (see
+ * `placeBuilding` in `scene.ts`). So this is the correct picture of the ground
+ * floor plus its roof, which is exactly what the ladder describes.
  */
 export function buildBuilding(
   side: number,
@@ -573,50 +760,20 @@ export function buildBuilding(
   damaged = false,
 ): Pix {
   const skin = skinFor(files, path);
-  const box = boxFor(side, skin);
+  const box = boxFor(side, skin, 1);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy);
-  const wallH = skin.wallHeight;
-  const want = stageRank(stage);
 
-  // The plot itself is not a part: every stage stands on the same ground, which
-  // is what keeps a building's position readable as its own.
-  plotGround(iso, side);
+  // The base carries the ground storey; its cel is already sized for the whole
+  // one-storey building, so it lands at the origin.
+  iso.pix.blit(buildBase(side, files, path, stage, damaged), 0, 0);
+  // The cap is blitted at the base's own origin, NOT one storey above it. Its
+  // cel is sized to the roof alone, so its anchor already sits one storey lower
+  // in its own cel (`capBox` uses `roofHeight`, not `STOREY + roofHeight`), and
+  // the two offsets cancel. Shifting by STOREY as well would lift the roof a
+  // second time and leave a storey of sky between it and the wall.
+  iso.pix.blit(buildCap(side, skin, stage, damaged), 0, 0);
 
-  // The spoil heap sits on the ground beside the plot, so it goes down before
-  // anything standing — otherwise a building would be drawn on top of its own
-  // rubble.
-  if (hasSpoil(stage)) spoil(iso, side);
-
-  // The parts, in the order they go up. This is the ladder: `want` decides how
-  // far down the list is drawn, so a stage is the one below it plus one part.
-  if (want >= stageRank("planned")) cornerStakes(iso, side);
-  if (want >= stageRank("foundation")) footings(iso, side);
-  if (want >= stageRank("framed")) framing(iso, side, wallH);
-  if (want >= stageRank("walled")) walls(iso, side, wallH, skin);
-  if (want >= stageRank("roofed")) roof(iso, side, wallH, skin);
-  // Windows before the door, and both after the roof: they are openings punched
-  // into a closed building, so they must be drawn over walls that exist.
-  if (want >= stageRank("glazed")) windows(iso, side, wallH, side >= 60 ? 3 : 2);
-  if (want >= stageRank("doored")) door(iso, side, wallH);
-  if (want >= stageRank("completed")) {
-    trim(iso, side, wallH, skin);
-    chimney(iso, side, wallH, skin);
-  }
-
-  // The scaffold goes on last, over the building: its boards run along the near
-  // side and its ladder leans against the wall, so both are in front of what
-  // they stand against. It cannot fight the roof for the same pixels because the
-  // two never coexist — the scaffold is struck the moment the roof goes on.
-  if (hasScaffold(stage)) scaffold(iso, side, wallH + 8);
-
-  // Damage goes on last, over everything, because it is a condition of the
-  // finished picture rather than a layer of construction.
-  if (damaged) damage(iso, side, wallH, skin, stage);
-
-  // One outline pass over the assembled cel, never per part: a per-part pass
-  // would draw ink at every joint between wall and roof, and the building would
-  // come out looking like a diagram.
-  return iso.outline(P.ink);
+  return iso.pix;
 }
 
 /** buildShadow returns the ground shadow a stage throws. It is drawn under the

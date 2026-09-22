@@ -16,12 +16,16 @@ import {
   type Atlas,
   bake,
   shadowFrame,
-  buildingFrame,
+  baseFrame,
+  bandFrame,
+  capFrame,
   groundFrame,
   groundEdgeFrame,
   propFrame,
 } from "./art/bake";
 import { type Stage, skinVariant } from "./art/building";
+import { STOREY, clampFloors, towerTop } from "./art/stack";
+import { labelVisible, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
 import { PLACE_PROPS } from "./art/props";
 import { PLACARD, type PlacardRole, placard } from "./art/placard";
@@ -35,6 +39,11 @@ import { WorkerLayer } from "./workers";
  *  module's own constant; the tile *pixels* and origin come from the atlas
  *  rather than from here, so only the tiling pitch is restated. */
 const TILE = 16;
+
+/** The id prefix a district's plate label is registered under. A district is not
+ *  a site, so it needs its own namespace; the prefix is what keeps it from ever
+ *  colliding with a building path that happens to read the same. */
+const DISTRICT_PREFIX = "district:";
 
 /** How the three special places are surfaced and furnished. */
 const PLACES: Record<string, { ground: Ground; props: readonly string[] }> = {
@@ -73,10 +82,11 @@ export class TownScene extends Phaser.Scene {
   private atlas: Atlas = {};
   private layout: Layout | null = null;
   private workers: WorkerLayer | null = null;
-  // Each building's sprite, by site id, so a status change can swap its frame
-  // in place. Rebuilding the map for one building's new stage would flicker the
+  // Each building's sprite stack, by site id. A tower is a Container holding one
+  // base, N identical bands and a cap, so a status change swaps frames inside
+  // the container rather than rebuilding the map — rebuilding would flicker the
   // whole town, and a building visibly rising is the product.
-  private buildingSprites = new Map<string, Phaser.GameObjects.Image>();
+  private buildingSprites = new Map<string, Phaser.GameObjects.Container>();
   // The ground regions to paint, in the order they are written: the field first,
   // then each district's plate, then each place's surface, so later regions
   // cover earlier ones rather than fighting them.
@@ -90,6 +100,34 @@ export class TownScene extends Phaser.Scene {
   private dragStart = { x: 0, y: 0, sx: 0, sy: 0 };
   private moved = 0;
 
+  /**
+   * Every label on screen, by the id of the thing it names.
+   *
+   * A list rather than one image, because a thing can wear more than one board:
+   * a place carries its name, what it is for, and which actions land there, and
+   * all three belong to one id so that pointing at the place reveals them
+   * together rather than leaving a reader to find each one.
+   *
+   * It exists so a change of focus is a visibility sweep rather than a redraw.
+   * Focus changes on every click, and rebuilding the town to hide one board and
+   * show another would flicker the map — the same reason a status change restages
+   * a building in place rather than redrawing it.
+   */
+  private labels = new Map<string, Phaser.GameObjects.Image[]>();
+
+  /**
+   * How deep a site may be and still be drawn.
+   *
+   * Set by the panel's detail control and applied in `draw`. It is a display
+   * filter only: the layout is always computed in full, so lowering this cannot
+   * move anything and raising it back restores exactly what was there.
+   *
+   * Infinity rather than a magic maximum, so a town with a building nested
+   * deeper than any number chosen here is shown in full by default. The
+   * failure of a too-low default would be silently hiding work.
+   */
+  private depth = Number.POSITIVE_INFINITY;
+
   constructor() {
     super("town");
   }
@@ -100,7 +138,7 @@ export class TownScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(P.void);
     this.atlas = bake(this);
     this.controls();
-    this.workers = new WorkerLayer(this, ATLAS, this.atlas);
+    this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
 
     const { layout } = useTown.getState();
     if (layout) this.draw(layout);
@@ -110,9 +148,22 @@ export class TownScene extends Phaser.Scene {
         this.draw(s.layout);
         return;
       }
+      // A depth change redraws. It has to be a full draw rather than a
+      // visibility toggle: the camera bounds and the fit are both derived from
+      // what is drawn, so revealing deep buildings has to re-run that framing
+      // or the new buildings would be outside the reachable area.
+      if (s.depth !== prev.depth && this.layout) {
+        this.depth = s.depth;
+        this.draw(this.layout);
+        return;
+      }
       if (s.live !== prev.live && this.layout) this.syncLive();
+      // A label's visibility is the only thing left that moves without a
+      // redraw, so the sweep runs whenever either half of the rule changes.
+      if (s.focused !== prev.focused || s.hovered !== prev.hovered) this.refreshLabels();
     });
   }
+
 
   /**
    * draw renders a layout, replacing anything already on screen.
@@ -123,6 +174,12 @@ export class TownScene extends Phaser.Scene {
    * workers. Rebuilding on those is what would flicker the town.
    */
   draw(layout: Layout): void {
+    // The registry holds the very objects `removeAll` just destroyed, so it is
+    // cleared here rather than left to be overwritten: a stale entry would keep
+    // a destroyed Image alive and the sweep would then call `setVisible` on it,
+    // which is the kind of bug that only shows up as a label that stops
+    // responding on the *second* town of a session.
+    this.labels.clear();
     this.layout = layout;
     this.children.removeAll(true);
     this.buildingSprites.clear();
@@ -140,11 +197,27 @@ export class TownScene extends Phaser.Scene {
     // Sites in far-to-near order, so a building on a nearer row is drawn over
     // one behind it. Depth is set per object as well, but drawing in order keeps
     // the two consistent.
-    const ordered = [...layout.sites].sort((a, b) => a.x + a.y - (b.x + b.y));
+    //
+    // The filter runs HERE, on the way out of a layout computed in full, and
+    // never on the way in. That distinction is the whole safety property of the
+    // feature: `placeDistrict` positions a building by its index into a
+    // district's sorted slice, so re-running the layout over a subset renumbers
+    // those slices and moves buildings that were already on screen — measured
+    // at 12 of 18 in this repository. Dropping sites from the draw loop cannot
+    // move anything: every site still drawn keeps the coordinates it was given.
+    const shown = layout.sites.filter((s) => visibleAt(s, this.depth));
+    const ordered = [...shown].sort((a, b) => a.x + a.y - (b.x + b.y));
     for (const s of ordered) this.drawSite(s);
 
+    // The labels were created hidden, so the rule is applied once here rather
+    // than trusted to have been applied at each call site. Without this a
+    // focused label would go dark on any redraw — and a redraw happens on a
+    // depth change, so the reader who clicked a building and then moved the
+    // detail control would watch the name they pinned open disappear.
+    this.refreshLabels();
+
     this.workers?.destroy();
-    this.workers = new WorkerLayer(this, ATLAS, this.atlas);
+    this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
     this.syncLive();
 
     const b = this.worldBounds(layout);
@@ -416,19 +489,34 @@ export class TownScene extends Phaser.Scene {
     // diamond, and where a building standing on the plate cannot cover it. A
     // test district is marked in its words rather than by colour alone, so the
     // distinction survives a reader who cannot separate the two greens.
+    //
+    // It is hidden until asked for, like every other name on the map, and the
+    // plate itself is what is asked: the zone below covers the ground the label
+    // describes. A reader who wants to know what a neighbourhood is called points
+    // at it, and one who wants to read the skyline does not have to look through
+    // its name to do it.
     const top = this.project(d.x, d.y);
     const isTest = d.kind === "test";
-    this.label(isTest ? `${d.name.toUpperCase()} (TESTS)` : d.name.toUpperCase(), top.x, top.y - 8, isTest ? "test" : "name");
+    const id = `${DISTRICT_PREFIX}${d.name}`;
+    this.register(
+      id,
+      this.label(isTest ? `${d.name.toUpperCase()} (TESTS)` : d.name.toUpperCase(), top.x, top.y - 8, isTest ? "test" : "name"),
+    );
+
+    // Beneath every site standing on it, so a building's own zone wins the
+    // pointer and a reader pointing at a building gets that building's name
+    // rather than the whole district's. `input.topOnly` is what makes the
+    // topmost zone the only one that answers, which is why the ordering is
+    // enough and no explicit exclusion is needed.
+    const near = this.project(d.x + d.w, d.y + d.h);
+    this.hoverable(
+      this.add.zone(d.x, d.y, d.w, d.h).setOrigin(0, 0).setInteractive({ useHandCursor: true }),
+      id,
+      near.y - 1,
+    );
   }
 
-  /**
-   * drawSite draws one place: its ground and furniture, or its building.
-   *
-   * A building's picture comes from its status and nothing else. There is no
-   * progress number to interpolate, because a building's status only ever moves
-   * forward (internal/town) and interpolating it would show work that did not
-   * happen.
-   */
+
   private drawSite(s: Site): void {
     // The grounded corner nearest the camera, which is what depth and hit zones
     // are measured from: a building's own far corner is behind its own roof.
@@ -441,15 +529,12 @@ export class TownScene extends Phaser.Scene {
       const shadow = this.place(shadowFrame(s.w), s.x, s.y);
       shadow?.setDepth(near.y - 1);
 
-      // The sprite is registered under the site's name so a later status change
-      // can swap its frame in place. Rebuilding the map to restage one building
-      // would flicker the whole town, and the stages are the product — a
-      // building that never visibly rises is the town failing at its one job.
-      const img = this.place(this.buildingKey(s), s.x, s.y);
-      if (!img) return;
-      img.setDepth(near.y);
-      img.setName(siteName(s));
-      this.buildingSprites.set(s.id, img);
+      // The stack is registered under the site's name so a later status change
+      // can swap the frames inside it. Rebuilding the map to restage one building
+      // would flicker the whole town, and the stages are the product — a building
+      // that never visibly rises is the town failing at its one job.
+      const box = this.placeBuilding(s, near.y);
+      this.buildingSprites.set(s.id, box);
       // The building's own name, above its plot's far corner.
       //
       // A building is a directory, and a directory name is the one word a
@@ -461,13 +546,48 @@ export class TownScene extends Phaser.Scene {
       // cel grows with the stage: a label anchored to the cel would rise as the
       // building did, and the map would drift under a reader who was watching it.
       const labelAt = this.project(s.x, s.y);
-      this.label(s.label, labelAt.x, labelAt.y - 6, "name");
+      // Nothing is named until it is asked for. Pointing at the building reveals
+      // its name; clicking it pins the name open for as long as the reader is
+      // reading. Measured on one real eighteen-site town, labelling the top level
+      // outright left thirteen boards on screen at once, which is the wall of
+      // type the reader complained about — the skyline they were looking at was
+      // the thing obscured by its own names.
+      this.register(s.id, this.label(s.label, labelAt.x, labelAt.y - 6, "name"));
 
-      const f = this.atlas[img.frame.name];
-      // The hit zone covers the building's pictured area, so clicking the roof
-      // selects the building rather than the field behind it.
+      // The hit zone must cover the whole tower, not just the plot. A building
+      // that answered a click only at its base would read as broken from the
+      // moment it had more than a couple of storeys, because the part a reader
+      // aims at is the wall.
+      const base = this.atlas[this.baseKey(s)];
+      const cap = this.atlas[this.capKey(s)];
       const p = this.project(s.x, s.y);
-      this.hitZone(p.x - f.ox, p.y - f.oy, f.w, f.h, s, near.y + 2);
+      const top = p.y - towerTop(clampFloors(s.floors)) - cap.oy;
+      this.hitZone(p.x - base.ox, top, base.w, p.y + base.h - base.oy - top, s, near.y + 2);
+      return;
+    }
+
+    if (s.kind === "container") {
+      // A container is drawn with the building pipeline — the same parts, the
+      // same height rule — because what a reader needs from it is exactly what a
+      // building gives: how much is here, at a glance. What it does *not* get is
+      // a lifecycle: no stage, no damage, no restage. It is an aggregate of what
+      // is below rather than something anyone worked on, and drawing it as a
+      // building mid-construction would claim work that never happened.
+      const box = this.placeContainer(s, near.y);
+      this.buildingSprites.set(s.id, box);
+
+      // The label sits on the plate's far corner. A container's footprint *is*
+      // the plate, so the label goes below its top edge rather than above it,
+      // where the district's own name already is.
+      const labelAt = this.project(s.x, s.y);
+      this.register(s.id, this.label(s.label, labelAt.x + s.w / 2, labelAt.y + 22, "name"));
+
+      const keys = this.containerKeys(s);
+      const base = this.atlas[keys[0]];
+      const cap = this.atlas[keys[keys.length - 1]];
+      const p = this.project(s.x, s.y);
+      const top = p.y - towerTop(clampFloors(s.floors)) - cap.oy;
+      this.hitZone(p.x - base.ox, top, base.w, p.y + base.h - base.oy - top, s, near.y + 2);
       return;
     }
 
@@ -477,6 +597,7 @@ export class TownScene extends Phaser.Scene {
 
     // The place's own ground was already painted, kerb included; only its
     // furniture and its signage are placed here.
+
 
     // The grid is sized from the prop count and the plate together, and that is
     // the correction of a real bug rather than a refinement. The first version
@@ -535,19 +656,24 @@ export class TownScene extends Phaser.Scene {
     // The place's name, lettered onto the signpost's own board so the two read
     // as one object: a sign, rather than a caption that happens to sit above a
     // post. The lift matches the board height in the signpost's drawing.
+    //
+    // All three of a place's boards are registered under the place's own id, so
+    // pointing at the Depot lights its name, what it is for, and which actions
+    // land there together. They are one answer to one question — "what is this
+    // place" — and revealing them separately would be three answers to it.
     const board = this.project(signAt.x, signAt.y);
-    this.label(info.name.toUpperCase(), board.x, board.y - 12, "place");
+    this.register(s.id, this.label(info.name.toUpperCase(), board.x, board.y - 12, "place"));
 
     // What the place is *for*, under its name. The name alone leaves "what is a
     // Depot" unanswered, and the whole point of the three places is that most of
     // a session happens where the code is not.
-    this.label(info.sign.toUpperCase(), board.x, board.y - 2, "doing");
+    this.register(s.id, this.label(info.sign.toUpperCase(), board.x, board.y - 2, "doing"));
 
     // Which actions land here, on the far edge where nothing standing can cover
     // it. This is the one label in the town that is a list rather than a name,
     // and the far edge is the only place on a plate with room for one.
     const far = this.project(s.x, s.y);
-    this.label(info.takes.toUpperCase(), far.x, far.y - 4, "doing");
+    this.register(s.id, this.label(info.takes.toUpperCase(), far.x, far.y - 4, "doing"));
 
     this.hitZone(
       this.project(s.x, s.y).x,
@@ -575,8 +701,92 @@ export class TownScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     zone.setDepth(depth);
     zone.on("pointerup", () => {
-      if (this.moved < 5) useTown.getState().select(site);
+      if (this.moved < 5) this.focusSite(site.id, site);
     });
+    // The zone is what is pointed at rather than the sprite, because a tower's
+    // zone covers the whole stack while its sprites are several objects — and
+    // because a container's zone does the same. Pointing at either end of a
+    // building lights its name.
+    this.hoverable(zone, site.id);
+  }
+
+  /**
+   * hoverable lights an object's labels while the pointer is over a zone.
+   *
+   * `pointerover`/`pointerout` rather than polling the pointer, so a hidden
+   * label costs nothing per frame — which is the whole reason the labels can be
+   * hidden by default without a frame budget.
+   *
+   * `depth` is for the district plates, which are given their zone before the
+   * sites are drawn so that a site's zone sits above it and wins the pointer.
+   */
+  private hoverable(zone: Phaser.GameObjects.Zone, id: string, depth?: number): void {
+    if (depth !== undefined) zone.setDepth(depth);
+    // The hover goes into the store rather than into a field here, so that the
+    // worker captions — which `WorkerLayer` owns — resolve against the same
+    // pointer as these names. The store subscription runs the sweep, which is
+    // why nothing is refreshed at these call sites.
+    zone.on("pointerover", () => useTown.getState().hover(id));
+    zone.on("pointerout", () => {
+      // Guarded rather than assumed: moving from a building straight onto a
+      // worker fires the building's out event *after* the worker's over event in
+      // some pointer orderings, and an unguarded clear would then drop the
+      // hover the reader has already moved to.
+      if (useTown.getState().hovered === id) useTown.getState().hover(null);
+    });
+  }
+
+  /**
+   * focusSite selects a site and pins its labels open.
+   *
+   * Selection and focus travel together for a click on the map, because they are
+   * the same act: a reader who clicks a building is asking what it is, and the
+   * panel is where that is answered in full. They are still two pieces of state —
+   * `store.ts` explains why — because focusing a *worker* pins a caption without
+   * emptying the panel.
+   */
+  private focusSite(id: string, site: Site): void {
+    const { select, focus } = useTown.getState();
+    select(site);
+    focus(id);
+  }
+
+  /**
+   * refreshLabels shows exactly the labels the rule allows and hides the rest.
+   *
+   * A sweep over the registry rather than a redraw, because focus changes on
+   * every click: rebuilding the town to move one board would flicker the map,
+   * the same reason a status change restages a building in place.
+   *
+   * It is idempotent, which is what makes it safe to call from every hover event
+   * and from the store subscription without tracking what changed.
+   */
+  private refreshLabels(): void {
+    const { focused, hovered } = useTown.getState();
+    for (const [id, images] of this.labels) {
+      const show = labelVisible(id, hovered, focused);
+      for (const img of images) img.setVisible(show);
+    }
+    // The figures' captions are the other half of the same rule, and they are
+    // swept here rather than in a store subscription of their own so that one
+    // pointer move resolves one rule. Two sweeps would each have to know about
+    // the other's objects to avoid disagreeing.
+    this.workers?.applyLabels(focused, hovered);
+  }
+
+  /**
+   * register files a label under the id of the thing it names.
+   *
+   * Every label goes through here so that one sweep can find them all. A label
+   * registered under a different key than the id its zone reports would be
+   * unreachable by both hover and focus — visible or invisible forever, with
+   * nothing to show why.
+   */
+  private register(id: string, img: Phaser.GameObjects.Image | null): void {
+    if (!img) return;
+    const list = this.labels.get(id);
+    if (list) list.push(img);
+    else this.labels.set(id, [img]);
   }
 
   /**
@@ -594,14 +804,22 @@ export class TownScene extends Phaser.Scene {
    * through this one cache, so a screen with two dozen labels pays for two
    * dozen textures rather than one per label per frame.
    */
-  private label(text: string, x: number, y: number, role: PlacardRole): void {
-    if (!text) return;
+  private label(text: string, x: number, y: number, role: PlacardRole): Phaser.GameObjects.Image | null {
+    if (!text) return null;
     const style = PLACARD[role];
     const key = `lbl:${role}:${text}`;
     if (!this.textures.exists(key)) {
       this.textures.addCanvas(key, placard(text, style.ink, style.plate, style.border).toCanvas());
     }
-    this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(DEPTH.label);
+    // It starts hidden and the visibility sweep lights the ones the rule allows.
+    // Which labels are lit is therefore decided in exactly one place, rather than
+    // by an argument at each of the eight call sites that would each have to agree
+    // about whether a name is part of the legend.
+    //
+    // The texture is cached either way — the cost being avoided is rasterising
+    // the same string twice, not drawing it — so a hidden label is one
+    // `setVisible(false)` rather than an absence from the cache.
+    return this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(DEPTH.label).setVisible(false);
   }
 
   /**
@@ -643,9 +861,16 @@ export class TownScene extends Phaser.Scene {
     };
   }
 
-  /** extents is the picture-space box of everything drawn. The camera is fitted
-   *  to this rather than to the layout's own rectangle, because the projection
-   *  means a tall layout projects wider than its world width. */
+  /**
+   * extents is the picture-space box of everything *drawn*.
+   *
+   * It filters by the current display depth for the same reason `draw` does:
+   * a hidden building must not hold the camera's bounds open, or revealing
+   * detail would appear to do nothing while the view stays framed for a town
+   * larger than what is on screen. Conversely, when detail is raised the bounds
+   * must grow to include it, which is why this is recomputed rather than fixed
+   * at the first draw.
+   */
   private extents(l: Layout): {
     minX: number;
     maxX: number;
@@ -659,15 +884,27 @@ export class TownScene extends Phaser.Scene {
     let minY = Infinity;
     let maxY = -Infinity;
     for (const s of l.sites) {
+      // Only what is actually drawn counts, for the reason in this function's
+      // doc comment: a hidden building must not hold the camera open.
+      if (!visibleAt(s, this.depth)) continue;
       const far = this.project(s.x, s.y);
       const right = this.project(s.x + s.w, s.y);
       const bottom = this.project(s.x, s.y + s.h);
       const near = this.project(s.x + s.w, s.y + s.h);
       minX = Math.min(minX, far.x, right.x);
       maxX = Math.max(maxX, bottom.x, near.x);
-      // The top leaves room for the tallest thing that can stand on the site: a
-      // 100-unit hall is about 130 world units above its own footprint.
-      minY = Math.min(minY, far.y - 150);
+      // The top must leave room for the tallest thing that can stand on the
+      // site, and that is now the site's own tower: floors arrive from the
+      // daemon, so this is a per-site reservation rather than the fixed
+      // allowance for a single-storey hall it used to be. 150 was measured for
+      // the old tallest building and is kept as the floor, because the place
+      // buildings are not towers and still need their roof and chimney.
+      //
+      // Undersizing this is not a cosmetic bug: the camera would crop the top
+      // of the tallest building in the town, which is the one building the view
+      // exists to show.
+      const floors = s.kind === "building" ? clampFloors(s.floors) : 1;
+      minY = Math.min(minY, far.y - Math.max(150, floors * STOREY + 60));
       maxY = Math.max(maxY, near.y);
     }
     return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
@@ -734,40 +971,158 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
-   * restage swaps a building's picture when its status has moved on.
+   * restage swaps the frames inside each building's container.
    *
-   * This is what makes the construction metaphor visible rather than decorative:
-   * a worker hammers, the event lands, the building's status advances, and the
-   * structure on screen gains its next stage. Swapping the frame keeps the
-   * sprite's identity, so nothing else in the scene has to know it happened.
+   * In place rather than by rebuilding the map, and that is the whole reason a
+   * building is a container: rebuilding would flicker the entire town on any
+   * status change, and the stages are the product — a building that never
+   * visibly rises is the town failing at its one job.
+   *
+   * The floor count does not change with the stage, so the number of children
+   * never changes either; only the keys do. A tower stays the same height from
+   * the moment it is measured, which is what keeps the skyline stable while the
+   * buildings under it are being finished.
    */
   private restage(): void {
     if (!this.layout) return;
     for (const s of this.layout.sites) {
       if (s.kind !== "building") continue;
-      const img = this.buildingSprites.get(s.id);
-      if (!img) continue;
-      const want = this.buildingKey(s);
-      if (img.frame.name === want) continue;
-      img.setFrame(want);
-      // The frame's size changes with the stage — a completed building is taller
-      // than its own foundation — so the click zone is resized with it rather
-      // than left covering the plot only.
-      img.setPosition(...this.celAnchor(s, want));
+      const box = this.buildingSprites.get(s.id);
+      if (!box) continue;
+      const keys = this.stackKeys(s);
+      box.list.forEach((child, i) => {
+        const img = child as Phaser.GameObjects.Image;
+        if (img.frame.name !== keys[i]) img.setFrame(keys[i]);
+      });
     }
   }
 
-  /** buildingKey is the atlas frame a site's current status calls for. The one
-   *  place that decision is made, so the initial draw and every restage agree —
-   *  including about damage, which is why both live here rather than one being
-   *  handled at a call site. */
-  private buildingKey(s: Site): string {
-    return buildingFrame(
-      s.w,
-      this.statusOf(s.path),
-      skinVariant(s.path ?? ""),
-      this.damagedOf(s.path),
-    );
+  /**
+   * stackKeys is the atlas frame of every child of a building's container, in
+   * draw order: one base, one band per storey above the first, then the cap.
+   *
+   * The floor count comes from the daemon's measurement, not from anything the
+   * renderer derives, and it is clamped here as well as in the daemon — the
+   * clamp is the renderer's own guarantee, so a daemon that sent nonsense cannot
+   * ask for a hundred thousand sprites.
+   *
+   * Bands are `floors - 1` because the base already carries the ground storey's
+   * wall: base + (floors - 1) bands + cap is exactly `floors` storeys of wall.
+   * An off-by-one here is invisible at one floor and wrong at every other.
+   */
+  private stackKeys(s: Site): string[] {
+    const floors = clampFloors(s.floors);
+    const keys = [this.baseKey(s)];
+    for (let i = 1; i < floors; i++) keys.push(this.bandKey(s));
+    keys.push(this.capKey(s));
+    return keys;
+  }
+
+  /**
+   * placeBuilding builds a site's container: the base at the site, a band per
+   * storey above it, and the cap on top.
+   *
+   * Every part is placed by the same rule — `i * STOREY` above the base — because
+   * each part draws its own base at local z = 0 (see `art/building.ts`). One rule
+   * for all three parts means there is no per-part special case to get wrong, and
+   * the parts are proven to land on exact storey boundaries in `art.test.ts`.
+   *
+   * The band's screen anchor steps up a storey at a time, which is what makes
+   * the wall continuous: the projection moves a point up by exactly one pixel per
+   * world unit of z, so a storey's worth of z is a storey's worth of pixels and
+   * the join between two floors is seamless.
+   */
+  private placeBuilding(s: Site, depth: number): Phaser.GameObjects.Container {
+    return this.stackContainer(this.stackKeys(s), s, depth);
+  }
+
+  /**
+   * placeContainer stacks a container's storeys on its plate.
+   *
+   * It shares `placeBuilding`'s geometry — every part at `i * STOREY`, because
+   * each part draws its own base at local z = 0 — so a container and a building
+   * of the same height line up exactly, which is what lets a reader compare
+   * them.
+   *
+   * What a container does *not* share is the lifecycle. It has no status, so it
+   * is drawn from the completed picture; that is the honest reading, because an
+   * aggregate of what is below it is by definition finished, and showing it
+   * half-built would invent a construction history for something nobody built.
+   * It has no damage for the same reason: damage is what happened *to* a
+   * building.
+   */
+  private placeContainer(s: Site, depth: number): Phaser.GameObjects.Container {
+    return this.stackContainer(this.containerKeys(s), s, depth);
+  }
+
+  /**
+   * stackContainer places one cel per storey at `i * STOREY`.
+   *
+   * The single place the stacking arithmetic lives, so a building and a
+   * container cannot disagree about how tall a storey is or where the roof goes.
+   * The caller supplies the keys; this decides only where each one lands.
+   */
+  private stackContainer(keys: string[], s: Site, depth: number): Phaser.GameObjects.Container {
+    const box = this.add.container(0, 0);
+    const p = this.project(s.x, s.y);
+    const floors = clampFloors(s.floors);
+    for (let i = 0; i < keys.length; i++) {
+      const f = this.atlas[keys[i]];
+      if (!f) continue;
+      // The cap is the last child and sits above the topmost band, not at
+      // `i * STOREY` — at one floor those coincide, which is exactly why a
+      // tower's roof would float one storey too high if this were spelled that
+      // way.
+      const z = i < floors ? i * STOREY : towerTop(floors);
+      // `setOrigin(0, 0)` is load-bearing and was missing here, which put every
+      // building and every container half a cel up-and-left of its own plot —
+      // measured at 36 pixels left and 48 up on a 73x85 cel, and 56/54 on a
+      // 113x111 one, so the displacement scaled with the footprint. That is the
+      // "building is out of its section" a reader sees: a Phaser Image defaults
+      // to origin 0.5, so the cel's *centre* lands where its top-left was meant
+      // to go. `place()` has the same call and the same comment, because this
+      // bites in every code path that forgets it — the two must agree.
+      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, ATLAS, keys[i]).setOrigin(0, 0));
+    }
+    box.setDepth(depth);
+    box.setName(siteName(s));
+    return box;
+  }
+
+  /**
+   * containerKeys are the atlas frames a container is drawn from.
+   *
+   * A container has no status, so it takes the *completed* picture: an aggregate
+   * is by definition finished, and showing it half-built would invent a
+   * construction history for something nobody built. It has no damaged variant
+   * for the same reason — damage is what happened *to* a building.
+   *
+   * The variant comes from the container's own path, so two containers side by
+   * side can differ in material the way two buildings do.
+   */
+  private containerKeys(s: Site): string[] {
+    const floors = clampFloors(s.floors);
+    const v = skinVariant(s.path ?? "");
+    // `s.w` is a baked footprint — the daemon sends one of the atlas's own four
+    // sizes and centres the site itself, so the renderer never has to guess
+    // which art a site wants.
+    const size = s.w;
+    const keys = [baseFrame(size, "completed", v, false)];
+    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v));
+    keys.push(capFrame(size, "completed", v, false));
+    return keys;
+  }
+
+  private baseKey(s: Site): string {
+    return baseFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path));
+  }
+
+  private bandKey(s: Site): string {
+    return bandFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""));
+  }
+
+  private capKey(s: Site): string {
+    return capFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path));
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the

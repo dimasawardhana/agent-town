@@ -16,3 +16,4 @@ ui/node_modules/
 # The art test bundle. `npm run test:art` in ui/ regenerates it on every run, so
 # it is an artifact rather than a source file.
 ui/ui-art.test.mjs
+ui/ui-visibility.test.mjs

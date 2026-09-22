@@ -27,6 +27,7 @@ import { FRAME_MS, type Tier, type WorkerState } from "./art/worker";
 import { PLACARD, placard } from "./art/placard";
 import { actionInfo, targetOf } from "./actions";
 import { SITE_ID_BUILDING_PREFIX, type Action, type Layout, type Site, type Worker, useTown } from "./store";
+import { labelVisible } from "./visibility";
 /** The shortest a journey may take, in milliseconds. Long enough to read as
  *  movement, short enough that a fast agent does not leave workers trailing far
  *  behind what actually happened. */
@@ -58,6 +59,33 @@ const TAG_LIFT = 27;
  *  Above the crew tag rather than beside it, so the two never overlap: the tag
  *  says *who*, the caption says *what*, and both are wanted at once. */
 const CAPTION_LIFT = 38;
+
+/**
+ * The id a figure's caption is focusable and hoverable under.
+ *
+ * Namespaced, because the store's `focused`/`hovered` carry ids from two owners —
+ * this layer's figures and the scene's buildings — and a raw worker id that
+ * happened to equal a site id would light both labels at once. The prefix makes
+ * that collision impossible rather than unlikely.
+ */
+const workerLabelId = (id: string): string => `worker:${id}`;
+
+/**
+ * The depth a figure's hit target sits at.
+ *
+ * Above every site's zone and below every label. The sites' own zones are placed
+ * at the screen y of the corner they stand on, which is what orders a near
+ * building over a far one — and it also means a figure standing on a building is
+ * *underneath* that building's zone, so Phaser's `topOnly` hit test hands the
+ * pointer to the building and the figure can never be pointed at. Measured on a
+ * live worker: its building's zone covered the point and the sprite was not in
+ * the hit list at all.
+ *
+ * Raising the sprite's own depth would fix the hit test and break the drawing,
+ * because a figure must be drawn where it stands. So the target is its own
+ * object, which is the same separation the scene makes for a building's zone.
+ */
+const HIT_DEPTH = 80000;
 
 /** One walk cycle's duration, from the art's own per-frame timings. */
 const WALK_CYCLE_MS = FRAME_MS.walk.reduce((a, b) => a + b, 0);
@@ -116,6 +144,16 @@ const BLANK = "wc:blank";
 export class WorkerLayer {
   private scene: Phaser.Scene;
   private atlas: Atlas;
+  /**
+   * Whether the pointer has travelled far enough to be a drag rather than a
+   * click, asked at the moment of the click.
+   *
+   * Supplied by the scene because it already tracks this for its own zones — a
+   * building must not be selected by a map drag that happened to end over it, and
+   * a figure must not be focused the same way. Two independent notions of "was
+   * that a drag" would disagree on exactly the gestures readers make most.
+   */
+  private dragged: () => boolean;
   private sprites = new Map<string, Phaser.GameObjects.Sprite>();
   private shadows = new Map<string, Phaser.GameObjects.Ellipse>();
   private tags = new Map<string, Phaser.GameObjects.Rectangle>();
@@ -130,12 +168,15 @@ export class WorkerLayer {
   // delivers — would put a canvas decode in the frame budget for text that
   // changes a few times a minute.
   private captions = new Map<string, { text: Phaser.GameObjects.Image; label: string }>();
+  /** One transparent target per figure, so it can be pointed at over a building. */
+  private hitZones = new Map<string, Phaser.GameObjects.Zone>();
   private travel = new Map<string, Journey>();
   private disposed = false;
 
-  constructor(scene: Phaser.Scene, _atlasKey: string, atlas: Atlas) {
+  constructor(scene: Phaser.Scene, _atlasKey: string, atlas: Atlas, dragged: () => boolean) {
     this.scene = scene;
     this.atlas = atlas;
+    this.dragged = dragged;
     // One pixel of nothing, so a caption has something to point at before it is
     // lettered. A Phaser Image with a missing texture draws Phaser's own green
     // placeholder box, which would flash on every new worker.
@@ -188,6 +229,14 @@ export class WorkerLayer {
     for (const id of [...this.sprites.keys()]) {
       if (!seen.has(id)) this.remove(id);
     }
+
+    // A figure created by this pass started hidden, and a live update changes
+    // neither the hover nor the focus — so nothing else would run the rule and a
+    // worker appearing under an existing focus would stay dark until the reader
+    // moved the pointer. Applying it here is what makes the rule hold for figures
+    // that arrive after the click.
+    const { focused, hovered } = useTown.getState();
+    this.applyLabels(focused, hovered);
   }
 
   /**
@@ -257,11 +306,61 @@ export class WorkerLayer {
     // It starts blank and is lettered by `caption` on the first sync, so there
     // is one code path that decides what a caption says rather than two that can
     // disagree about the initial state.
+    //
+    // It is hidden until the figure is pointed at. A busy session runs a dozen
+    // crews, and a caption each would tile the map in type — the skyline, which
+    // is what the map exists to show, would be the thing least visible. The
+    // figure itself is the affordance: point at a worker and it says what it is
+    // doing, which is the same bargain the building names make.
     const text = this.scene.add.image(at.x, at.y - CAPTION_LIFT, BLANK);
-    text.setOrigin(0.5, 1).setDepth(at.y + 2);
+    text.setOrigin(0.5, 1).setDepth(at.y + 2).setVisible(false);
     this.captions.set(w.id, { text, label: "" });
 
+    // The target is a transparent zone over the cel rather than the cel itself,
+    // for the reason `HIT_DEPTH` records: the sprite is drawn at its feet, which
+    // puts it under the zone of the building it stands on, and the building would
+    // take every pointer. The zone is sized to the cel — a figure is a dozen
+    // pixels tall and aiming at its boots to learn what it is doing would be its
+    // own small cruelty.
+    const cellW = sprite.width, cellH = sprite.height;
+    const zone = this.scene.add
+      .zone(at.x, at.y, cellW, cellH)
+      .setOrigin(sprite.originX, sprite.originY)
+      .setDepth(HIT_DEPTH)
+      .setInteractive({ useHandCursor: false });
+    this.hitZones.set(w.id, zone);
+
+    // Pointing at the figure reveals its caption; clicking it pins the caption
+    // open. Both go through the store, so a building's name and a worker's
+    // caption obey one rule and focusing a worker clears the building focused
+    // before it — which is the reader's own description of the behaviour.
+    //
+    // `useHandCursor` stays false: this is not a link, and the whole map is
+    // draggable. A hand appearing over a worker but not over the ground around it
+    // would promise a navigation that does not exist.
+    zone.on("pointerover", () => useTown.getState().hover(workerLabelId(w.id)));
+    zone.on("pointerout", () => {
+      if (useTown.getState().hovered === workerLabelId(w.id)) useTown.getState().hover(null);
+    });
+    zone.on("pointerup", () => {
+      if (!this.dragged()) useTown.getState().focus(workerLabelId(w.id));
+    });
+
     this.anim.set(w.id, { state: "idle", tier, elapsed: 0, index: 0 });
+  }
+
+  /**
+   * applyLabels shows exactly the captions the rule allows.
+   *
+   * Called by the scene's sweep rather than from a store subscription of its
+   * own, so that one pointer move resolves one rule. A second subscription here
+   * would have to know which labels the scene owns in order to leave them alone,
+   * and that knowledge is exactly what drifts.
+   */
+  applyLabels(focused: string | null, hovered: string | null): void {
+    for (const [id, entry] of this.captions) {
+      entry.text.setVisible(labelVisible(workerLabelId(id), hovered, focused));
+    }
   }
 
   /**
@@ -330,6 +429,13 @@ export class WorkerLayer {
     const sprite = this.sprites.get(id);
     if (!sprite) return;
     sprite.setDepth(sprite.y);
+    // The hit zone follows the figure but keeps its own depth, so a worker
+    // walking across a district can always be pointed at.
+    const zone = this.hitZones.get(id);
+    if (zone) {
+      zone.setPosition(sprite.x, sprite.y);
+      zone.setSize(sprite.width, sprite.height);
+    }
     this.shadows.get(id)?.setPosition(sprite.x, sprite.y).setDepth(sprite.y - 1);
     this.tags.get(id)?.setPosition(sprite.x, sprite.y - TAG_LIFT).setDepth(sprite.y + 1);
     this.captions.get(id)?.text.setPosition(sprite.x, sprite.y - CAPTION_LIFT).setDepth(sprite.y + 2);
@@ -444,10 +550,12 @@ export class WorkerLayer {
     this.shadows.get(id)?.destroy();
     this.tags.get(id)?.destroy();
     this.captions.get(id)?.text.destroy();
+    this.hitZones.get(id)?.destroy();
     this.sprites.delete(id);
     this.shadows.delete(id);
     this.tags.delete(id);
     this.captions.delete(id);
+    this.hitZones.delete(id);
     this.anim.delete(id);
     this.travel.delete(id);
   }

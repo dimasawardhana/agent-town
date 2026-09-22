@@ -40,6 +40,11 @@ import {
   STAGE_ADDS,
   stageRank,
   buildBuilding,
+  buildBase,
+  buildBand,
+  buildCap,
+  bandBox,
+  capBox,
   boxFor,
   skinFor,
   skinVariant,
@@ -60,6 +65,7 @@ import { PLACARD, placard } from "../src/art/placard";
 import { KERB, kerbRuns } from "../src/art/kerb";
 import { PLACE_INFO, PLACE_ORDER } from "../src/place";
 import { ACTION_INFO, ACTION_ORDER, actionInfo, targetOf } from "../src/actions";
+import { STOREY, MAX_FLOORS, bandHeight, towerTop } from "../src/art/stack";
 import { FONT, GLYPH_W, GLYPH_H, GLYPH_GAP, typeset } from "../src/art/font";
 
 const ALLOWED = paletteSet();
@@ -889,4 +895,154 @@ test("a worker's caption names its building, not its place key", () => {
   assert.equal(targetOf("yard", "building:"), "yard");
   assert.equal(targetOf("workshop", "building:"), "workshop");
   assert.equal(targetOf("depot", "building:"), "depot");
+});
+
+// --- floors and the storey band -------------------------------------------
+
+test("a storey band is an exact vertical repeat", () => {
+  // This is the assumption the whole stacking model rests on, and it is
+  // invisible from reading the code: `sy = (wx + wy) / 4 - z` means raising z by
+  // N moves a pixel up by exactly N, so one band of art serves every height. If
+  // this stops being true the tower shows a seam at every floor and no unit test
+  // of the drawing functions would catch it, because each floor is individually
+  // correct.
+  const iso = new IsoPix(80, 320, 30, 300);
+  for (let wy = 0; wy <= 24; wy++) iso.column(24, wy, 0, 100, P.wood[2]);
+  for (let wx = 0; wx <= 24; wx++) iso.column(wx, 24, 0, 100, P.wood[1]);
+
+  let differing = 0;
+  for (let y = 120; y < 280; y++) {
+    for (let x = 0; x < 80; x++) {
+      const a = iso.pix.at(x, y);
+      const b = iso.pix.at(x, y - STOREY);
+      if (a[3] === 0 || b[3] === 0) continue;
+      if (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2]) differing++;
+    }
+  }
+  assert.equal(differing, 0, `${differing} pixel(s) differ between a storey and the one above it`);
+});
+
+test("band height and tower top follow the floor count", () => {
+  assert.equal(bandHeight(1), STOREY);
+  assert.equal(bandHeight(5), 5 * STOREY);
+  assert.equal(bandHeight(20), 20 * STOREY);
+  // The cap sits one storey above the top band, which is the off-by-one this
+  // whole pair of functions exists to make impossible.
+  assert.equal(towerTop(1), STOREY);
+  assert.equal(towerTop(20), 20 * STOREY);
+});
+
+test("the floor count is clamped to the drawable range", () => {
+  // A daemon that sent a wild value must not be able to ask for a 10,000-pixel
+  // tower: the clamp is the renderer's own guarantee, not a copy of the daemon's.
+  assert.equal(bandHeight(0), STOREY, "zero floors still needs one storey of wall");
+  assert.equal(bandHeight(-5), STOREY, "a negative count must not produce a negative height");
+  assert.equal(bandHeight(999), MAX_FLOORS * STOREY, "the cap must hold");
+  assert.equal(bandHeight(NaN), STOREY, "a non-number must not propagate");
+  assert.equal(bandHeight(Infinity), STOREY, "Infinity is not a floor count");
+  assert.equal(bandHeight(3.7), 3 * STOREY, "a fractional count floors");
+});
+
+test("a tower's bands and cap land on exact storey boundaries", () => {
+  // The off-by-one that stacking invites: the cap must sit at the top of the
+  // topmost band, not one storey above or below it.
+  for (const floors of [1, 2, 5, 20]) {
+    const bands: number[] = [];
+    for (let i = 0; i < floors; i++) bands.push(i * STOREY);
+    assert.equal(bands.length, floors, `one band per storey at ${floors}`);
+    const topBandTop = bands[bands.length - 1] + STOREY;
+    assert.equal(topBandTop, towerTop(floors), `cap misaligned at ${floors} floors`);
+  }
+});
+
+// --- the tower is assembled from parts, and assembles correctly ------------
+
+test("a single-storey building is solid: no hole between its plinth and its roof", () => {
+  // The defect this defends against is the one the first version of the split
+  // had: the base carried the ground and the bands started one storey up, so a
+  // one-storey building was a plot with its roof hovering twenty units above it
+  // — a 40-pixel hole in the silhouette. Most directories in a real project hold
+  // a single file, so this is the common case, and it is invisible in the code
+  // because every function involved is individually correct.
+  const side = 60, files = 5;
+  const b = buildBase(side, files, "a", "completed");
+  const c = buildCap(side, skinFor(files, "a"), "completed", false);
+  const sheet = new Pix(b.w, b.h);
+  sheet.blit(b, 0, 0);
+  sheet.blit(c, 0, 0);
+
+  // Walk the building's own columns, excluding the margin: `boxFor` reserves 6px
+  // on every side for the outline and for what is drawn outside the footprint.
+  // The single column just inside that margin is where the roof's eaves overhang
+  // the wall, so it legitimately shows sky beside the wall — that is the eave,
+  // not a hole. Everything inside it must be one solid run.
+  const margin = 6;
+  let worst = 0;
+  for (let x = margin; x < sheet.w - margin; x++) {
+    let first = -1, last = -1;
+    for (let y = 0; y < sheet.h; y++) if (sheet.isOpaque(x, y)) { if (first < 0) first = y; last = y; }
+    if (last < 0) continue;
+    let run = 0, longest = 0;
+    for (let y = last; y >= first; y--) {
+      if (sheet.isOpaque(x, y)) { run++; longest = Math.max(longest, run); } else run = 0;
+    }
+    worst = Math.max(worst, last - first + 1 - longest);
+  }
+  assert.equal(worst, 0, `${worst}px of sky inside a one-storey building's silhouette`);
+});
+
+test("each added storey raises the tower by exactly one storey", () => {
+  // The join between two stamped bands must be invisible, which holds only if a
+  // storey is an exact vertical repeat AND the bands are placed exactly STOREY
+  // apart. Either being wrong shows as a seam or a short floor, and the error
+  // does not appear at one floor — it only appears once there are two.
+  const side = 78, files = 9, path = "a", stage = "completed";
+  const skin = skinFor(files, path);
+  const base = buildBase(side, files, path, stage);
+  const band = buildBand(side, skin, stage);
+  const cap = buildCap(side, skin, stage, false);
+  const baseBox = boxFor(side, skin, 1), bandCel = bandBox(side), capCel = capBox(side, skin);
+
+  // The ground line is a fixed row in every canvas, so a taller tower grows
+  // upward from the same place. Sizing the canvas to the tower and anchoring the
+  // ground to its bottom instead — the obvious way to write this — moves the
+  // ground with the height and measures the canvas rather than the building.
+  const W = 400, CANVAS_H = 900, GROUND = 800, FX = 200;
+  const tower = (floors: number): Pix => {
+    const s = new Pix(W, CANVAS_H);
+    s.blit(base, Math.round(FX - baseBox.ox), Math.round(GROUND - 0 - baseBox.oy));
+    for (let i = 1; i < floors; i++) {
+      s.blit(band, Math.round(FX - bandCel.ox), Math.round(GROUND - i * STOREY - bandCel.oy));
+    }
+    s.blit(cap, Math.round(FX - capCel.ox), Math.round(GROUND - towerTop(floors) - capCel.oy));
+    return s;
+  };
+
+  // Height must grow by exactly STOREY per added floor. Measured as the distance
+  // from the fixed ground line to the topmost pixel, so it is the building's
+  // height and not the canvas's. Compared between consecutive counts rather than
+  // against a formula, so the assertion states the property being defended
+  // instead of restating the arithmetic that produced it.
+  // Compared against the previous count in the list, which does not have to be
+  // one less: the expected rise is the gap between the two counts times STOREY,
+  // so a list that skips floors still states the right property.
+  let prev: { floors: number; height: number } | null = null;
+  for (const floors of [1, 2, 3, 5, 12]) {
+    const s = tower(floors);
+    let top = -1;
+    for (let y = 0; y < s.h; y++) {
+      let any = false;
+      for (let x = 0; x < s.w; x++) if (s.isOpaque(x, y)) { any = true; break; }
+      if (any) { top = y; break; }
+    }
+    const height = GROUND - top;
+    if (prev !== null) {
+      assert.equal(
+        height - prev.height,
+        (floors - prev.floors) * STOREY,
+        `${floors - prev.floors} more floor(s) did not raise the tower by ${(floors - prev.floors) * STOREY}`,
+      );
+    }
+    prev = { floors, height };
+  }
 });

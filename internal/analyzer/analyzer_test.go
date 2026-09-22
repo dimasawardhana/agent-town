@@ -1,9 +1,11 @@
 package analyzer
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -368,5 +370,130 @@ func TestEmptyTownMarshalsAsEmptyNotNull(t *testing.T) {
 	}
 	if string(lraw["sites"]) == "null" {
 		t.Error("layout.sites marshalled as null, want []")
+	}
+}
+
+// TestBuildingByteTotals covers Task 1: a building's height comes from its
+// source *mass*, not its file count. The two are genuinely different readings —
+// a directory of two vendored blobs and one of forty small modules can hold the
+// same count and wildly different weight — and the map needs both, because the
+// count drives the footprint and the bytes drive the storeys.
+func TestBuildingByteTotals(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel string, n int) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, bytes.Repeat([]byte("x"), n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("parent/a.go", 100)
+	write("parent/b.go", 200)
+	write("parent/child/c.go", 300)
+	// A non-source file must not count toward a building's mass, however large.
+	write("parent/README.md", 5000)
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]Building{}
+	for _, b := range town.Buildings {
+		byPath[b.Path] = b
+	}
+
+	parent, ok := byPath["parent"]
+	if !ok {
+		t.Fatalf("no building at parent; got %v", byPath)
+	}
+	if parent.Bytes != 300 {
+		t.Errorf("parent.Bytes = %d, want 300 (100+200, direct source only)", parent.Bytes)
+	}
+	if parent.TotalBytes != 600 {
+		t.Errorf("parent.TotalBytes = %d, want 600 (100+200+300)", parent.TotalBytes)
+	}
+	child := byPath["parent/child"]
+	if child.Bytes != 300 || child.TotalBytes != 300 {
+		t.Errorf("child = (%d,%d), want (300,300)", child.Bytes, child.TotalBytes)
+	}
+}
+
+// TestGeneratedOutputIsNotATower is the regression for a rule that was wrong.
+//
+// The first attempt flagged a directory when one file exceeded all its siblings
+// combined by 8x. The case it existed to catch — `internal/web/static/assets`,
+// which holds the embedded UI bundle — contains exactly ONE source file, so
+// "larger than the rest of its directory" was never true and the minified bundle
+// would have been the tallest building in the town.
+func TestGeneratedOutputIsNotATower(t *testing.T) {
+	root := t.TempDir()
+	// One enormous single-line file, alone among non-source neighbours, exactly
+	// as a bundle sits beside its fonts.
+	mk := func(rel string, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("assets/index.js", strings.Repeat("var a=1;", 20_000)) // one line, ~160 kB
+	mk("assets/font.woff2", strings.Repeat("x", 50_000))      // not source
+	// A real building: several short-lined hand-written files.
+	mk("src/a.go", "package src\n\nfunc a() {}\n"+strings.Repeat("// filler\n", 500))
+	mk("src/b.go", "package src\n\nfunc b() {}\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]Building{}
+	for _, b := range town.Buildings {
+		byPath[b.Path] = b
+	}
+
+	if !byPath["assets"].Generated {
+		t.Errorf("assets holds one 160 kB single-line file; it must be flagged Generated")
+	}
+	if byPath["src"].Generated {
+		t.Errorf("src holds ordinary multi-line Go; it must NOT be flagged Generated")
+	}
+}
+
+// TestGeneratedPropagatesUpward covers the parent of a generated directory.
+//
+// `internal/web/static` contains `assets`, which contains the bundle. Its byte
+// total is dominated by output it did not write, so drawing it as a tower would
+// repeat the same wrong claim one level up.
+func TestGeneratedPropagatesUpward(t *testing.T) {
+	root := t.TempDir()
+	full := filepath.Join(root, "web", "assets")
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(full, "index.js"), []byte(strings.Repeat("var a=1;", 20_000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A real source file directly in the parent, so the parent is a building.
+	if err := os.WriteFile(filepath.Join(root, "web", "main.go"), []byte("package web\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]Building{}
+	for _, b := range town.Buildings {
+		byPath[b.Path] = b
+	}
+	if !byPath["web/assets"].Generated {
+		t.Errorf("assets must be generated")
+	}
+	if !byPath["web"].Generated {
+		t.Errorf("web contains a generated child; it must be marked generated too")
 	}
 }

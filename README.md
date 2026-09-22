@@ -121,7 +121,7 @@ reachable from the network.
 Working: the daemon, the project analyzer, the town renderer, worker movement,
 the building ladder, and the omp extension. No third-party Go dependencies.
 
-Tests: **176 Go tests** (`go test ./...`) and **50 art tests**
+Tests: **187 Go tests** (`go test ./...`) and **50 art tests**
 (`npm run test:art` in `ui/`). The art tests exist because every defect that
 shipped from the drawing layer was invisible to `tsc` and to the boot-time
 palette check — a missing colour key drew nothing, a cel was anchored half a
@@ -143,9 +143,20 @@ Known gaps, stated rather than hidden:
 - **A test's building comes from the command, not from its output.** A test that
   names a directory — `go test ./internal/town` — is credited to that building,
   so it can advance it. A whole-repo run names no building and stays in the Yard,
-  and a test that *fails* still cannot say which building actually broke: the
-  output is not read. Deriving that from the failure text is the natural next
-  slice.
+  and a test that *fails* still cannot say which building actually broke.
+
+  The data to fix this is available and currently discarded. omp's
+  `tool_execution_end` carries a `result` field alongside `isError`, and the
+  extension reads only the flag — `internal/agent/extension/ai-town.ts` sends
+  `isError` and drops `result`. A whole-repo `go test ./...` prints
+  `FAIL\t<package>` for each failing package, which names the building that
+  broke. See [`.scratch/test-output-attribution/spec.md`](.scratch/test-output-attribution/spec.md)
+  for the measurements and the four tickets.
+
+  Not free: the field is `unknown`, its shape differs per tool, and a `go test`
+  parser is not a `vitest` parser. The spec scopes it to one runner for that
+  reason — a wrong attribution would damage a building that did not break, which
+  is worse than the gap it closes.
 
 ## Guides
 

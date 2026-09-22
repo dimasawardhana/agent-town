@@ -48,6 +48,10 @@ export function App() {
   const setError = useTown((s) => s.setError);
   const pushEvent = useTown((s) => s.pushEvent);
   const select = useTown((s) => s.select);
+  const focus = useTown((s) => s.focus);
+  const layout = useTown((s) => s.layout);
+  const depth = useTown((s) => s.depth);
+  const setDepth = useTown((s) => s.setDepth);
 
 
   // The selected site's building state, if it is a building the town knows
@@ -60,6 +64,13 @@ export function App() {
   // than buildings. A place is never "built", so this and `built` are mutually
   // exclusive and the panel picks one branch or the other.
   const place = selected ? placeInfoFor(selected) : null;
+
+  // The deepest building the daemon reported, so the detail control's range
+  // reflects the town rather than a guessed ceiling. A town whose buildings are
+  // all top-level has nothing to filter, and the control hides itself.
+  const maxDepth = layout
+    ? layout.sites.reduce((m, s) => Math.max(m, s.depth), 1)
+    : 1;
   // load reads one project's town. An empty path names none, which the daemon
   // answers with every project it serves.
   const load = useRef(async (project: string) => {
@@ -139,6 +150,41 @@ export function App() {
           </p>
         )}
 
+        {/* The detail control. It limits which buildings are *drawn*, by how
+            deep they sit below the repo root.
+
+            This is a view filter and nothing more: the layout is computed once
+            in full and filtered on the way out, so moving this cannot shift a
+            building that is already on screen. That property is why the control
+            is safe to offer at all — the first design re-ran the layout over a
+            subset, which renumbered the placement slices and moved 12 of 18
+            buildings on screen.
+
+            The maximum is the deepest site the daemon actually reported, not a
+            guessed number: a town with no nested buildings gets no control to
+            speak of, and one nested five deep gets all five. */}
+        {town && maxDepth > 1 && (
+          <section className="detail-control">
+            <h2>Detail</h2>
+            <label htmlFor="depth">
+              {depth === Number.POSITIVE_INFINITY
+                ? "Everything"
+                : depth === 1
+                  ? "Top level only"
+                  : `${depth} levels deep`}
+            </label>
+            <input
+              id="depth"
+              type="range"
+              min={1}
+              max={maxDepth}
+              step={1}
+              value={depth === Number.POSITIVE_INFINITY ? maxDepth : depth}
+              onChange={(e) => setDepth(Number(e.target.value))}
+            />
+          </section>
+        )}
+
         {!town && projects.length === 0 && (
           <p className="muted">
             No projects registered. Run <code>townd add &lt;path&gt;</code> to
@@ -201,7 +247,17 @@ export function App() {
                 )}
               </dl>
             )}
-            <button className="bevel" onClick={() => select(null)}>
+            <button
+              className="bevel"
+              onClick={() => {
+                // The focus goes with the panel, because the pinned label is the
+                // panel's own subject: leaving it lit over a building whose
+                // details have been dismissed would be a label with nothing left
+                // saying why it is open, and no way to close it.
+                select(null);
+                focus(null);
+              }}
+            >
               Close
             </button>
           </section>

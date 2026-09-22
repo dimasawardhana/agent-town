@@ -24,6 +24,24 @@ PLANNED → FOUNDATION → FRAMED → WALLED → ROOFED → GLAZED → DOORED �
 The first four ranks are structure and are raised by making changes: a change adds one course. The last three are finish and are raised by *passing tests*: a test is what says the work is sound enough to be fitted off. That split is what puts a test run on the building it verified, and it is the only way COMPLETED is reached.
 _Avoid_: service, package, component, module
 
+**Floors**:
+A building's height, derived from the total source bytes in it, one storey per band of bytes up to a cap of twenty. Floors are independent of the construction ladder: a building keeps the same number of storeys whether it is a staked plot or a finished tower, because height describes how much code the building *is* while the ladder describes how much work has landed on it. Height and footprint are two separate readings — footprint comes from the file **count** and floors from the byte **total** — so a few large files read as a narrow tower and many small files as a broad low block.
+
+A directory whose mass is machine-written is drawn one storey high regardless of its size. The embedded UI bundle is 1.68 MB in a directory otherwise holding a few kilobytes, and a skyline that ranked compiled output above hand-written code would be a map of the wrong thing. The test is the *shape* of the file, not its size: a build artefact is minified, so its first eight kilobytes contain no newline, while source of any length always breaks lines.
+_Avoid_: storeys, levels, height (when the ladder's ranks are meant), size
+
+**Container**:
+A directory that holds source *below* it but none of its own. It is not a building — it has no rank and cannot be damaged, because it is an aggregate of what is under it rather than something anyone worked on — but it is drawn as a tower so the shallowest view of a project still says what the project is made of. Without them, a Go module laid out as `internal/<pkg>/` has nothing at the top level at all: the mass is all one or two levels down, and once the detail filter hides those, one building stood for 7.9% of the source.
+
+A container's height comes from **hand-written** bytes rather than its total, because the common case is a module that embeds a built UI: `internal/` totals 2.0 MB of which 1.68 MB is the bundle, so sizing from the total would collapse it to one storey and hide the 317 kB of authored code a reader is looking for. A container steps aside the moment the buildings it summarises are drawn beside it — never both at once, which would show the same bytes twice.
+_Avoid_: group, folder, parent, namespace, node
+
+**Hover Label**:
+What a site is called, shown when it is asked for and hidden otherwise. Nothing wears its name at rest: pointing at a building, a container, a district plate or a worker reveals that object's label, and pointing away hides it again. Clicking pins the label open so it can be read without holding the cursor still, and focusing something else moves the light — the previously pinned label goes dark. Exactly one label is pinned at a time, because that is what "show it on the thing we are focusing on instead" means.
+
+Labelling the top level outright was tried and abandoned: on one real town of eighteen sites it left thirteen boards on screen at once and the map read as a wall of type, with the skyline the boards described being the thing least visible. Nothing is lost — only deferred until asked for.
+_Avoid_: tooltip, popup, annotation, caption (when a building's name is meant)
+
 **Damage**:
 A building's current condition, not a stage: whether the most recent work on it failed. Damage is drawn *over* whatever the building has reached — rubble, a crack, a hole in the roof — and a later successful change or test repairs it. It never rolls the ladder back, because a failed command must not erase the progress it did not cause. The count of failures is kept separately as history.
 _Avoid_: broken, error state, health

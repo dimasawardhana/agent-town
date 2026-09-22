@@ -243,6 +243,104 @@ erase the fact that it broke.
 
 ---
 
+## 6a. Height: how tall a building looks
+
+Two numbers describe a building's size, and they are deliberately independent:
+
+- **Footprint** comes from the file **count**: 44, 60, 78 or 100 world units.
+- **Floors** come from the total source **bytes**: 1 to 20 storeys of 20 world
+  units each.
+
+They disagree usefully. A directory of three large files is a narrow tower; one of
+forty small files is a broad low block. Both are true statements about a codebase
+and neither is derivable from the other.
+
+**Height is not a rank.** The eight ranks of the ladder describe how much *work*
+has landed on a building; the floors describe how much *code* it is. A building
+keeps its height for its whole life — a 12-storey module is a 12-storey tower when
+it is a staked plot and still one when it is completed. Nothing about finishing a
+building adds storeys, and no rank is gated on height. A directory's byte total
+therefore never affects *which* part it is showing, only how many times the storey
+band between the ground floor and the roof is repeated.
+
+**One exception: generated output.** A directory whose mass is machine-written is
+drawn one storey high regardless of its byte total. Without that rule the embedded
+UI bundle — 1.68 MB in a directory otherwise holding a few kilobytes — would be the
+tallest building in the town: a skyline ranking compiled output above hand-written
+code, which is a map of the wrong thing. The test is the *shape* of the file rather
+than its size, because size alone cannot tell a minified bundle from a genuinely
+large module: a build artefact's first eight kilobytes contain no newline, while
+source of any length breaks lines. That discriminator holds by a wide margin — the
+bundle runs at about 14,600 bytes per line against 51 for the next-highest file.
+
+Two consequences worth knowing when reading the map:
+
+- A very large directory with several large files stays tall, because no single
+  file dominates the total.
+- The three special places (Yard, Workshop, Depot) are furnished ground rather than
+  buildings and are always one storey, whatever happens inside them.
+
+**Containers: the directories that are not buildings.** A directory counts as a
+building only if it holds source *directly*. On a project laid out as
+`internal/<pkg>/` that leaves the top level almost empty — the mass is all one or
+two levels down — so a container is placed for any directory that holds source
+below it and none of its own. It is drawn as a tower, sized from its
+**hand-written** bytes, but it has no rank and cannot be damaged: it is an
+aggregate of what is under it, not something anyone worked on, and giving it a
+lifecycle would claim work that never happened.
+
+Its height uses authored bytes rather than the total, and that distinction is
+load-bearing for the common case of a Go module that embeds a built UI. `internal`
+totals 2.0 MB of which 1.68 MB is the bundle; sizing from the total gives one
+storey, sizing from authored bytes gives nine.
+
+A container is drawn **only while the buildings it summarises are hidden**. Set
+the detail filter deep enough that those appear and the container steps aside. The
+two are never on screen together, because they describe the same bytes and drawing
+both is the map double-counting. Measured with a plain `depth <= filter` rule,
+`internal` and its ten packages appeared together at filter 2 — a tower standing
+on the plate of the things it stood for.
+
+---
+
+## 6b. What the map names, and when
+
+**Nothing is named at rest.** Pointing at a building, a container, a district
+plate or a worker reveals that object's label; pointing away hides it again.
+Clicking pins the label open, so it can be read without holding the cursor still,
+and focusing something else moves the light — the previously pinned label goes
+dark. Exactly one label is pinned at a time.
+
+The reason is density rather than taste. An earlier version named the top level
+outright, and on one real town of eighteen sites that left thirteen boards on
+screen at once: they overlapped into a wall of type that hid the skyline the
+boards were describing, which is the thing the map exists to show. Nothing is
+lost by deferring a name; it is answered the moment a reader asks for it.
+
+Three details worth knowing:
+
+- **One pinned id, not a flag per label.** `labelVisible(id, hovered, focused)`
+  takes a single `focused` id, so "the label disappears from the last thing and
+  shows on the one being focused" is the only thing the model can express. A
+  boolean per label can hold two focuses at once, and clearing the previous one
+  then becomes something every call site has to remember.
+- **A hover is weaker than a focus.** Pointing at a second building to read its
+  name does not throw away the one that was clicked; the pinned label stays lit
+  alongside the preview, and the preview alone disappears when the pointer leaves.
+- **A distance label names a district plate**, so pointing at the ground names the
+  neighbourhood. The plate's zone sits under the sites standing on it, so pointing
+  at a building gets that building rather than the whole district.
+
+A worker's action caption follows the same rule and the same pinned id, which is
+what makes focusing a worker put out a building's name. A figure's hit target is
+its own object rather than its sprite, because a worker standing on a building is
+*underneath* that building's zone and could otherwise never be pointed at.
+
+---
+
+
+---
+
 ## 7. Can a building be un-built?
 
 No. The ladder is **strictly increasing** — there is no rank below `planned` and

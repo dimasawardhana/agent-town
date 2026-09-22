@@ -192,15 +192,26 @@ func TestEveryStatusHasAPictureInTheUI(t *testing.T) {
 	}
 
 	// Every rank must appear both as a key in PART_FOR_STAGE and as a draw guard
-	// in the compositor. Asserting only that the key exists would pass for a part
-	// nothing draws, which is the same silent fallback wearing a different hat.
+	// in a drawing function. Asserting only that the key exists would pass for a
+	// part nothing draws, which is the same silent fallback wearing a different
+	// hat.
+	//
+	// The guards are scanned from the storey compositor to the end of the file
+	// rather than in one function, because a building is no longer composed by a
+	// single `buildBuilding`: `storeyShell`, `buildBase` and `buildCap` each draw
+	// the ranks they own, so a rank's picture legitimately lives in any of them.
+	// What must not happen is a rank with no guard anywhere — that rank renders
+	// as nothing, which is the silent fallback this test exists to catch.
 	assigned := map[string]bool{}
 	for _, m := range regexp.MustCompile(`(\w+):\s*"\w+"`).FindAllStringSubmatch(block[1], -1) {
 		assigned[m[1]] = true
 	}
-	compositor := regexp.MustCompile(`(?s)export function buildBuilding.*`).FindString(text)
+	drawing := regexp.MustCompile(`(?s)function storeyShell.*`).FindString(text)
+	if drawing == "" {
+		t.Fatalf("could not find the storey compositor in %s; the drawing guards must live after it", uiPath)
+	}
 	guarded := map[string]bool{}
-	for _, m := range regexp.MustCompile(`want >= stageRank\("(\w+)"\)`).FindAllStringSubmatch(compositor, -1) {
+	for _, m := range regexp.MustCompile(`want >= stageRank\("(\w+)"\)`).FindAllStringSubmatch(drawing, -1) {
 		guarded[m[1]] = true
 	}
 

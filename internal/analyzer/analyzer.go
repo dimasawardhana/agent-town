@@ -12,6 +12,8 @@
 package analyzer
 
 import (
+	"bytes"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,6 +30,12 @@ const (
 	PlaceWorkshop Place = "workshop" // files at the repo root
 	PlaceYard     Place = "yard"     // site-wide work: tests, builds, git
 	PlaceDepot    Place = "depot"    // meta work: planning, dispatch, evaluation
+	// PlaceContainer is a directory that holds source below it and none of its
+	// own. It is deliberately its own kind rather than a building: a container
+	// has no rank and cannot be damaged, because it is an aggregate of what is
+	// under it rather than something a worker can work on. Drawing it as a
+	// building would make the town claim a lifecycle it does not have.
+	PlaceContainer Place = "container"
 )
 
 // sourceExtensions are the file types that make a directory a building.
@@ -90,10 +98,11 @@ var ignoredSuffixes = []string{
 
 // Town is a project's static structure.
 type Town struct {
-	Root      string     `json:"root"`
-	Name      string     `json:"name"`
-	Districts []District `json:"districts"`
-	Buildings []Building `json:"buildings"`
+	Root       string      `json:"root"`
+	Name       string      `json:"name"`
+	Districts  []District  `json:"districts"`
+	Buildings  []Building  `json:"buildings"`
+	Containers []Container `json:"containers"`
 
 	// Partial records that the walk stopped at its budget, so this town is
 	// drawn from part of the repository. It travels with the map because the
@@ -105,6 +114,48 @@ type Town struct {
 	// state how much was left out rather than only that something was.
 	FilesSeen int `json:"filesSeen,omitempty"`
 	MaxFiles  int `json:"maxFiles,omitempty"`
+}
+
+// Container is a directory that holds source *below* it but none of its own.
+//
+// These are where the shallowest view of a repository goes wrong. A directory
+// is a Building only if it holds source directly, so on a Go project laid out as
+// `internal/<pkg>/` the answer at the top level is almost nothing: the mass is
+// all one or two levels down and, once the depth filter hides those, no building
+// on the map stands for it. Measured on this repository, "top level only" drew
+// one building holding 7.9% of the source.
+//
+// A container is not a second kind of building and is not drawn as one. It is
+// the honest answer to "what is this neighbourhood made of", which is why it is
+// carried separately and sized from AuthoredBytes.
+type Container struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+	// District is the first path segment, so a container is placed on the same
+	// plate as the buildings it holds.
+	District string `json:"district"`
+	Kind     Place  `json:"kind"`
+	// Files and Bytes are the subtree's totals, and AuthoredBytes the same with
+	// machine-written files left out.
+	Files         int  `json:"files"`
+	Bytes         int  `json:"bytes"`
+	AuthoredBytes int  `json:"authoredBytes"`
+	Generated     bool `json:"generated,omitempty"`
+	Depth         int  `json:"depth"`
+	// MinChildDepth is the shallowest depth of any building beneath this
+	// container, which is what decides when the container stops being the best
+	// answer. A container is drawn while `depth <= filter < MinChildDepth`: deep
+	// enough to be in view, but before the buildings it summarises are drawn
+	// beside it.
+	//
+	// A single `depth <= filter` rule cannot express this, and the failure is
+	// visible rather than theoretical — measured with that rule, `internal` and
+	// its ten packages were both on screen at filter 2, a tower standing on the
+	// same plate as the things it stands for.
+	//
+	// Computed here because the renderer would need the whole tree; the daemon
+	// already has it.
+	MinChildDepth int `json:"minChildDepth"`
 }
 
 // District kinds. A test district is not less important, but it is a
@@ -152,8 +203,41 @@ type Building struct {
 	District string `json:"district"` // first path segment
 	Files    int    `json:"files"`    // source files directly in this directory
 	Total    int    `json:"total"`    // source files including subdirectories
-	Kind     Place  `json:"kind"`     // always PlaceBuilding
-	Depth    int    `json:"depth"`    // path segments below the root
+	// Bytes is the total size of the source files directly in this directory,
+	// and TotalBytes the same including subdirectories.
+	//
+	// Size in bytes is a different reading from the file count, and the two
+	// disagree usefully: a directory of two vendored blobs and one of forty
+	// small modules can hold the same count and wildly different mass. The count
+	// drives the building's footprint and the bytes drive its height, so a
+	// narrow tall tower and a broad low block are both expressible.
+	//
+	// Only source files are counted — the same `isSource` filter the count uses
+	// — so a checked-in fixture or an asset cannot inflate a building.
+	Bytes      int `json:"bytes"`
+	TotalBytes int `json:"totalBytes"`
+	// Generated marks a directory whose mass is machine-written output rather
+	// than authored code. Such a directory is drawn one storey high whatever its
+	// size, because otherwise the embedded UI bundle — 1.68 MB sitting alone in
+	// a directory that is otherwise empty of source — would be the tallest
+	// building in the town. A skyline ranking compiled output above written
+	// output is a map of the wrong thing.
+	Generated bool  `json:"generated,omitempty"`
+	Kind      Place `json:"kind"`  // always PlaceBuilding
+	Depth     int   `json:"depth"` // path segments below the root
+	// AuthoredBytes is TotalBytes with machine-written files left out, rolled up
+	// the same way. It is the mass a directory holds that somebody actually
+	// wrote.
+	//
+	// The distinction exists for containers. A directory that holds subtrees but
+	// no source of its own — `internal/`, `cmd/`, `src/` — is not a building
+	// today, so its mass has no representative on the map at all and the
+	// shallowest view of a Go repository is almost empty. Sizing such a
+	// container from TotalBytes would collapse it to one storey the moment
+	// anything below it was generated, which is the common case for a Go module
+	// that embeds a built UI; sizing it from authored bytes is the reading that
+	// survives.
+	AuthoredBytes int `json:"authoredBytes,omitempty"`
 }
 
 // Analyze walks root and produces its town.
@@ -208,10 +292,11 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	// null it has to special-case — and a project with no source is a normal
 	// state, not an error.
 	t := &Town{
-		Root:      abs,
-		Name:      filepath.Base(abs),
-		Buildings: []Building{},
-		Districts: []District{},
+		Root:       abs,
+		Name:       filepath.Base(abs),
+		Buildings:  []Building{},
+		Districts:  []District{},
+		Containers: []Container{},
 	}
 
 	// The repo already declares what is generated: .gitignore. Reading it
@@ -221,6 +306,14 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 
 	// files directly in each directory, keyed by repo-relative path
 	direct := map[string]int{}
+	// source bytes directly in each directory, same key
+	directBytes := map[string]int{}
+	// machine-generated output per directory, from the opening-line test
+	directGenerated := map[string]bool{}
+	// hand-written bytes directly in each directory: directBytes minus anything
+	// a compiler wrote. This is what a container's height is built from, so a
+	// directory holding nothing but a build artefact has no authored mass.
+	authoredBytes := map[string]int{}
 	seen := 0
 	// truncated records that the walk stopped because the budget ran out,
 	// rather than because the tree ended. Without it, a tree holding exactly
@@ -271,7 +364,31 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 		if relErr != nil {
 			return nil
 		}
-		direct[filepath.ToSlash(rel)]++
+		size := 0
+		if info, infoErr := d.Info(); infoErr == nil {
+			size = int(info.Size())
+		}
+		key := filepath.ToSlash(rel)
+		// Only a large file can be machine-written, and only a large file is
+		// worth opening: the smallest bundle worth caring about is tens of
+		// kilobytes, while the median source file in this repository is under
+		// 3 kB. So the walk reads an 8 kB prefix of big files and nothing else,
+		// which leaves the ordinary case at zero extra I/O.
+		//
+		// Decided per file and before the accumulation below, because
+		// "hand-written bytes" is what a *container* is sized by: a directory
+		// whose only large content is a compiler's output holds no authored
+		// mass, and a tower built from it would rank compiled code above code
+		// somebody wrote.
+		generated := size > largeFileBytes && !directGenerated[key] && looksGenerated(path)
+		if generated {
+			directGenerated[key] = true
+		}
+		direct[key]++
+		directBytes[key] += size
+		if !generated {
+			authoredBytes[key] += size
+		}
 		return nil
 	})
 	if walkErr != nil {
@@ -288,32 +405,118 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	}
 
 	// A directory is a building if it holds source directly. The repo root is
-	// deliberately excluded: root files belong to the Workshop, so they
-	// neither invent a building nor get dropped.
+	// deliberately excluded: root files belong to the Workshop, so they neither
+	// invent a building nor get dropped.
 	for rel, n := range direct {
 		if rel == "." || n == 0 {
 			continue
 		}
 		t.Buildings = append(t.Buildings, Building{
-			Path:     rel,
-			Name:     lastSegment(rel),
-			District: districtOf(rel),
-			Files:    n,
-			Kind:     PlaceBuilding,
-			Depth:    strings.Count(rel, "/") + 1,
+			Path:      rel,
+			Name:      lastSegment(rel),
+			District:  districtOf(rel),
+			Files:     n,
+			Bytes:     directBytes[rel],
+			Generated: directGenerated[rel],
+			Kind:      PlaceBuilding,
+			Depth:     strings.Count(rel, "/") + 1,
 		})
 	}
 
-	// Total counts include subdirectories, so a building that contains other
-	// buildings is not undercounted.
+	// Totals include subdirectories, so a building that contains other buildings
+	// is not undercounted. A directory holding a generated bundle is itself
+	// treated as generated: its total is then a fact about a compiler, and
+	// drawing it as a tower would say the same wrong thing one level up.
 	for i := range t.Buildings {
-		t.Buildings[i].Total = t.Buildings[i].Files
+		bi := &t.Buildings[i]
+		bi.Total = bi.Files
+		bi.TotalBytes = bi.Bytes
+		bi.AuthoredBytes = authoredBytes[bi.Path]
 		for rel, n := range direct {
-			if rel != t.Buildings[i].Path && strings.HasPrefix(rel, t.Buildings[i].Path+"/") {
-				t.Buildings[i].Total += n
+			if rel != bi.Path && strings.HasPrefix(rel, bi.Path+"/") {
+				bi.Total += n
+				bi.TotalBytes += directBytes[rel]
+				bi.AuthoredBytes += authoredBytes[rel]
+				if directGenerated[rel] {
+					bi.Generated = true
+				}
 			}
 		}
 	}
+
+	// Containers: directories holding source below them and none of their own.
+	//
+	// Derived from the buildings rather than from the directory tree, because a
+	// directory with no source anywhere beneath it is not part of the town at
+	// all: `docs/`, `scripts/`, a vendored asset folder. Only an ancestor of an
+	// actual building has anything to say, and walking the buildings gives
+	// exactly those.
+	//
+	// The repo root is excluded for the same reason it is excluded from
+	// buildings: its files belong to the Workshop, which is already on the map,
+	// and a fourth place duplicating it would be one more thing to read.
+	seenContainer := map[string]bool{}
+	for _, b := range t.Buildings {
+		// Every proper ancestor of the building's path. Walked by index rather
+		// than with a `strings.Index` cursor, because `Index` returning -1 for
+		// "no more separators" and -1 being a valid index into a sliced string
+		// is an infinite loop rather than an error — measured, not theorised.
+		for i := 0; i < len(b.Path); i++ {
+			if b.Path[i] == '/' {
+				seenContainer[b.Path[:i]] = true
+			}
+		}
+	}
+	for anc := range seenContainer {
+		if _, isBuilding := direct[anc]; isBuilding {
+			continue
+		}
+		c := Container{
+			Path:     anc,
+			Name:     lastSegment(anc),
+			District: districtOf(anc),
+			Kind:     districtKind(districtOf(anc)),
+			Depth:    strings.Count(anc, "/") + 1,
+		}
+		for rel, n := range direct {
+			if rel == anc || strings.HasPrefix(rel, anc+"/") {
+				c.Files += n
+				c.Bytes += directBytes[rel]
+				c.AuthoredBytes += authoredBytes[rel]
+				if directGenerated[rel] {
+					c.Generated = true
+				}
+			}
+		}
+		if c.Files == 0 {
+			// Reachable only if a building was recorded under a path whose
+			// parents hold nothing, which the ancestor walk above cannot
+			// produce — but an empty container would be a site with no mass on
+			// a plate sized for nothing.
+			continue
+		}
+		t.Containers = append(t.Containers, c)
+	}
+	// Sorted by path so the list is reproducible, which the depth filter and any
+	// test over it depend on (ADR-0012).
+
+	// MinChildDepth: the shallowest building under each container, from which the
+	// display filter works out when the container should step aside.
+	//
+	// Taken from buildings rather than from nested containers, because a
+	// container is never drawn alongside another container of the same subtree:
+	// `internal` must wait for `internal/web`'s packages, not for
+	// `internal/web` itself.
+	for i := range t.Containers {
+		c := &t.Containers[i]
+		c.MinChildDepth = c.Depth + 1
+		for _, b := range t.Buildings {
+			if strings.HasPrefix(b.Path, c.Path+"/") && b.Depth < c.MinChildDepth {
+				c.MinChildDepth = b.Depth
+			}
+		}
+	}
+	sort.Slice(t.Containers, func(i, j int) bool { return t.Containers[i].Path < t.Containers[j].Path })
 
 	// Stable order: by district, then path. Determinism is what makes the
 	// layout reproducible (ADR-0012).
@@ -346,6 +549,53 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	})
 
 	return t, nil
+}
+
+// largeFileBytes is the size above which a source file is worth opening to ask
+// whether a machine wrote it.
+//
+// It exists to keep the common case free: this repository's median source file
+// is under 3 kB, and a hand-written file never approaches 64 kB, so the walk
+// opens almost nothing. A generated bundle is orders of magnitude larger.
+const largeFileBytes = 64_000
+
+// generatedPrefixBytes is how much of a large file is read to decide.
+//
+// A minifier's first line is measured in kilobytes; a person's first line is
+// measured in characters. One 8 kB read settles it, which is why this test costs
+// a single read per large file rather than a scan of the tree.
+const generatedPrefixBytes = 8192
+
+// looksGenerated reports whether a file's opening looks machine-written.
+//
+// The first rule considered here was *dominance* — "one file eight times the
+// size of all its siblings" — and it was wrong, in a way worth recording. The
+// case it exists to catch is `internal/web/static/assets/index-*.js`, and that
+// directory holds exactly ONE source file: the two `.woff2` fonts beside it are
+// not source extensions and are not counted. A single file cannot be "larger
+// than the rest of its directory", so the rule returned false and the minified
+// bundle would have been the tallest building in the town — it missed the one
+// case it was written for.
+//
+// What does work is the *shape of the opening*. A minifier emits one enormous
+// line and no newline for kilobytes. Measured across all 71 source files in this
+// repository, the bundle averages 14,629 bytes per line while the next-highest
+// file averages 51 — a 287x gap with nothing in it. So this is not a tuned
+// threshold but a different-kind-of-artefact detector, and it costs one read.
+//
+// A file that cannot be read is not reported as generated: the honest failure
+// mode is "unknown", and treating unknown as generated would flatten real
+// buildings.
+func looksGenerated(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+
+	buf := make([]byte, generatedPrefixBytes)
+	n, _ := io.ReadFull(f, buf)
+	return n > 0 && !bytes.ContainsRune(buf[:n], '\n')
 }
 
 // isSource reports whether a filename counts as construction material.

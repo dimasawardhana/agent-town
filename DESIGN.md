@@ -220,7 +220,7 @@ walls.
 | `framed` | `frame` | stud posts and beams at full wall height, open to the sky, scaffold up |
 | `walled` | `walls` | the shell closed, painted or timber-framed per skin |
 | `roofed` | `roof` | gable roof with eaves; the scaffold is struck and the spoils cleared |
-| `glazed` | `windows` | lit openings punched into both visible walls |
+| `glazed` | `windows` | lit openings punched into both visible walls, one row per storey |
 | `doored` | `door` | a doorway with a lintel, so the building has an inside |
 | `completed` | `trim` | plinth, corner boards, fascia, and the chimney |
 
@@ -238,9 +238,73 @@ only once something is standing, a crack only once there is a wall, a roof hole 
 is a roof. It is baked per stage for that reason, and it never changes the part list.
 
 `STAGE_ORDER` is asserted rank by rank against `internal/town`'s `AllStatuses()`, and every rank
-must appear both in `PART_FOR_STAGE` and as a draw guard in `buildBuilding` — a rank the renderer
+must appear both in `PART_FOR_STAGE` and as a draw guard in `storeyShell` — a rank the renderer
 cannot draw fails the Go build rather than rendering blank
 (`internal/town/vocabulary_test.go`).
+
+
+**Height is assembled, not baked.** A building is drawn as three tiling parts — a base, a
+repeating storey band, and a cap — held in one Phaser `Container`. This is forced by arithmetic
+rather than chosen for elegance: a storey is 20 world units, so a 20-storey tower on a 100-unit
+footprint occupies a 113×427 cel, and one cel per (footprint, height, stage, damage) combination
+is unbounded memory for a picture that is a repeat. The parts are split by **how they tile**, not
+by which rank introduces them: base and cap occur once, the band repeats.
+
+The repeat is exact, which is what makes it safe. In this projection `sy = (wx + wy)/4 - z`, so
+raising a point one world unit moves it exactly one pixel up; a storey is therefore a pure
+vertical translation and stacking N copies cannot introduce a seam. That property is asserted in
+`ui/test/art.test.ts` rather than assumed, because it is invisible from reading any single drawing
+function — every floor would be individually correct while the tower showed a line at each join.
+
+The wall's storeys divide three ways, and the division matters more than it looks:
+
+- The **base** carries storey 0, because that is where the ground, the footings and the plinth
+  already are. Bands then run from storey 1 to `floors - 1`, and the cap sits at `floors`.
+- A band is identical at every stage from `framed` upward. A tower must not grow new windows on
+  its lower floors as it is finished, so only the base and the cap change as a building rises.
+- The **cap** draws its eave at its own local base, because it is placed one storey above the
+  topmost band. Drawing the eave one storey up as well would raise the roof twice and leave a
+  storey of sky between the wall and its roof.
+
+The ground storey belongs to the base rather than to a band at `z = 0`. Splitting it the other way
+— no wall in the base, bands starting one storey up — leaves a one-storey building as a plot with
+its roof hovering twenty units above it, measured as a 40-pixel hole in the silhouette at every
+footprint. Most directories in a real project hold a single file, so that is the common case, and
+every function involved is individually correct.
+
+**Damage is split the same way**, which falls out of where it is drawn rather than being a saving:
+rubble and the crack belong to the ground storey, the hole in the roof to the cap. A tower of
+twenty storeys therefore carries no extra frames for being damaged, and the band is never baked
+in a damaged variant.
+
+**A container is drawn with the same parts and the same rule.** A directory holding source only
+below it gets a site sized to its district plate and stacked by `stackContainer`, the same
+function `placeBuilding` uses — one place the stacking arithmetic lives, so a container and a
+building of the same height line up exactly and a reader can compare them. What a container does
+not get is a lifecycle: it is drawn from the `completed` picture, because an aggregate of what is
+below it is by definition finished and showing it half-built would invent a construction history
+for something nobody built. It has no damaged variant for the same reason.
+
+Its footprint is a district plate (measured at 262 units here), which is wider than any building
+cel, so `nearestSize` maps it to one of the four baked footprints. A fifth bake for one site per
+district is not worth the whole building bake; nearest rather than clamped-largest, because
+understating a container slightly is the safer error when its label and plate already say how big
+the neighbourhood is.
+
+**Two rules decide what is on screen**, and both live in `ui/src/visibility.ts` so they can be
+tested against the cases that matter rather than through a renderer:
+
+- `visibleAt` draws a building while `depth <= filter`, and a container while
+  `depth <= filter < minChildDepth`. The second half is a correction: with a plain rule,
+  `internal` and its ten packages drew together at filter 2 — a tower standing on the plate of
+  the things it stood for, so the map showed the same bytes twice.
+- `labelVisible(id, hovered, focused)` shows a label when its object is hovered *or* focused, and
+  hides it otherwise. Nothing is named at rest. Showing the top level outright was tried and
+  abandoned — measured on one real town it left thirteen boards on screen at once, a wall of type
+  whose skyline was the thing obscured. `focused` is a single id rather than a flag per label, so
+  two labels can never be pinned at once; focusing a new object is what puts the old light out.
+  A hover is deliberately weaker than a focus, so pointing at a second building to read its name
+  does not throw away the one that was clicked.
 
 ## Composition rules
 
@@ -250,6 +314,12 @@ cannot draw fails the Go build rather than rendering blank
 - **Depth bands.** `DEPTH.ground = -100000`, `DEPTH.label = 90000`
   (`ui/src/scene.ts:67`). Standing objects are ordered among themselves by the screen `y` of the
   point they stand on.
+- **Hit targets are not sprites.** A site's zone is drawn at the screen `y` of the corner it
+  stands on, which orders a near building over a far one — and puts a worker standing on that
+  building *underneath* its zone, so Phaser's `topOnly` hit test hands the pointer to the
+  building. A figure's target is therefore its own object at `HIT_DEPTH = 80000`
+  (`ui/src/workers.ts`), above every site zone and below every label. Measured on a live worker:
+  its building's zone covered the point and the sprite was absent from the hit list entirely.
 - **Ground regions** are written in order — field, then each district plate, then each place's
   own surface — so later regions cover earlier ones rather than fighting them
   (`ui/src/scene.ts:130-135`).
@@ -262,6 +332,14 @@ cannot draw fails the Go build rather than rendering blank
   cel up-and-left of its own plot, with its click zone following. The comment records that this
   is exactly what happened and was caught by checking Phaser's real behaviour rather than by
   reading the arithmetic.
+- **Every cel goes through one anchor rule, and `stackContainer` is not exempt.** The same bug
+  recurred there: `placeBuilding`/`placeContainer` added each storey's cel without
+  `.setOrigin(0, 0)`, so every tower was drawn half a cel up-and-left of its own plot — measured
+  at 36 px left and 48 up on a 73x85 cel, and 56/54 on a 113x111 one, so the displacement scaled
+  with the footprint and read as a building standing outside its section. Verified by comparing
+  each cel's rendered top-left against `project(s.x, s.y) - (f.ox, f.oy)`: worst error is now 0
+  at every detail depth. A rule stated in one method and not applied in its twin is exactly how
+  this survives review.
 - **Shadow under building, building above it.** The shadow sprite is placed first at
   `depth = near.y - 1`, the building at `depth = near.y`, where `near` is the grounded corner
   nearest the camera, `project(s.x + s.w, s.y + s.h)` (`ui/src/scene.ts:377-387`). A building's

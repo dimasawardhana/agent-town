@@ -311,6 +311,23 @@
       }
 
 
+
+      /* The detail control. It sits above the legend because it changes what
+         the map contains, and a reader who cannot see their building needs the
+         reason before they need the explanation of the Depot. */
+      .detail-control { padding: 12px 14px; }
+      .detail-control label {
+        display: block;
+        font-size: 11px;
+        color: var(--text);
+        margin-bottom: 7px;
+      }
+      .detail-control input[type="range"] {
+        width: 100%;
+        margin: 0;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
       .crew { padding: 12px 0; }
       .crew h2 { margin: 0 14px 8px; }
       .crew ul { list-style: none; margin: 0; padding: 0; }
@@ -394,7 +411,7 @@
         .crew .at { text-align: right; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-JBERuSiY.js"></script>
+    <script type="module" crossorigin src="/assets/index-Bg2zF2Fd.js"></script>
   </head>
   <body>
     <div id="root"></div>

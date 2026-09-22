@@ -23,7 +23,10 @@ import Phaser from "phaser";
 import { P, paletteSet } from "./palette";
 import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
-import { STAGE_ORDER, boxFor, buildBuilding, buildShadow, skinFor, type Stage } from "./building";
+import {
+  STAGE_ORDER, bandBox, boxFor, buildBase, buildBand, buildCap, buildShadow, capBox, skinFor,
+  type Stage,
+} from "./building";
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, type Edge, type Ground } from "./terrain";
 
@@ -56,25 +59,6 @@ const SIZES: readonly { side: number; files: number }[] = [
   { side: 100, files: 30 },
 ];
 
-/**
- * Frame name for a building at a footprint, stage, skin variant and damage
- * state.
- *
- * Both skin variants and both damage states exist in the atlas, and the scene
- * picks with `skinVariant(path)` and the building's `damaged` flag. Damage is
- * part of the frame name rather than a separate overlay because the damage
- * drawing depends on how far the building got — there is no wall to crack until
- * the building has walls.
- */
-export function buildingFrame(
-  side: number,
-  stage: Stage,
-  variant: 0 | 1,
-  damaged = false,
-): string {
-  return `b${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
-}
-
 /** Frame name for the ground shadow a building of this footprint casts. */
 export function shadowFrame(side: number): string {
   return `s${side}`;
@@ -94,6 +78,29 @@ export function groundEdgeFrame(kind: Ground, edge: Edge, variant: number): stri
   return `ge:${kind}:${edge}:${variant}`;
 }
 
+
+/**
+ * Frame name for one storey of wall, which is the part that repeats.
+ *
+ * `stage` is in the key because the band's picture does depend on it — a band
+ * drawn before the walls go up shows framing — but it is the same picture at
+ * every stage from `framed` upward, so a tower cannot grow new windows as it is
+ * finished.
+ */
+export function bandFrame(side: number, stage: Stage, variant: 0 | 1): string {
+  return `band:${side}:${stage}:${variant}`;
+}
+
+/** Frame name for a building's base: the ground works, the ground storey's
+ *  shell, the door and plinth, and the damage visible from the ground. */
+export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean): string {
+  return `base:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+}
+
+/** Frame name for a building's cap: roof, windows, door, trim, chimney, damage. */
+export function capFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean): string {
+  return `cap:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+}
 
 /**
  * Frame name for a prop, at a variation.
@@ -133,30 +140,55 @@ export function bake(scene: Phaser.Scene): Atlas {
 
   // --- Buildings ---------------------------------------------------------
   //
+  // Baked as three parts rather than one cel per complete building, because a
+  // building's height now varies with its byte size and one cel per height would
+  // be unbounded: a 20-storey tower on a 100-unit footprint needs a 113x427 cel,
+  // and the atlas already holds well over a hundred building cels. The parts are
+  // split by how they *tile* — base and cap occur once, the band repeats — so a
+  // tower is three cels plus N-1 stamps of the middle one.
+  //
   // Both skin variants are baked for every footprint, stage and damage state. A
   // building's variant is a hash of its own path (`skinVariant`), so which one a
   // project needs is not known until its town arrives — and baking on demand
   // would put a canvas upload in the middle of a live redraw.
   //
   // Damaged is baked alongside intact rather than applied at runtime because
-  // damage is *drawn over* whatever has been built: it knows what stage it is
-  // covering, so a staked plot gains no crack in a wall that does not exist. A
-  // runtime tint could not do that, and an atlas lookup can.
+  // damage is *drawn over* whatever has been built: it knows how far the building
+  // got, so a staked plot gains no crack in a wall that does not exist.
   for (const { side, files } of SIZES) {
     for (const variant of [0, 1] as const) {
       // A path whose hash lands on `variant`. `skinFor` reads only the parity,
       // so any such path yields the same skin; these two are the shortest that
       // do, which keeps the bake free of made-up filenames that look real.
       const path = variant === 0 ? "b" : "a";
+      const skin = skinFor(files, path);
+      const baseBox = boxFor(side, skin, 1);
+      const storeyBox = bandBox(side);
+      const topBox = capBox(side, skin);
       for (const stage of STAGE_ORDER) {
+        cels.push({
+          key: bandFrame(side, stage, variant),
+          pix: buildBand(side, skin, stage),
+          ox: storeyBox.ox,
+          oy: storeyBox.oy,
+        });
+        // Damage is baked for the base and the cap but NOT the band, and that
+        // falls out of where damage is drawn rather than being a saving: rubble
+        // and the crack belong to the ground storey, the hole to the roof, and
+        // both of those are single cels. A tower of twenty storeys therefore
+        // carries no extra frames for being damaged.
         for (const damaged of [false, true]) {
-          const pix = buildBuilding(side, files, path, stage, damaged);
-          const box = boxFor(side, skinFor(files, path));
           cels.push({
-            key: buildingFrame(side, stage, variant, damaged),
-            pix,
-            ox: box.ox,
-            oy: box.oy,
+            key: baseFrame(side, stage, variant, damaged),
+            pix: buildBase(side, files, path, stage, damaged),
+            ox: baseBox.ox,
+            oy: baseBox.oy,
+          });
+          cels.push({
+            key: capFrame(side, stage, variant, damaged),
+            pix: buildCap(side, skin, stage, damaged),
+            ox: topBox.ox,
+            oy: topBox.oy,
           });
         }
       }
@@ -164,9 +196,9 @@ export function bake(scene: Phaser.Scene): Atlas {
     // The ground shadow, baked once per footprint. A building without a contact
     // shadow reads as pasted onto the map rather than standing on it — which is
     // visible precisely because the workers do have one.
-    const shadow = buildShadow(side, files, "b");
-    const box = boxFor(side, skinFor(files, "b"));
-    cels.push({ key: shadowFrame(side), pix: shadow, ox: box.ox, oy: box.oy });
+    const shadowSkin = skinFor(files, "b");
+    const shadowBox = boxFor(side, shadowSkin, 1);
+    cels.push({ key: shadowFrame(side), pix: buildShadow(side, files, "b"), ox: shadowBox.ox, oy: shadowBox.oy });
   }
 
   // --- Ground ------------------------------------------------------------
