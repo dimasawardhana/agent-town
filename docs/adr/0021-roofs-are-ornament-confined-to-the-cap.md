@@ -82,25 +82,37 @@ Base and cap are `4 sizes × 8 stages × 2 damaged = 64` per axis value.
 
 | | band | base | cap | shared | total |
 |---|---|---|---|---|---|
-| **Today** (2 skins everywhere) | 64 | 128 | 128 | 308 | **628** |
+| **Before** (2 skins everywhere) | 64 | 128 | 128 | 308 | **628** |
 | **N=4 roofs, skins kept on base** | 64 | 128 | 256 | 308 | **756** |
 | **N=6** | 64 | 128 | 384 | 308 | **884** |
-| **N=10** (the ceiling) | 64 | 128 | 640 | 308 | **1140** |
+| **N=10** | 64 | 128 | 640 | 308 | **1140** |
+| **N=14** (the ceiling) | 64 | 128 | 896 | 308 | **1396** |
 
-The atlas is `nextPow2(16 × cellW) × nextPow2(ceil(cels/16) × cellH)`. With today's
-tallest cel at 113 px, height reaches 8192 at **72 rows = 1152 cels**, and beyond
-that it doubles to 16384. So **ten roofs fit; eleven do not.**
+The atlas is `nextPow2(16 × cellW) × nextPow2(ceil(cels/16) × cellH)`.
+
+**The ceiling moved after this ADR was written, upward.** It was first costed at a
+tallest cel of 113 px, which put 8192 at 72 rows = 1152 cels, and the ten-roof row
+above was the ceiling at the time. Separating each cel to the height it actually
+drawn — the base needed no roof headroom, and the ground shadow none at all —
+lowered the tallest cel to **91 px** and the cell height to **93**, which raises the
+ceiling to **88 rows = 1408 cels**. So the original cost is conservative:
+**fourteen roofs fit, fifteen do not**, where ten was the figure when this was
+written. The five kinds that shipped occupy **820 cels** at a sheet of 2048×8192.
 
 The alternative — letting a roof kind multiply with the skin axis rather than
 replacing it on the cap — gives `4 × 2 × N × 8 × 2` cap cels. At N=4 that is
-**1012 cels against 756**, and it reaches the ceiling at N=6 where replacing still
-has room for ten. Rule 3 exists to prevent exactly that: it buys the same four
-looks for 256 cels instead of 512, which is the difference between a feature that
-can grow to ten roofs and one that is out of room at six.
+**1012 cels against 756**, and against the same 1408 ceiling it runs out at eight
+where replacing still has room for fourteen. Rule 3 exists to prevent exactly that:
+it buys the same four looks for 256 cels instead of 512, which is the difference
+between a feature that can grow to fourteen roofs and one that is out of room at
+seven.
 
 A roof taller than today's (a spire) also raises `cellH` for *every* cel in the
-sheet, costing roughly 110 cels of ceiling per 12 px of height. A spired kind
-therefore buys its look with headroom.
+sheet. At the current cell height that costs roughly **160 cels of ceiling per
+12 px of height** — more than the ~110 it cost at 113 px, because a shorter cell
+means each extra row is a larger share of what is left. A spired kind therefore
+buys its look with headroom, and buys noticeably more of it than this ADR
+originally assumed.
 
 ## Consequences
 

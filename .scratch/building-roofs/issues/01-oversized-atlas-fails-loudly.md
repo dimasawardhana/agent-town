@@ -26,13 +26,23 @@ only way to prove it would be a 60MB bake.
 The guard is checked **before** the canvas is allocated, so an oversized bake is
 an exception rather than a blank texture.
 
-Measured, for the record:
+Measured, for the record. The refusal test builds its own synthetic 113×111 cels
+rather than reading the real atlas, so the guard is pinned independently of
+whatever art happens to ship:
 
-| cels | rows | sheet |
-|---|---|---|
-| 628 (today) | 40 | 2048x8192 |
-| 1152 (the ceiling) | 72 | 2048x8192 |
-| 1200 | 75 | 2048x16384 — refused |
+| cels | cell | rows | sheet |
+|---|---|---|---|
+| 628 | 115×113 (synthetic) | 40 | 2048×8192 |
+| 1152 | 115×113 (synthetic) | 72 | 2048×8192 |
+| 1200 | 115×113 (synthetic) | 75 | 2048×16384 — refused |
+
+The real atlas is now 820 cels at a cell of 115×93, because tickets 03–07 gave each
+part a box sized to what it draws and the roof axis replaced the skin on the cap.
+Those changes move the real figures but **not the table above**, which is why the
+test is written against synthetic cels: at the current cell height 1200 real cels
+would *not* be refused (it fits 2048×8192), so a test built on the live atlas would
+silently stop testing the guard. The ceiling at 115×93 is 1408 cels, and 1600 is
+the first count refused.
 
 The message names the dimensions, which limit broke, the cel count and the cell
 pitch, because those are the two numbers a caller can act on ("bake fewer things"

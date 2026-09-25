@@ -31,7 +31,7 @@ import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight, towerTop } from "./stack";
 import { type Pix } from "./surface";
 import {
-  buildRoof, buildRoofDamage, buildRoofStack, buildRoofTrim, roofFor, roofHeight, type RoofKind,
+  buildRoof, buildRoofDamage, buildRoofStack, buildRoofTrim, hashPath, roofFor, roofHeight, type RoofKind,
 } from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
@@ -169,9 +169,7 @@ export interface BuildingSkin {
  * (ADR-0012).
  */
 export function skinVariant(path: string): 0 | 1 {
-  let h = 0;
-  for (let i = 0; i < path.length; i++) h = (h * 31 + path.charCodeAt(i)) | 0;
-  return (Math.abs(h) % 2) as 0 | 1;
+  return (Math.abs(hashPath(path)) % 2) as 0 | 1;
 }
 
 /**

@@ -38,9 +38,15 @@ export type RoofKind = (typeof ROOF_KINDS)[number];
  * hashPath reduces a path to a signed 32-bit integer.
  *
  * The one hash behind every path-chosen appearance on a building, so the skin and
- * the roof cannot drift into two different ideas of "the same path". It is the
- * FNV-ish walk the skin variant has always used, kept bit-for-bit so that existing
- * towns keep their walls.
+ * the roof cannot drift into two different ideas of "the same path": `skinVariant`
+ * reads its low bit and `roofFor` reads the bits above it. It is the FNV-ish walk
+ * the skin variant has always used, kept bit-for-bit so that existing towns keep
+ * their walls.
+ *
+ * Shared rather than duplicated because the bit split is the whole point: if the
+ * two derived their own hash, "the roof varies independently of the wall" would be
+ * true only by luck, and a later edit to one walk would silently make the two
+ * agree — the one redundancy this axis exists to remove.
  */
 export function hashPath(path: string): number {
   let h = 0;
@@ -588,12 +594,34 @@ export function buildRoof(iso: IsoPix, kind: RoofKind, side: number, eave: numbe
   KITS[kind].draw(iso, side, eave);
 }
 
-/** buildRoofStack draws the kind's rooftop furniture at the roof's top. */
+/**
+ * buildRoofStack draws the kind's rooftop furniture, at the roof's top rather
+ * than at the eave.
+ *
+ * The z is added here rather than inside each kit so that a kind states only
+ * *what* its furniture is and never *where* it belongs. A chimney, a rooftop
+ * housing and a vent all sit on the roof's own surface, and letting a kit pick
+ * its z is how one of them ends up floating above a roof it is drawn to belong
+ * to.
+ */
 export function buildRoofStack(iso: IsoPix, kind: RoofKind, side: number, eave: number): void {
   KITS[kind].stack(iso, side, eave + roofHeight(kind, side));
 }
 
-/** buildRoofDamage draws the kind's own kind of roof damage at the roof's top. */
+/**
+ * buildRoofDamage draws the kind's own kind of roof damage, at the same z as the
+ * furniture.
+ *
+ * Per-kind because damage is a property of the roof, not of the building: a hole
+ * belongs in a slope and a collapsed bay belongs in a slab, and one shared damage
+ * mark would put a puncture in a flat roof — which reads as nothing at all,
+ * because a flat roof has no slope to interrupt.
+ *
+ * It is drawn *over* the roof rather than replacing it, which is what lets damage
+ * be additive on any stage: a half-built building that breaks stays half-built and
+ * gains damage, rather than swapping one picture for another and losing its
+ * history (ADR-0004).
+ */
 export function buildRoofDamage(iso: IsoPix, kind: RoofKind, side: number, eave: number): void {
   KITS[kind].damage(iso, side, eave + roofHeight(kind, side));
 }
