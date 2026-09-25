@@ -417,6 +417,151 @@ export class IsoPix {
   }
 
   /**
+   * ridgeProfile roofs a footprint with a surface whose height varies along the
+   * **ridge axis**, rather than across it the way `gable` does.
+   *
+   * That one difference is what makes a sawtooth expressible. A gable's profile is
+   * a triangle across the span: every point at the same distance from the ridge is
+   * at the same height, which is what "pitched roof" means. A sawtooth is the
+   * opposite — its height depends on where you are *along* the ridge — so it needs
+   * a primitive that sweeps a profile down the ridge's length instead of out from
+   * it, and every tooth is one period of that profile.
+   *
+   * `profile` takes the world offset along the ridge, 0..`w` (or 0..`h` after a
+   * turn), and returns the rise above `zEave`. Where the profile **falls** the
+   * sweep fills a vertical face from the lower height up to the higher one, which
+   * is both what makes the surface solid and what gives a sawtooth its glazed
+   * flank — the drop between two teeth is a real plane of the roof, not a gap.
+   *
+   * The ridge axis is chosen by the same `ridgeRunsAlongX` test `gable` uses, so
+   * the serration stays across the viewer's line of sight as the town turns, and
+   * both roof kinds turn with the world rather than with the camera.
+   */
+  ridgeProfile(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    zEave: number,
+    profile: (along: number) => number,
+    shade: { surface: Ink; face: Ink; edge?: Ink },
+  ): this {
+    const alongX = this.ridgeRunsAlongX();
+    const from = alongX ? x : y;
+    const to = alongX ? x + w : y + h;
+    const acrossFrom = alongX ? y : x;
+    const acrossTo = alongX ? y + h : x + w;
+
+    /** at builds the world point at an along-ridge offset and an across offset. */
+    const at = (r: number, a: number): { wx: number; wy: number } =>
+      alongX ? { wx: r, wy: a } : { wx: a, wy: r };
+
+    // Which end of `across` is farther from the camera, so the rows can be walked
+    // far-to-near. Nearer rows are drawn last and take the pixels where two rows
+    // overlap in screen space, which is what keeps a step's top and the wall below
+    // it a single clean edge.
+    const fromIsFar =
+      this.depth(alongX ? x : acrossFrom, alongX ? acrossFrom : y) <
+      this.depth(alongX ? x : acrossTo, alongX ? acrossTo : y);
+    const farEnd = fromIsFar ? acrossFrom : acrossTo;
+    const nearEnd = fromIsFar ? acrossTo : acrossFrom;
+    const step = nearEnd > farEnd ? 1 : -1;
+
+    for (let a = farEnd; step > 0 ? a <= nearEnd : a >= nearEnd; a += step) {
+      let prev = 0;
+      for (let r = from; r <= to; r++) {
+        const rise = profile(r - from);
+        const p = at(r, a);
+        // Filling the span between this step and the previous one is what makes
+        // the surface **solid**, and it is not optional here the way it is in
+        // `gable`. A gable's profile varies *across* the ridge, so consecutive
+        // steps along it differ by a quarter pixel and plotting one point each
+        // happens to leave no gaps. A swept profile varies *along* the ridge with a
+        // steep rise, so consecutive steps can be several pixels apart vertically
+        // and plotting points alone leaves the roof as a sparse lattice — which is
+        // exactly what the first version of this drew, and it read as a wireframe
+        // rather than as a roof.
+        //
+        // Which colour the span takes says which plane it is: a rise is the
+        // surface you are looking down at, and a fall is the near-vertical flank
+        // between two teeth. That is what gives a sawtooth its glazing without the
+        // flank being drawn as a separate shape that could come adrift from it.
+        if (r > from) {
+          this.column(p.wx, p.wy, zEave + Math.min(prev, rise), zEave + Math.max(prev, rise),
+            rise >= prev ? shade.surface : shade.face);
+        }
+        this.plot(p.wx, p.wy, zEave + rise, shade.surface);
+        prev = rise;
+      }
+    }
+    return this;
+  }
+
+  /**
+   * dome roofs a footprint with a surface whose height depends on **distance from
+   * the centre**, falling to the eave at the perimeter.
+   *
+   * The third and last way a roof can vary, after `gable` (height varies across the
+   * ridge) and `ridgeProfile` (height varies along it). A dome varies in *both*
+   * directions at once, which is exactly why it cannot be expressed with either:
+   * both of those sweep a one-dimensional profile, and a dome has no profile
+   * direction — every radius is the same fall.
+   *
+   * `fall` takes the normalised distance from the centre, 0 at the apex and 1 at
+   * the perimeter, and returns the rise above `zEave`. Passing it in rather than
+   * hardcoding a hemisphere lets a kind choose its own curvature, which matters
+   * because a true circle at these sizes reads as a bead rather than as a roof.
+   *
+   * Rows are walked far-to-near in world y, and within a row the rise is not
+   * constant — so like `ridgeProfile` this must fill between consecutive steps or
+   * the surface comes out as a lattice. It does both: the span between neighbours
+   * inside a row, and nothing between rows, because adjacent rows differ by a
+   * quarter pixel once the fall is normalised.
+   */
+  dome(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    zEave: number,
+    fall: (t: number) => number,
+    shade: { top: Ink; near: Ink; far: Ink; eave: Ink; edge?: Ink },
+  ): this {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    // The half-extent along each axis, so a footprint that is not square still
+    // domes to its own perimeter rather than bulging past one edge.
+    const rx = Math.max(1, w / 2);
+    const ry = Math.max(1, h / 2);
+
+    // Far rows first, so nearer rows overwrite them at the seam — the same
+    // far-to-near rule `box` and `ridgeProfile` follow.
+    for (let wy = y; wy <= y + h; wy++) {
+      let prev = -1;
+      for (let wx = x; wx <= x + w; wx++) {
+        // Normalised radial distance: 0 at the centre, 1 at the perimeter. The
+        // clamp keeps the corner samples — which are further than 1 by definition on
+        // a square footprint — from pushing the surface below the eave.
+        const dx = (wx - cx) / rx;
+        const dy = (wy - cy) / ry;
+        const t = Math.min(1, Math.sqrt(dx * dx + dy * dy));
+        const rise = fall(t);
+        // Which band of the dome this is, by height and by depth. Naming the plane
+        // is what gives the dome its shading, and it is derived from the height
+        // rather than from the position so the three bands always meet cleanly.
+        const ink = rise >= fall(0) * 0.66 ? shade.top : wy < cy ? shade.far : shade.near;
+        this.plot(wx, wy, zEave + rise, ink);
+        if (prev >= 0) {
+          this.column(wx, wy, zEave + Math.min(prev, rise), zEave + Math.max(prev, rise),
+            rise >= prev ? ink : shade.eave);
+        }
+        prev = rise;
+      }
+    }
+    return this;
+  }
+
+  /**
    * ridgeRunsAlongX says whether the roof's ridge follows world x at this turn.
    *
    * The ridge reads as a roof because it lies across the viewer's line of sight.

@@ -18,3 +18,4 @@ ui/node_modules/
 ui/ui-art.test.mjs
 ui/ui-visibility.test.mjs
 ui/ui-light.test.mjs
+ui/ui-atlas.test.mjs

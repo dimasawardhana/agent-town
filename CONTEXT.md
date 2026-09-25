@@ -30,6 +30,16 @@ A building's height, derived from the total source bytes in it, one storey per b
 A directory whose mass is machine-written is drawn one storey high regardless of its size. The embedded UI bundle is 1.68 MB in a directory otherwise holding a few kilobytes, and a skyline that ranked compiled output above hand-written code would be a map of the wrong thing. The test is the *shape* of the file, not its size: a build artefact is minified, so its first eight kilobytes contain no newline, while source of any length always breaks lines.
 _Avoid_: storeys, levels, height (when the ladder's ranks are meant), size
 
+**Roof**:
+The shape a building's top is drawn with, and the town's only purely ornamental channel. A roof says nothing about the code: it is chosen by hashing the directory's path, so it is arbitrary by construction and stable across sessions. Its job is recognition rather than information — in a district of twenty identical boxes it is what lets a reader say "the one with the flat roof", which is how a map gets scanned.
+
+Roofs are a closed set — currently **pitched** and **flat**, in `ui/src/art/roof.ts` — one per building, and they are deliberately kept off every channel that carries a reading. A building's **height** still means bytes and its **footprint** still means file count, so a reader can trust that form means something; a roof is the one thing that means nothing, which is why it must not be mistaken for a claim. This is the honest form of the variety ADR-0004 §9 warns about: ornament is allowed, but it is confined and it is labelled as ornament by its own distinctness from the measured channels.
+
+A roof is confined to a building's **cap**, and it owns that cap completely: shape, material, height, rooftop furniture and the way it breaks. The wall material is a separate axis that reaches the base and the band only. That division is what makes the ornament legible as ornament — everything below the cap is measured, and the cap is the one part that is not. The roof is chosen from a *different bit* of the path hash than the wall material, so the two vary independently rather than restating each other.
+
+Nothing about a roof appears in the detail panel, and nothing about it is sent by the daemon: it is chosen in the browser from the path the browser already has, exactly as the wall material is.
+_Avoid_: variant, type, kind, style, species, building type
+
 **Container**:
 A directory that holds source *below* it but none of its own. It is not a building — it has no rank and cannot be damaged, because it is an aggregate of what is under it rather than something anyone worked on — but it is drawn as a tower so the shallowest view of a project still says what the project is made of. Without them, a Go module laid out as `internal/<pkg>/` has nothing at the top level at all: the mass is all one or two levels down, and once the detail filter hides those, one building stood for 7.9% of the source.
 

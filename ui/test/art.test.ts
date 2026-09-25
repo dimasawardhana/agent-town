@@ -36,6 +36,8 @@ import { hex, sprite, Pix } from "../src/art/surface";
 import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
+import { bakedCels } from "../src/art/bake";
+import { ROOF_KINDS, roofFor, roofHeight } from "../src/art/roof";
 import {
   STAGE_ORDER,
   STAGE_ADDS,
@@ -47,6 +49,8 @@ import {
   bandBox,
   capBox,
   boxFor,
+  baseBox,
+  shadowBox,
   skinFor,
   skinVariant,
   buildShadow,
@@ -77,41 +81,21 @@ const SIDES: readonly [number, number][] = [
   [100, 30],
 ];
 
-/** Every cel the bake produces, as (name, pix) pairs. */
+/**
+ * Every cel the atlas holds, taken from the bake's own enumeration.
+ *
+ * It reads `bakedCels` rather than listing the cels here, because the previous
+ * hand-written list had drifted from the bake in two ways and both were silent:
+ * it composited a whole one-storey building rather than the parts that are baked,
+ * so its names matched no frame in the atlas, and it never built a band cel —
+ * the cel that tiles up every storey of every tower — so the most-repeated
+ * artwork in the town had no palette or transparency coverage at all.
+ *
+ * `the bake and its invariants enumerate the same cels` below asserts the two
+ * cannot diverge again.
+ */
 function everyCel(): { name: string; pix: Pix }[] {
-  const out: { name: string; pix: Pix }[] = [];
-
-  for (const tier of ["chief", "sub"] as const) {
-    const sheet = buildWorker(tier);
-    for (const [state, cels] of Object.entries(sheet.cels)) {
-      cels.forEach((pix, i) => out.push({ name: `worker/${tier}/${state}/${i}`, pix }));
-    }
-  }
-  for (const [side, files] of SIDES) {
-    for (const variant of [0, 1] as const) {
-      const path = variant === 0 ? "b" : "a";
-      for (const stage of STAGE_ORDER) {
-        for (const damaged of [false, true]) {
-          out.push({
-            name: `building/${side}/${stage}/${variant}${damaged ? "+dmg" : ""}`,
-            pix: buildBuilding(side, files, path, stage, damaged),
-          });
-        }
-      }
-    }
-    out.push({ name: `shadow/${side}`, pix: buildShadow(side, 5, "a") });
-  }
-  for (const kind of GROUND_KINDS) {
-    for (let v = 0; v < 4; v++) {
-      out.push({ name: `ground/${kind}/${v}`, pix: groundTile(kind, v) });
-      for (const edge of EDGES) {
-        out.push({ name: `edge/${kind}/${edge}/${v}`, pix: groundEdgeTile(kind, edge, v) });
-      }
-    }
-  }
-  for (const { kind, pix } of buildAllProps()) out.push({ name: `prop/${kind}`, pix });
-
-  return out;
+  return bakedCels().map((c) => ({ name: c.key, pix: c.pix }));
 }
 
 /** The set of (x, y) a shape draws. Used to compare two cels exactly. */
@@ -121,17 +105,166 @@ function ink(pix: Pix): string {
 
 // --- the whole-set invariants ----------------------------------------------
 
-test("every cel is non-empty", () => {
+test("the bake and its invariants enumerate the same cels", () => {
+  // The two used to be separate hand-written lists and they diverged, silently.
+  // This is the assertion that keeps them one list: the invariants below run over
+  // `bakedCels`, and `bake` is built from `bakedCels`, so a count mismatch can
+  // only mean someone reintroduced a second enumeration.
+  const cels = bakedCels();
+  // Derived from the tables the enumeration iterates, not from a remembered
+  // number, so adding an axis updates this by construction. The three building
+  // families are stated separately because they answer to *different* axes now:
+  // the band and the base are `2 skins x 8 stages`, and the cap is `N roofs x 8
+  // stages x 2 damage` and does not read the skin at all (ADR-0021 rule 3).
+  const workers = 2 * Object.values(FRAME_MS).reduce((n, f) => n + f.length, 0);
+  const stages = STAGE_ORDER.length;
+  const perFootprint =
+    stages * 2 /* band, per skin */ +
+    stages * 2 * 2 /* base, per skin and damage */ +
+    stages * ROOF_KINDS.length * 2 /* cap, per roof and damage */ +
+    1 /* shadow */;
+  const buildings = 4 * perFootprint;
+  const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
+  const props = ALL_PROP_KINDS.length * 2;
+  assert.equal(
+    cels.length,
+    workers + buildings + ground + props,
+    `bakedCels produced ${cels.length}, which does not match the tables it iterates`,
+  );
+  // The cap family must carry a cel for **every** roof kind, so a kind added to
+  // the set but never given a drawing fails here rather than rendering as a
+  // missing frame at runtime.
+  for (const roof of ROOF_KINDS) {
+    const n = cels.filter((c) => c.key.startsWith(`cap:`) && c.key.split(":")[2] === roof).length;
+    assert.equal(n, 4 * stages * 2, `roof "${roof}" has ${n} cap cels, not one per footprint, stage and damage`);
+  }
+  // Every cel carries a distinct frame key, or two cels would fight over one
+  // atlas frame and the later would win silently.
+  assert.equal(new Set(cels.map((c) => c.key)).size, cels.length, "two cels share a frame key");
+  // And every key is a frame the layout can address, not an empty string.
+  for (const c of cels) assert.ok(c.key.length > 0, "a cel has no frame key");
+});
+
+test("the base is never empty, at any stage", () => {
+  // A plot always shows *something*: a staked plot is its stakes, a finished one
+  // its ground storey. Every other part may be blank before it is built; the base
+  // may not, because a site with nothing on it is indistinguishable from a site
+  // that failed to draw.
   for (const { name, pix } of everyCel()) {
+    if (!name.startsWith("base:")) continue;
     assert.ok(!pix.empty(), `${name} draws nothing`);
   }
 });
 
-test("every cel draws only palette colours", () => {
+test("only the band and the cap may be blank, and only before their feature exists", () => {
+  // This is the invariant the old hand-written enumeration could not state, and
+  // the reason it is worth having is that it is *not* "every cel is non-empty" —
+  // that is false, and was only ever true because the old list composited a whole
+  // building into one cel instead of testing the parts. Measured, the parts are
+  // blank in exactly the places the construction ladder says they must be:
+  //
+  //   band:16 blanks = 4 sizes x 2 variants x 2 stages (planned, foundation)
+  //   cap: 64 blanks = 4 sizes x 2 variants x 4 stages (planned .. walled) x 2 damage
+  //   80 of 628 cels, and not one of them is drawn on by a stage that has the
+  //   feature: `storeyShell` draws walls from `framed`, `roof` from `roofed`.
+  //
+  // A blank cel is load-bearing rather than waste, which is why this asserts the
+  // blanks are *expected* instead of asserting there are none: `stackKeys` builds
+  // a fixed base-bands-cap stack per floor count and `restage` then swaps each
+  // child's frame by index, so the child count must not change with stage. The
+  // blank frames are what a planned tower's four invisible storeys point at.
+  //
+  // Stated as "only these two families, only before their feature": a third part
+  // that stopped drawing at some stage — the shape of bug that a green cel
+  // vanishing at `roofed` would be — fails here rather than hiding.
+  const familyOf = (name: string) => name.split(":")[0];
+  const stageOf = (name: string) => name.split(":")[2];
+  const blanks = new Set(["band", "cap"]);
   for (const { name, pix } of everyCel()) {
+    if (!pix.empty()) continue;
+    assert.ok(
+      blanks.has(familyOf(name)),
+      `${name} draws nothing, but only the band and the cap may be blank`,
+    );
+    const rank = stageRank(stageOf(name) as Stage);
+    // The feature's own rank: a band is framed from `framed`, a cap is roofed
+    // from `roofed`. Before that rank the part genuinely does not exist yet.
+    const born = familyOf(name) === "band" ? stageRank("framed") : stageRank("roofed");
+    assert.ok(
+      rank < born,
+      `${name} draws nothing at a stage that should have drawn it`,
+    );
+  }
+});
+
+test("a part that is drawn at one stage is drawn at every later stage", () => {
+  // The construction ladder is monotone: a building never loses what it has
+  // built. This is the invariant that catches a drawing which appears and then
+  // vanishes as the building progresses — a green cel that goes blank at
+  // `roofed`, say, which the per-stage assertions above would not notice.
+  const seen = new Map<string, boolean>();
+  for (const { name, pix } of everyCel()) {
+    // Key on the part and its variant, dropping the stage, so the stages of one
+    // part are compared against each other. Worker, ground and prop frames carry
+    // no stage and are skipped by the guard below.
+    const parts = name.split(":");
+    if (parts[0] !== "band" && parts[0] !== "base" && parts[0] !== "cap") continue;
+    const key = [parts[0], parts[1], parts[3], parts[4] ?? ""].join(":");
+    const drawn = !pix.empty();
+    const prev = seen.get(key);
+    if (prev === true) {
+      assert.ok(drawn, `${name} is blank, but the same part was already drawn at an earlier stage`);
+    }
+    seen.set(key, drawn);
+  }
+});
+
+/**
+ * The palette invariant, as a function so it can be run over any set of cels.
+ *
+ * Extracted because the proof below needs to run the *real* checker over a
+ * deliberately corrupted cel. A proof that reimplemented the check would only
+ * show that a copy of the check works, which is not the claim being made.
+ */
+function assertPaletteOnly(cels: readonly { name: string; pix: Pix }[]): void {
+  for (const { name, pix } of cels) {
     const stray = pix.colours().filter((c) => !ALLOWED.has(c.toLowerCase()));
     assert.deepEqual(stray, [], `${name} used colours outside the palette`);
   }
+}
+
+test("every cel draws only palette colours", () => {
+  assertPaletteOnly(everyCel());
+});
+
+test("the palette invariant would catch a band cel, which the old enumeration never checked", () => {
+  // The proof that the coverage is real rather than merely asserted. The old
+  // hand-written enumeration in this file composited a whole building per cel and
+  // **never built a band cel at all**, so the most-repeated artwork in the town —
+  // the storey that tiles up every tower — could have gone off-palette without
+  // the suite noticing.
+  //
+  // So: corrupt a band cel, run the real checker, and require it to complain. If
+  // someone reintroduces a second enumeration that skips bands, this test still
+  // passes and the one above fails on the corrupted-but-enumerated cel — the pair
+  // only both hold when the enumeration actually reaches bands.
+  const band = everyCel().find((c) => c.name.startsWith("band:"));
+  assert.ok(band, "the enumeration must contain at least one band cel");
+
+  // A copy via the compositor's own primitive, so the real cel is not damaged for
+  // the tests that follow. `blit` is what every part-placement in the art goes
+  // through, so this is the house way to duplicate a surface.
+  const corrupt = new Pix(band.pix.w, band.pix.h).blit(band.pix, 0, 0);
+  corrupt.set(0, 0, [255, 0, 255, 255]);
+
+  assert.throws(
+    () => assertPaletteOnly([{ name: band.name, pix: corrupt }]),
+    /outside the palette/,
+    "a magenta band pixel must be caught by the invariant",
+  );
+  // And the uncorrupted cel is genuinely clean, so the throw above is the
+  // corruption and not the band already being off-palette.
+  assertPaletteOnly([band]);
 });
 
 test("no cel has a semi-transparent pixel", () => {
@@ -152,15 +285,20 @@ test("no ordinary sprite has artwork on its cel border", () => {
   // caught the scaffold-and-spoil clipping: the margin was sized for the roof's
   // eaves and not for the poles standing beyond the footprint.
   //
-  // Ground tiles are the deliberate exception and are checked separately: they
-  // are drawn edge to edge and carry no outline at all.
+  // Ground tiles are the deliberate exception and are checked separately (see
+  // "a ground tile fills exactly its projected diamond"): they are drawn edge to
+  // edge and carry no outline at all. These prefixes must match the *frame keys*
+  // the bake registers, `g:` and `ge:`, not the descriptive names this test used
+  // to invent for itself — the old skip list said `ground/` and `edge/`, so once
+  // the enumeration moved to real frame keys the skip stopped matching and this
+  // invariant began silently demanding outlines from ground.
   const inkBytes = (() => {
     const h = P.ink.slice(1);
     return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)].join(",");
   })();
 
   for (const { name, pix } of everyCel()) {
-    if (name.startsWith("ground/") || name.startsWith("edge/")) continue;
+    if (name.startsWith("g:") || name.startsWith("ge:")) continue;
     const at = (x: number, y: number) => {
       const [r, g, b, a] = pix.at(x, y);
       return a === 0 ? "empty" : [r, g, b].join(",") === inkBytes ? "ink" : "art";
@@ -441,12 +579,104 @@ test("boxFor leaves headroom for everything drawn outside the footprint", () => 
   // Getting it wrong clipped the outline rather than failing.
   for (const [side, files] of SIDES) {
     for (const path of ["a", "b"]) {
-      const box = boxFor(side, skinFor(files, path));
+      const box = boxFor(side, roofFor(path));
       for (const stage of STAGE_ORDER) {
         const pix = buildBuilding(side, files, path, stage);
         assert.equal(pix.w, box.w, `${side}/${path}/${stage}: cel width disagrees with boxFor`);
         assert.equal(pix.h, box.h, `${side}/${path}/${stage}: cel height disagrees with boxFor`);
       }
+    }
+  }
+});
+
+test("every shipped cel is exactly the size of its own box", () => {
+  // The invariant that replaces the old "equals boxFor" check, and the reason the
+  // old one was not enough: the parts no longer share one box. A base cel is one
+  // storey, a cap cel is a roof, a shadow cel is a flat slab, and each is sized to
+  // what it draws. Checking them all against the whole-building box would now
+  // demand that a base reserve roof headroom it never uses — which is precisely
+  // the waste this removed, so a test asserting it would lock the waste back in.
+  //
+  // The equality is what makes placement safe: the scene places each cel by its
+  // own `ox`/`oy`, so a cel one pixel off its box would shift a whole district.
+  for (const [side, files] of SIDES) {
+    for (const path of ["a", "b"]) {
+      const skin = skinFor(files, path);
+      const foot = baseBox(side);
+      const storey = bandBox(side);
+      const top = capBox(side, roofFor(path));
+      const cast = shadowBox(side);
+      // The parts that carry a height must agree with their boxes exactly.
+      assert.equal(foot.h, storey.h, `${side}: a base cel and a band cel are both one storey and must match`);
+      for (const stage of STAGE_ORDER) {
+        for (const damaged of [false, true]) {
+          const b = buildBase(side, files, path, stage, damaged);
+          assert.equal(b.w, foot.w, `${side}/${path}/${stage}/${damaged}: base width disagrees with baseBox`);
+          assert.equal(b.h, foot.h, `${side}/${path}/${stage}/${damaged}: base height disagrees with baseBox`);
+          const c = buildCap(side, roofFor(path), stage, damaged);
+          assert.equal(c.w, top.w, `${side}/${path}/${stage}/${damaged}: cap width disagrees with capBox`);
+          assert.equal(c.h, top.h, `${side}/${path}/${stage}/${damaged}: cap height disagrees with capBox`);
+        }
+        const band = buildBand(side, skin, stage);
+        assert.equal(band.w, storey.w, `${side}/${path}/${stage}: band width disagrees with bandBox`);
+        assert.equal(band.h, storey.h, `${side}/${path}/${stage}: band height disagrees with bandBox`);
+      }
+      const sh = buildShadow(side, files, path);
+      assert.equal(sh.w, cast.w, `${side}/${path}: shadow width disagrees with shadowBox`);
+      assert.equal(sh.h, cast.h, `${side}/${path}: shadow height disagrees with shadowBox`);
+    }
+  }
+});
+
+test("the base, band and shadow cels fill their own height", () => {
+  // The waste this ticket removed, stated as a property rather than as a
+  // remembered number. `boxFor` reserved `bandHeight(floors) + roofHeight + 6` of
+  // headroom for **every** part, so a base cel and a ground shadow both carried
+  // the roof's headroom to a roof neither draws. That was never visible: it made
+  // the tallest cel on the sheet taller than anything in it, and the tallest cel
+  // sets the atlas's cell height for *every* cel on the sheet — 628 cels paying
+  // for two cels of waste. Measured before: cell 115x113, ceiling 1152 cels.
+  // After: 115x85, ceiling 1536.
+  //
+  // Stated as "at its fullest the art reaches near the top of the cel" rather than
+  // as "the cel height equals X", so it defends the property and not the
+  // arithmetic that happens to produce it today.
+  const topGap = (pix: Pix): number => {
+    for (let y = 0; y < pix.h; y++) {
+      for (let x = 0; x < pix.w; x++) if (pix.isOpaque(x, y)) return y;
+    }
+    return pix.h; // nothing drawn
+  };
+  // The measured residue, and why it is not zero: the box floors the footprint's
+  // projected corners to integers before subtracting the height, so up to a few
+  // rows of slack remain above the art by construction. The outline pass also
+  // claims the row above the wall's top. Measured slack is 5 rows for the base and
+  // the band and 7 for the shadow, against 33 before this change.
+  const SLACK = 8;
+  for (const [side, files] of SIDES) {
+    for (const path of ["a", "b"]) {
+      const skin = skinFor(files, path);
+      // The fullest stage, not every stage: one cel size serves the whole ladder,
+      // so an early stage legitimately draws into the bottom of a cel sized for
+      // the finished building. A `planned` plot is stakes and bare ground, and no
+      // cel size could both fit those tightly and hold a finished wall.
+      let base = Infinity;
+      let band = Infinity;
+      for (const stage of STAGE_ORDER) {
+        for (const damaged of [false, true]) {
+          base = Math.min(base, topGap(buildBase(side, files, path, stage, damaged)));
+        }
+        band = Math.min(band, topGap(buildBand(side, skin, stage)));
+      }
+      assert.ok(base <= SLACK, `${side}/${path}: the base cel leaves ${base} blank rows above its fullest art`);
+      assert.ok(band <= SLACK, `${side}/${path}: the band cel leaves ${band} blank rows above its fullest art`);
+      const shadow = topGap(buildShadow(side, files, path));
+      assert.ok(shadow <= SLACK, `${side}/${path}: the shadow cel leaves ${shadow} blank rows above its art`);
+      // The cap is deliberately NOT asserted here. A roof's highest drawn pixel is
+      // its ridge at the footprint's centre, while the box is padded from the
+      // footprint's far *corner*; the ridge projects lower than that corner, so the
+      // cap's box is legitimately looser than the base's and shrinking it is not
+      // this ticket's business. Measuring it here would only assert the projection.
     }
   }
 });
@@ -967,7 +1197,7 @@ test("a single-storey building is solid: no hole between its plinth and its roof
   // because every function involved is individually correct.
   const side = 60, files = 5;
   const b = buildBase(side, files, "a", "completed");
-  const c = buildCap(side, skinFor(files, "a"), "completed", false);
+  const c = buildCap(side, roofFor("a"), "completed", false);
   const sheet = new Pix(b.w, b.h);
   sheet.blit(b, 0, 0);
   sheet.blit(c, 0, 0);
@@ -1001,8 +1231,8 @@ test("each added storey raises the tower by exactly one storey", () => {
   const skin = skinFor(files, path);
   const base = buildBase(side, files, path, stage);
   const band = buildBand(side, skin, stage);
-  const cap = buildCap(side, skin, stage, false);
-  const baseBox = boxFor(side, skin, 1), bandCel = bandBox(side), capCel = capBox(side, skin);
+  const cap = buildCap(side, roofFor(path), stage, false);
+  const footCel = baseBox(side), bandCel = bandBox(side), capCel = capBox(side, roofFor(path));
 
   // The ground line is a fixed row in every canvas, so a taller tower grows
   // upward from the same place. Sizing the canvas to the tower and anchoring the
@@ -1011,7 +1241,7 @@ test("each added storey raises the tower by exactly one storey", () => {
   const W = 400, CANVAS_H = 900, GROUND = 800, FX = 200;
   const tower = (floors: number): Pix => {
     const s = new Pix(W, CANVAS_H);
-    s.blit(base, Math.round(FX - baseBox.ox), Math.round(GROUND - 0 - baseBox.oy));
+    s.blit(base, Math.round(FX - footCel.ox), Math.round(GROUND - 0 - footCel.oy));
     for (let i = 1; i < floors; i++) {
       s.blit(band, Math.round(FX - bandCel.ox), Math.round(GROUND - i * STOREY - bandCel.oy));
     }
@@ -1133,5 +1363,190 @@ test("the light stays on the picture's left whatever the turn", () => {
     const lit = front[0] < front[1] && screenXs[front[0]] < screenXs[front[1]] ? front[0]
       : screenXs[front[0]] <= screenXs[front[1]] ? front[0] : front[1];
     assert.ok(front.includes(lit), `turn ${turn}: the lit face is not one of the visible pair`);
+  }
+});
+
+// --- the roof axis ---------------------------------------------------------
+//
+// The roof is deliberate ornament (ADR-0021): it is chosen by hashing the path
+// and says nothing about the code. These tests defend the two properties that
+// make it safe — that it is *reproducible*, and that it is *independent* of the
+// skin it replaced on the cap. The art invariants above already cover the roof
+// cels for palette, opacity and border ink, because they run over `bakedCels`.
+
+test("a roof is a pure function of the path", () => {
+  // Determinism is the whole reason a path hash is acceptable where `Math.random`
+  // is not (ADR-0012): the same repository must draw the same town forever, so a
+  // roof must not depend on iteration order, a clock or module state. Asserted by
+  // asking twice for the same set and requiring the same answer, which is what a
+  // hidden dependency would break.
+  const paths = ["ui/src", "internal/analyzer", "cmd/townd", "", "a", "docs/agents"];
+  const first = paths.map((p) => roofFor(p));
+  const second = paths.map((p) => roofFor(p));
+  assert.deepEqual(second, first, "roofFor returned a different roof the second time");
+  for (const r of first) {
+    assert.ok((ROOF_KINDS as readonly string[]).includes(r), `roofFor returned "${r}", not a kind`);
+  }
+});
+
+test("in a real town's paths, both roof kinds occur", () => {
+  // A roof nobody ever sees is ornament paid for and not delivered. Checked over
+  // paths shaped like a real repository's rather than made-up ones, and asserted
+  // as "both kinds appear" rather than as an exact split, because the exact split
+  // is a property of these particular strings and not of the hash.
+  const paths = [
+    "internal/analyzer", "internal/town", "internal/web", "cmd/townd",
+    "ui/src", "ui/src/art", "ui/test", "docs", "docs/adr", "scripts",
+  ].map((dir) => `${dir}/`);
+  const seen = new Set(paths.map((p) => roofFor(p)));
+  assert.equal(seen.size, ROOF_KINDS.length, `only ${[...seen].join(",")} occurred among ten real paths`);
+});
+
+test("the roof does not restate the skin", () => {
+  // The reason `roofFor` reads a *different bit* of the hash than `skinVariant`.
+  // Both reading the low bit would make the roof a function of the skin, so every
+  // warm-walled building would wear the same roof — and the two ornaments would
+  // carry the same information, which is exactly the redundancy the roof axis
+  // exists to remove. This asserts the independence directly, over enough paths
+  // that a coincidental agreement is not plausible.
+  const counts = new Map<string, number>();
+  for (let i = 0; i < 200; i++) {
+    const path = `dir/nested/path-${i}`;
+    // The joint outcome, so a correlation in either direction shows up.
+    const key = `${skinVariant(path)}/${roofFor(path)}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  assert.equal(
+    counts.size,
+    2 * ROOF_KINDS.length,
+    `only ${counts.size} of ${2 * ROOF_KINDS.length} (skin, roof) pairs occur over 200 paths, so the two axes are not independent`,
+  );
+});
+
+test("each roof kind draws a different picture, and the cap answers to the roof not the skin", () => {
+  // Two claims, and both matter:
+  //
+  //  - Every kind in the set must actually differ from every other, or the set
+  //    contains a duplicate and its cost is not buying a look. This is the check
+  //    that would catch a kind added to `ROOF_KINDS` but wired to another kind's
+  //    drawing.
+  //  - The cap must ignore the skin. That is the axis swap: before this change a
+  //    cap differed by skin variant; now it must not, or the skin is still costing
+  //    cap cels after being declared a wall-material axis.
+  for (const [side, files] of SIDES) {
+    for (const stage of STAGE_ORDER) {
+      for (const damaged of [false, true]) {
+        const seen = new Map<string, string>();
+        for (const roof of ROOF_KINDS) {
+          const pix = buildCap(side, roof, stage, damaged);
+          // Skipped where the cap is legitimately blank (before the roof exists),
+          // because two blanks are trivially equal and asserting they differ would
+          // be asserting the ladder is wrong.
+          if (pix.empty()) continue;
+          seen.set(roof, ink(pix));
+        }
+        const hashes = [...seen.values()];
+        assert.equal(
+          new Set(hashes).size,
+          hashes.length,
+          `${side}/${stage}/${damaged}: two roof kinds drew the same cap`,
+        );
+      }
+      // And the skin cannot reach the cap: two variants of the same building wear
+      // the same roof, at the same footprint, stage and damage.
+      const a = buildCap(side, roofFor("a"), stage, false);
+      const b = buildCap(side, roofFor("b"), stage, false);
+      if (roofFor("a") === roofFor("b")) {
+        assert.equal(ink(a), ink(b), `${side}/${stage}: the same roof drew differently`);
+      }
+    }
+  }
+});
+
+test("a roof kind's cel is tall enough for everything it draws", () => {
+  // The failure this prevents is a clipped chimney: a kind whose furniture or
+  // damage reaches above the height it declared would have that art cut off, and
+  // the outline pass would box the cut into a solid edge rather than leaving it
+  // visibly wrong. Checked per kind, because each states its own height.
+  for (const [side, files] of SIDES) {
+    for (const path of ["a", "b"]) {
+      for (const roof of ROOF_KINDS) {
+        const declared = roofHeight(roof, side);
+        const box = capBox(side, roof);
+        assert.equal(box.zTop, declared + 6, `${side}/${roof}: capBox and roofHeight disagree`);
+        for (const stage of STAGE_ORDER) {
+          for (const damaged of [false, true]) {
+            const pix = buildCap(side, roof, stage, damaged);
+            assert.equal(pix.w, box.w, `${side}/${roof}/${stage}/${damaged}: cap width disagrees with capBox`);
+            assert.equal(pix.h, box.h, `${side}/${roof}/${stage}/${damaged}: cap height disagrees with capBox`);
+            // Nothing may touch the cel's top row, or the outline has nowhere to
+            // write and that edge of the building loses its ink line.
+            for (let x = 0; x < pix.w; x++) {
+              assert.ok(
+                !pix.isOpaque(x, 0),
+                `${side}/${roof}/${stage}/${damaged}: artwork touches the cap cel's top row at x=${x}, so the kind's height is too small`,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+});
+
+test("no cap cel has a hole punched in its roof", () => {
+  // The invariant that caught a real defect in the sawtooth. A roof is a solid
+  // surface, so any transparent pixel fully enclosed by opaque ones is a hole —
+  // and the failure mode is nasty because it is *self-reinforcing*: `outline` inks
+  // around whatever boundary it finds, so a pocket left between two drawings gets
+  // a hard ink rim and reads as a deliberate window rather than as a bug.
+  //
+  // Measured, when the coping was still a fixed beam at the eave: the sawtooth had
+  // 21 interior holes on a 44-unit footprint rising to **218** on a 100-unit one,
+  // because its teeth descend to the wall and the beam ran inside the roof. The
+  // pitched and flat kinds were unaffected, which is exactly why a per-kind check
+  // was needed rather than a look at one of them.
+  //
+  // Flood-filled from the cel's border rather than tested per-pixel, so a pixel is
+  // only "enclosed" if it genuinely cannot reach the outside.
+  const holes = (pix: Pix): number => {
+    const outside = new Set<number>();
+    const stack: number[] = [];
+    const push = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= pix.w || y >= pix.h) return;
+      const k = y * pix.w + x;
+      if (outside.has(k) || pix.isOpaque(x, y)) return;
+      outside.add(k);
+      stack.push(x, y);
+    };
+    for (let x = 0; x < pix.w; x++) { push(x, 0); push(x, pix.h - 1); }
+    for (let y = 0; y < pix.h; y++) { push(0, y); push(pix.w - 1, y); }
+    while (stack.length) {
+      const y = stack.pop()!;
+      const x = stack.pop()!;
+      push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1);
+    }
+    let n = 0;
+    for (let y = 0; y < pix.h; y++) {
+      for (let x = 0; x < pix.w; x++) {
+        if (!pix.isOpaque(x, y) && !outside.has(y * pix.w + x)) n++;
+      }
+    }
+    return n;
+  };
+
+  for (const [side] of SIDES) {
+    for (const roof of ROOF_KINDS) {
+      for (const stage of STAGE_ORDER) {
+        for (const damaged of [false, true]) {
+          const pix = buildCap(side, roof, stage, damaged);
+          assert.equal(
+            holes(pix),
+            0,
+            `${side}/${roof}/${stage}/${damaged}: the roof has an enclosed hole`,
+          );
+        }
+      }
+    }
   }
 });

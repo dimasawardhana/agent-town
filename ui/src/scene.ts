@@ -26,6 +26,7 @@ import {
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
 import { type Stage, skinVariant } from "./art/building";
+import { roofFor, type RoofKind } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
@@ -1210,7 +1211,9 @@ export class TownScene extends Phaser.Scene {
    * for the same reason — damage is what happened *to* a building.
    *
    * The variant comes from the container's own path, so two containers side by
-   * side can differ in material the way two buildings do.
+   * side can differ in material the way two buildings do. The roof does too, which
+   * is deliberate rather than incidental (ADR-0021 rule 5): containers are most of
+   * the shallowest, most-read view, so that view is the one that gains the variety.
    */
   private containerKeys(s: Site): string[] {
     const floors = clampFloors(s.floors);
@@ -1221,8 +1224,24 @@ export class TownScene extends Phaser.Scene {
     const size = s.w;
     const keys = [baseFrame(size, "completed", v, false, this.atlasTurn)];
     for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v, this.atlasTurn));
-    keys.push(capFrame(size, "completed", v, false, this.atlasTurn));
+    keys.push(capFrame(size, this.roofKey(s), "completed", false, this.atlasTurn));
     return keys;
+  }
+
+  /**
+   * roofKey is which roof a site wears.
+   *
+   * Chosen here, in the browser, from the site's own path — the same place and the
+   * same way the skin variant is chosen. The daemon sends geometry (footprint,
+   * floors) and knows nothing about appearance, so there is no wire change and no
+   * daemon change behind the roof axis; the roof is a pure function of the path,
+   * which the browser already has.
+   *
+   * A site with no path hashes as the empty string, which yields one fixed kind
+   * rather than a random one — the same "no path, no variety" rule the skin uses.
+   */
+  private roofKey(s: Site): RoofKind {
+    return roofFor(s.path ?? "");
   }
 
   private baseKey(s: Site): string {
@@ -1234,7 +1253,7 @@ export class TownScene extends Phaser.Scene {
   }
 
   private capKey(s: Site): string {
-    return capFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path), this.atlasTurn);
+    return capFrame(s.w, this.roofKey(s), this.statusOf(s.path), this.damagedOf(s.path), this.atlasTurn);
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the

@@ -24,9 +24,10 @@ import { P, paletteSet } from "./palette";
 import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
 import {
-  STAGE_ORDER, bandBox, boxFor, buildBase, buildBand, buildCap, buildShadow, capBox, skinFor,
-  type Stage,
+  STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
+  skinFor, type Stage,
 } from "./building";
+import { ROOF_KINDS, roofFor, type RoofKind } from "./roof";
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, type Edge, type Ground } from "./terrain";
 
@@ -115,9 +116,18 @@ export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: b
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
-/** Frame name for a building's cap: roof, windows, door, trim, chimney, damage. */
-export function capFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean, turn = 0): string {
-  const base = `cap:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+/**
+ * Frame name for a building's cap: the roof, its rooftop furniture, the coping
+ * and the roof damage.
+ *
+ * It carries the **roof kind** where it used to carry the skin variant, and that
+ * is the axis swap stated in the key itself: two buildings whose paths differ only
+ * in the skin's bit now share one cap frame, and two whose paths differ in the
+ * roof's bit do not. A reader looking at frame names can therefore see which axis
+ * the cap answers to.
+ */
+export function capFrame(side: number, roof: RoofKind, stage: Stage, damaged: boolean, turn = 0): string {
+  const base = `cap:${side}:${roof}:${stage}${damaged ? ":dmg" : ""}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
@@ -134,16 +144,35 @@ export function propFrame(kind: string, variant = 0, turn = 0): string {
   return turn === 0 ? `p:${kind}:${variant}` : `p:${kind}:${variant}:t${turn}`;
 }
 
+/** A cel as the bake holds it before it is placed on the sheet. */
+export interface BakedCel {
+  /** The frame name it will be registered under. */
+  key: string;
+  pix: Pix;
+  /** Where its world origin sits inside it, for placement by the scene. */
+  ox: number;
+  oy: number;
+}
+
 /**
- * bake rasterises every sprite into one texture and returns the frame table.
+ * bakedCels enumerates every cel an orientation's atlas holds.
  *
- * The atlas is laid out in columns of a fixed width rather than packed, because
- * a packer would make the frame table depend on a packing result and the art
- * would move between builds — which would make the visual diff of any change
- * unreadable and break reproducibility for no gain at these sizes.
+ * This is the **single** list of what the bake produces, and `bake` itself is
+ * built from it rather than from a loop of its own. That matters more than it
+ * looks: the art's invariants (every cel is non-empty, on-palette, fully opaque,
+ * and keeps ink off its border) were previously checked against a *separate*
+ * hand-written enumeration in the test file, and the two had drifted. The test
+ * list composited a whole one-storey building rather than the parts that are
+ * baked, so its names corresponded to no frame in the atlas, and it never built
+ * a band cel at all — the one cel that tiles up every storey of every tower had
+ * no coverage. Both gaps were silent: a bad pixel in a band cel passed the
+ * entire suite.
+ *
+ * Two enumerations that must agree is the shape of bug that drifts again the
+ * next time an axis is added, so there is now one.
  */
-export function bake(scene: Phaser.Scene, turn = 0): Atlas {
-  const cels: { key: string; pix: Pix; ox: number; oy: number }[] = [];
+export function bakedCels(turn = 0): BakedCel[] {
+  const cels: BakedCel[] = [];
 
   // --- Workers -----------------------------------------------------------
   // The worker's origin is at its feet, so it stands on a building's ground
@@ -174,16 +203,27 @@ export function bake(scene: Phaser.Scene, turn = 0): Atlas {
   // Damaged is baked alongside intact rather than applied at runtime because
   // damage is *drawn over* whatever has been built: it knows how far the building
   // got, so a staked plot gains no crack in a wall that does not exist.
+  //
+  // **The roof axis replaces the skin on the cap rather than multiplying with it.**
+  // The base and the band are still `2 skins x 8 stages x 2 damage`, but the cap is
+  // `N roofs x 8 stages x 2 damage` and does not read the skin at all. That is the
+  // trade ADR-0021 measured: multiplying the two axes would need `2 x N` cap cels
+  // per footprint and reach the atlas ceiling at six roofs, while replacing needs
+  // `N` and has room for ten.
   for (const { side, files } of SIZES) {
+    // Each part's cel is sized to what that part draws. The base and the band are
+    // both one storey and therefore the same size; neither reserves the roof's
+    // headroom any more, which is what lowers the sheet's cell height — and the
+    // cell height applies to every cel on the sheet, not just the tall ones.
+    const footBox = baseBox(side);
+    const storeyBox = bandBox(side);
+
     for (const variant of [0, 1] as const) {
       // A path whose hash lands on `variant`. `skinFor` reads only the parity,
       // so any such path yields the same skin; these two are the shortest that
       // do, which keeps the bake free of made-up filenames that look real.
       const path = variant === 0 ? "b" : "a";
       const skin = skinFor(files, path);
-      const baseBox = boxFor(side, skin, 1);
-      const storeyBox = bandBox(side);
-      const topBox = capBox(side, skin);
       for (const stage of STAGE_ORDER) {
         cels.push({
           key: bandFrame(side, stage, variant, turn),
@@ -200,24 +240,35 @@ export function bake(scene: Phaser.Scene, turn = 0): Atlas {
           cels.push({
             key: baseFrame(side, stage, variant, damaged, turn),
             pix: buildBase(side, files, path, stage, damaged, turn),
-            ox: baseBox.ox,
-            oy: baseBox.oy,
+            ox: footBox.ox,
+            oy: footBox.oy,
           });
+        }
+      }
+    }
+
+    // The caps, once per roof kind. Outside the skin loop because a cap no longer
+    // depends on the skin, and inside the footprint loop because a roof's height
+    // and pitch scale with the building.
+    for (const roof of ROOF_KINDS) {
+      const topBox = capBox(side, roof);
+      for (const stage of STAGE_ORDER) {
+        for (const damaged of [false, true]) {
           cels.push({
-            key: capFrame(side, stage, variant, damaged, turn),
-            pix: buildCap(side, skin, stage, damaged, turn),
+            key: capFrame(side, roof, stage, damaged, turn),
+            pix: buildCap(side, roof, stage, damaged, turn),
             ox: topBox.ox,
             oy: topBox.oy,
           });
         }
       }
     }
+
     // The ground shadow, baked once per footprint. A building without a contact
     // shadow reads as pasted onto the map rather than standing on it — which is
     // visible precisely because the workers do have one.
-    const shadowSkin = skinFor(files, "b");
-    const shadowBox = boxFor(side, shadowSkin, 1);
-    cels.push({ key: shadowFrame(side, turn), pix: buildShadow(side, files, "b", turn), ox: shadowBox.ox, oy: shadowBox.oy });
+    const footShadowBox = shadowBox(side);
+    cels.push({ key: shadowFrame(side, turn), pix: buildShadow(side, files, "b", turn), ox: footShadowBox.ox, oy: footShadowBox.oy });
   }
 
   // --- Ground ------------------------------------------------------------
@@ -259,9 +310,20 @@ export function bake(scene: Phaser.Scene, turn = 0): Atlas {
     }
   }
 
-  return rasterise(scene, cels, atlasKey(turn));
+  return cels;
 }
 
+/**
+ * bake rasterises every sprite into one texture and returns the frame table.
+ *
+ * The atlas is laid out in columns of a fixed width rather than packed, because
+ * a packer would make the frame table depend on a packing result and the art
+ * would move between builds — which would make the visual diff of any change
+ * unreadable and break reproducibility for no gain at these sizes.
+ */
+export function bake(scene: Phaser.Scene, turn = 0): Atlas {
+  return rasterise(scene, bakedCels(turn), atlasKey(turn));
+}
 // The origin offsets come from the art modules' own constants rather than being
 // restated. A cel anchored at the wrong pixel does not fail — it silently
 // shifts a worker off its building — so there is exactly one definition of
@@ -270,6 +332,98 @@ const WORKER_OX = WORKER_ORIGIN.x;
 const WORKER_OY = WORKER_ORIGIN.y;
 const PROP_OX = PROP_ORIGIN.x;
 const PROP_OY = PROP_ORIGIN.y;
+
+/**
+ * The largest canvas the atlas may occupy, in pixels a side.
+ *
+ * The same limit the ground painter uses, and for the same reason: an oversized
+ * canvas does not throw. It fails as a **blank texture**, so the town renders as
+ * an empty field with every sprite invisible — a silent visual catastrophe
+ * rather than a diagnosable error. The bake had no such guard, which meant the
+ * one direction this limit can be crossed from (adding art) failed invisibly.
+ *
+ * 8192 is not a spec figure: it is the point below which every canvas
+ * implementation worth supporting is known to work. `paintGround` carries the
+ * same number with the same reasoning.
+ */
+const MAX_ATLAS_SIDE = 8192;
+
+/** The largest canvas area the atlas may occupy, in pixels. Also from
+ *  `paintGround`: some implementations cap total area rather than a side, so a
+ *  sheet that is legal in both dimensions can still fail on area alone. */
+const MAX_ATLAS_AREA = 16_777_216;
+
+/**
+ * AtlasLayout is where the cels go and how big the sheet is.
+ *
+ * Split out from `rasterise` so the sizing can be computed and checked without a
+ * canvas. That matters for the guard: a test can drive it past the limit and
+ * assert the refusal, which is the only way to prove the check is real rather
+ * than a branch nobody has ever taken.
+ */
+export interface AtlasLayout {
+  perRow: number;
+  cellW: number;
+  cellH: number;
+  rows: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * layoutAtlas computes the sheet's geometry from the cels that will fill it.
+ *
+ * Rows of 16, sized to the tallest and widest cel, so the sheet stays close to
+ * square. The dimensions are rounded up to powers of two, which keeps the texture
+ * cheap to upload on renderers that prefer it and costs at most twice the memory
+ * of a few hundred small cels.
+ */
+export function layoutAtlas(cels: readonly { pix: Pix }[]): AtlasLayout {
+  // An empty bake is not a sheet of zero rows and one column; it is a caller
+  // mistake, and `Math.max` of nothing is -Infinity, which would sail through
+  // every comparison below as a NaN-sized canvas.
+  if (cels.length === 0) throw new Error("bake: no cels to lay out");
+  const perRow = 16;
+  const cellW = Math.max(...cels.map((c) => c.pix.w)) + 2;
+  const cellH = Math.max(...cels.map((c) => c.pix.h)) + 2;
+  const rows = Math.ceil(cels.length / perRow);
+  return {
+    perRow,
+    cellW,
+    cellH,
+    rows,
+    width: nextPow2(perRow * cellW),
+    height: nextPow2(rows * cellH),
+  };
+}
+
+/**
+ * assertAtlasFits refuses a sheet too large to draw.
+ *
+ * Called before any canvas is allocated, so the failure is an exception naming
+ * what it wanted rather than a blank texture. The cel count and the tallest cel
+ * are both reported, because those are the two numbers a caller can act on —
+ * one says "bake fewer things", the other "draw something less tall".
+ */
+export function assertAtlasFits(cels: number, l: AtlasLayout): void {
+  const area = l.width * l.height;
+  const tooWide = l.width > MAX_ATLAS_SIDE;
+  const tooTall = l.height > MAX_ATLAS_SIDE;
+  const tooBig = area > MAX_ATLAS_AREA;
+  if (!tooWide && !tooTall && !tooBig) return;
+
+  // Which dimension is over, why, and from what — a message that only says "too
+  // big" leaves the reader to re-derive every number below by hand.
+  const limits: string[] = [];
+  if (tooWide) limits.push(`width ${l.width} > ${MAX_ATLAS_SIDE}`);
+  if (tooTall) limits.push(`height ${l.height} > ${MAX_ATLAS_SIDE}`);
+  if (tooBig) limits.push(`area ${area} > ${MAX_ATLAS_AREA}`);
+  throw new Error(
+    `bake: atlas would be ${l.width}x${l.height} (${limits.join(", ")}) for ${cels} cels ` +
+      `with cell ${l.cellW}x${l.cellH} over ${l.rows} rows. ` +
+      `The canvas would fail silently as a blank texture, so the bake refuses instead.`,
+  );
+}
 
 /**
  * rasterise lays the cels into one canvas and registers it as a texture.
@@ -283,13 +437,11 @@ function rasterise(
   cels: readonly { key: string; pix: Pix; ox: number; oy: number }[],
   textureKey: string,
 ): Atlas {
-  // Rows of 16, sized to the tallest cel, so the sheet stays close to square.
-  const perRow = 16;
-  const cellW = Math.max(...cels.map((c) => c.pix.w)) + 2;
-  const cellH = Math.max(...cels.map((c) => c.pix.h)) + 2;
-  const rows = Math.ceil(cels.length / perRow);
-  const width = nextPow2(perRow * cellW);
-  const height = nextPow2(rows * cellH);
+  const l = layoutAtlas(cels);
+  // Checked before the canvas exists, so an oversized bake is an error rather
+  // than a town that quietly renders nothing.
+  assertAtlasFits(cels.length, l);
+  const { perRow, cellW, cellH, width, height } = l;
 
   const canvas = document.createElement("canvas");
   canvas.width = width;

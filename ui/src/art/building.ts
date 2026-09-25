@@ -28,9 +28,11 @@
 import { P, type Ramp } from "./palette";
 import { IsoPix } from "./iso";
 import { normaliseTurn, turnPoint } from "../view";
-import { STOREY, bandHeight } from "./stack";
+import { STOREY, bandHeight, towerTop } from "./stack";
 import { type Pix } from "./surface";
-
+import {
+  buildRoof, buildRoofDamage, buildRoofStack, buildRoofTrim, roofFor, roofHeight, type RoofKind,
+} from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
  * values, in the same order, and both sides are asserted against each other by
@@ -127,24 +129,29 @@ function hasSpoil(s: Stage): boolean {
 }
 
 /**
- * BuildingSkin is the material a building is made of.
+ * BuildingSkin is the wall material a building is made of.
  *
- * The analyzer sizes a building by how much source it holds; the skin is the
- * other half of that reading. A skin is chosen from the building's own path so
- * a district tends to share a material and a large building can be a different
- * tier from a small one — a town where every building is the same cottage reads
- * as a placeholder, not as a place.
+ * The analyzer sizes a building by how much source it holds; the skin is the other
+ * half of that reading. A skin is chosen from the building's own path so a district
+ * tends to share a material and a large building can be a different tier from a
+ * small one — a town where every building is the same cottage reads as a
+ * placeholder, not as a place.
+ *
+ * **It is a wall-material axis only.** It used to carry `roof` and `roofHeight` as
+ * well, and those moved to `art/roof.ts` when the roof became its own axis
+ * (ADR-0021). The measurement that justified the move: the skin's contribution to
+ * the cap was mostly idle — 48 of its 64 (footprint × stage × damage) cap variants
+ * were byte-identical, while on the base and band the variant is live. So the cap
+ * was where the skin was doing least, which is what made it the right thing to
+ * trade for a live roof axis.
  */
 export interface BuildingSkin {
   wall: Ramp;
-  roof: Ramp;
   // There is deliberately no `wallHeight` here any more. A storey is a fixed 20
   // world units (`art/stack.ts`), so the wall's height is a property of the
   // building's floor count and not of its skin. Keeping a per-skin wall height
-  // alongside floors would be two numbers for one fact, and the skin's copy
-  // would be the one nothing read — it was, before this was removed.
-  /** Roof height in world units. */
-  roofHeight: number;
+  // alongside floors would be two numbers for one fact, and the skin's copy would
+  // be the one nothing read — it was, before this was removed.
   /** Whether the walls are exposed framed timber rather than plastered. */
   framed: boolean;
 }
@@ -168,30 +175,30 @@ export function skinVariant(path: string): 0 | 1 {
 }
 
 /**
- * skinFor chooses a building's material from how much source it holds.
+ * skinFor chooses a building's wall material from how much source it holds.
  *
  * The file-count thresholds are the analyzer's own footprint steps
- * (internal/analyzer/layout.go), written as those numbers rather than as a
- * general scale so that size and material always say the same thing: a big
- * directory is a big stone hall, not a small cottage drawn large.
+ * (internal/analyzer/layout.go), written as those numbers rather than as a general
+ * scale so that size and material always say the same thing: a big directory is a
+ * big stone hall, not a small cottage drawn large.
  */
 export function skinFor(files: number, path: string): BuildingSkin {
   const warm = skinVariant(path) === 0;
 
   if (files <= 2) {
-    // A hut: low walls, a steep thatch roof, mostly roof from this angle.
-    return { wall: P.plaster, roof: P.thatch, roofHeight: 12, framed: true };
+    // A hut: low plastered walls.
+    return { wall: P.plaster, framed: true };
   }
   if (files <= 5) {
-    return { wall: P.plaster, roof: warm ? P.roof : P.thatch, roofHeight: 16, framed: true };
+    return { wall: P.plaster, framed: true };
   }
   if (files <= 12) {
-    // A workshop: taller walls, tile roof. Two materials, so a district of
-    // mid-sized buildings is not a row of identical boxes.
-    return { wall: warm ? P.stone : P.plaster, roof: P.roof, roofHeight: 20, framed: !warm };
+    // A workshop: taller walls, and two materials so a district of mid-sized
+    // buildings is not a row of identical boxes.
+    return { wall: warm ? P.stone : P.plaster, framed: !warm };
   }
-  // A hall: stone, high walls, a shallow roof, so its mass reads as width.
-  return { wall: P.stone, roof: P.roof, roofHeight: 22, framed: false };
+  // A hall: stone walls, so its mass reads as width.
+  return { wall: P.stone, framed: false };
 }
 
 /** The picture-space box a skin occupies over a footprint of side `s`. */
@@ -206,47 +213,89 @@ export interface BuildingBox {
 }
 
 /**
- * boxFor computes the cel size for a footprint.
+ * footprintBox is the cel size one part of a building is drawn into.
  *
- * It projects the footprint's own corners rather than using a closed form, so
- * the cel can never disagree with the projection the scene draws at — and then
- * adds the margin everything drawn *outside* the footprint needs.
+ * Every part projects the same footprint and needs the same margin, so the only
+ * thing that differs between a base, a band, a cap and a shadow is how far *up*
+ * the part reaches. That is the one parameter, and making it explicit is what
+ * fixes the waste the previous single `boxFor` hid: it always reserved
+ * `bandHeight(floors) + roofHeight + 6` of headroom, and the base cel and the
+ * ground shadow both used it. Neither draws a roof. Reserving roof headroom in
+ * them did not fail — it just made the tallest cel on the sheet taller than
+ * anything it contained, and the tallest cel is what sets the atlas's cell height
+ * for *every* cel on it, so two cels of waste cost the whole sheet.
  *
- * The margin has to cover every overhang, and two of them are not part of the
+ * The margin must cover every overhang, and two of them are not part of the
  * building: the scaffold's poles stand five world units beyond the near corner
- * and its walk boards reach the same edge, and the spoil heap sits four units
- * out to the side. When the margin did not include them, the outline pass had
- * nowhere to write on those two cel edges, so the left ends of the scaffold's
- * boards and the lower edge of the spoil heap lost their ink line on all
- * sixteen `constructing` and `testing` cels.
+ * and its walk boards reach the same edge, and the spoil heap reaches fourteen
+ * units along x and eight along y. When the margin did not include them, the
+ * outline pass had nowhere to write on those two cel edges, so the left ends of
+ * the scaffold's boards and the lower edge of the spoil heap lost their ink line
+ * on all sixteen `constructing` and `testing` cels.
  */
-export function boxFor(side: number, skin: BuildingSkin, floors = 1, turn = 0): BuildingBox {
-  // The height became a parameter when floors did. It cannot be derived from the
-  // skin alone any more, because the same skin now stands one storey or twenty —
-  // and a cel sized for one storey would clip a tower.
-  const zTop = bandHeight(floors) + skin.roofHeight + 6; // +6 for the ridge and shadow
+function footprintBox(side: number, zTop: number, turn = 0): BuildingBox {
   // The footprint's corners as this turn projects them. Deriving them here rather
   // than in the scene is what lets the cel's own size be the authority on where
   // the building's origin is.
   const { xs, ys } = footprintScreen(side, turn);
 
-  // Scaffold poles and boards reach 5 world units beyond the near corner; the
-  // spoil heap reaches 14 along x and 8 along y. Both project to at most a few
-  // pixels, so 6 covers them along with the roof's 2-unit eaves and the 1px
-  // outline itself. Clipping any of it cuts a hole in a building, and a clipped
-  // outline is worse than no outline at all.
+  // 6 covers the scaffold's 5-unit poles and the spoil heap's overhang along with
+  // the roof's 2-unit eaves and the 1px outline itself. Clipping any of it cuts a
+  // hole in a building, and a clipped outline is worse than no outline at all.
   const m = 6;
   const minX = Math.floor(Math.min(...xs)) - m;
   const maxX = Math.ceil(Math.max(...xs)) + m;
   const minY = Math.floor(Math.min(...ys) - zTop) - m;
   const maxY = Math.ceil(Math.max(...ys)) + m;
-  return {
-    w: maxX - minX + 1,
-    h: maxY - minY + 1,
-    ox: -minX,
-    oy: -minY,
-    zTop,
-  };
+  return { w: maxX - minX + 1, h: maxY - minY + 1, ox: -minX, oy: -minY, zTop };
+}
+
+/**
+ * boxFor computes the cel a *whole* building occupies: every storey of wall plus
+ * the roof on top.
+ *
+ * Only the composite in `buildBuilding` needs this, and that is a test-only
+ * convenience with no production caller. The parts the atlas actually ships each
+ * have their own box below, sized to what they draw — because a part that
+ * reserves room for another part's artwork sets the sheet's cell height from a
+ * cel no town ever shows.
+ *
+ * The height is a parameter because floors are: the same building stands one storey
+ * or twenty, and a cel sized for one storey would clip a tower.
+ */
+export function boxFor(side: number, roof: RoofKind, floors = 1, turn = 0): BuildingBox {
+  return footprintBox(side, bandHeight(floors) + capTop(side, roof), turn);
+}
+
+/**
+ * baseBox is the cel the ground storey occupies: exactly one storey of wall, and
+ * no headroom above for a roof the base never draws.
+ *
+ * It is deliberately identical to `bandBox`, and that is the point rather than a
+ * coincidence: the base *is* one storey — `buildBase` draws `storeyShell` at
+ * local z 0..STOREY, the same drawing the band draws — so the two must be the
+ * same size or the floor they share would not line up.
+ *
+ * Scaffolding reaches `STOREY + 8`, which looks like it argues for a taller cel.
+ * It does not, because the scaffold stands at the footprint's *near* corner:
+ * `sy = (wx + wy) / 4 - z` puts a point five units beyond the near corner eleven
+ * rows *below* the far corner's wall top on a 44-unit footprint, and further
+ * below on every larger one. `art.test.ts` asserts nothing touches the cel's top
+ * row, so the conclusion is measured rather than argued.
+ */
+export function baseBox(side: number, turn = 0): BuildingBox {
+  return footprintBox(side, STOREY, turn);
+}
+
+/**
+ * shadowBox is the cel the contact shadow occupies: a flat slab lying on the
+ * ground, so there is no height above the footprint to reserve at all.
+ *
+ * zTop is 0 rather than a small positive number because `buildShadow` draws every
+ * layer of the slab at z = 0 — it is a single `footprint` call, not a stack.
+ */
+export function shadowBox(side: number, turn = 0): BuildingBox {
+  return footprintBox(side, 0, turn);
 }
 
 /**
@@ -302,18 +351,31 @@ export function bandBox(side: number, turn = 0): BuildingBox {
   return { w: maxX - minX + 1, h: maxY - minY + 1, ox: -minX, oy: -minY, zTop: STOREY };
 }
 
-/** capBox is the cel the roof and its finishing trades occupy, with its own base
- *  at local z = 0 — the cap is placed one storey above the top band, so its base
- *  already *is* the top of the wall. */
-export function capBox(side: number, skin: BuildingSkin, turn = 0): BuildingBox {
-  const { xs, ys } = footprintScreen(side, turn);
-  const m = 6;
-  const top = skin.roofHeight + 6;
-  const minX = Math.floor(Math.min(...xs)) - m;
-  const maxX = Math.ceil(Math.max(...xs)) + m;
-  const minY = Math.floor(Math.min(...ys) - top) - m;
-  const maxY = Math.ceil(Math.max(...ys)) + m;
-  return { w: maxX - minX + 1, h: maxY - minY + 1, ox: -minX, oy: -minY, zTop: top };
+/**
+ * capTop is how far above the wall top the cap's cel must reach.
+ *
+ * It composes two things that are deliberately separate: the roof kind's own rise,
+ * and the 6px the box adds on every side. Keeping the `+ 6` here rather than inside
+ * each kind means a kind only ever states the rise of its *artwork*, and the
+ * margin stays a property of the projection — which is what it is.
+ */
+function capTop(side: number, roof: RoofKind): number {
+  return roofHeight(roof, side) + 6;
+}
+
+/**
+ * capBox is the cel the roof, its rooftop furniture and the roof's damage occupy,
+ * with its own base at local z = 0 — the cap is placed one storey above the top
+ * band, so its base already *is* the top of the wall.
+ *
+ * It takes the roof **kind** rather than the skin, which is the signature change
+ * ADR-0021 predicted: the cap's height is a property of the roof, not of the wall
+ * material, and a flat roof is 16 units shorter than a pitched one on the same
+ * building. Sharing one height between them would have meant the taller kind's cel
+ * sizing the shorter kind's art.
+ */
+export function capBox(side: number, roof: RoofKind, turn = 0): BuildingBox {
+  return footprintBox(side, capTop(side, roof), turn);
 }
 
 /**
@@ -377,7 +439,11 @@ export function buildBase(
   turn = 0,
 ): Pix {
   const skin = skinFor(files, path);
-  const box = boxFor(side, skin, 1, turn);
+  // The base's own box, not the whole building's: `buildBase` draws one storey and
+  // no roof, so a cel carrying roof headroom would be taller than its contents —
+  // and this cel is the tallest on the sheet, which makes its height the sheet's
+  // cell height for every other cel too.
+  const box = baseBox(side, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   const want = stageRank(stage);
 
@@ -422,25 +488,38 @@ export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn =
 }
 
 /**
- * buildCap is everything that happens once, at the top: the roof and its
- * finishing trades.
+ * buildCap draws everything that happens once, at the top: the roof, its rooftop
+ * furniture and its finishing trades.
  *
  * Its own base is the top of the topmost band, so the roof's eave sits at local
  * z = 0. The cap is placed one storey above the last band, so drawing the eave at
  * `STOREY` here as well would raise the roof a second time and leave a storey of
  * sky between the wall and its roof.
+ *
+ * **The cap takes the roof kind and not the skin.** This is the cap's whole
+ * appearance: shape, material, height, furniture and damage all come from the kind,
+ * and the wall material the rest of the building wears deliberately does not reach
+ * here. ADR-0021 records why — the skin's cap contribution was measured mostly
+ * idle (48 of 64 variants byte-identical), so the cap was the right thing to trade
+ * for a live roof axis rather than the wall material it was already barely using.
+ *
+ * The ladder order is preserved: the roof appears at `roofed`, and the furniture —
+ * a chimney or rooftop housing, which is a finishing trade rather than part of
+ * keeping the rain out — only at `completed`. A `roofed` building therefore does
+ * not already look finished, which is precisely the confusion the ladder exists to
+ * remove.
  */
-export function buildCap(side: number, skin: BuildingSkin, stage: Stage, damaged: boolean, turn = 0): Pix {
-  const box = capBox(side, skin, turn);
+export function buildCap(side: number, roof: RoofKind, stage: Stage, damaged: boolean, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   const want = stageRank(stage);
 
-  if (want >= stageRank("roofed")) roof(iso, side, 0, skin);
+  if (want >= stageRank("roofed")) buildRoof(iso, roof, side, 0);
   if (want >= stageRank("completed")) {
-    trim(iso, side, skin);
-    chimney(iso, side, 0, skin);
+    buildRoofTrim(iso, roof, side);
+    buildRoofStack(iso, roof, side, 0);
   }
-  if (damaged && want >= stageRank("roofed")) roofDamage(iso, side, skin);
+  if (damaged && want >= stageRank("roofed")) roofDamage(iso, side, roof);
 
   return iso.outline(P.ink);
 }
@@ -594,14 +673,6 @@ function plinth(iso: IsoPix, side: number, skin: BuildingSkin): void {
   });
 }
 
-/** trim is the fascia under the eave: the one piece of finishing that belongs to
- *  the top of the building rather than to a storey of it. The corner boards run
- *  per storey (see `cornerBoards`), and the plinth belongs to the base, because
- *  each of those three repeats a different number of times. */
-function trim(iso: IsoPix, side: number, skin: BuildingSkin): void {
-  iso.beamX(0, side, side, 0, skin.wall[0], 1);
-  iso.beamY(0, side, side, 0, skin.wall[0], 1);
-}
 /**
  * windows punches lit openings into the two visible walls.
  *
@@ -672,42 +743,6 @@ function door(iso: IsoPix, side: number, height: number): void {
   }
 }
 
-/**
- * roof closes the building over.
- *
- * The chimney is *not* here. It belongs to the trim, because a chimney is a
- * finishing trade rather than part of keeping the rain out — and putting it here
- * would mean the roofed rank already looked finished, which is precisely the
- * confusion the ladder exists to remove.
- */
-function roof(iso: IsoPix, side: number, eave: number, skin: BuildingSkin): void {
-  const overhang = 2;
-  iso.gable(-overhang, -overhang, side + overhang * 2, side + overhang * 2, eave, skin.roofHeight, {
-    near: skin.roof[2],
-    far: skin.roof[1],
-    ridge: skin.roof[3],
-    gable: skin.wall[2],
-    edge: P.ink,
-  });
-}
-
-/**
- * chimney is part of the completed rank's trim: a stack on the far slope.
- *
- * It also gives the eye something at the ridge, which stops a long roof reading
- * as a flat coloured band — but that is a benefit, not the reason it is here.
- */
-function chimney(iso: IsoPix, side: number, eave: number, skin: BuildingSkin): void {
-  if (side < 60) return;
-  const cx = Math.round(side * 0.22);
-  iso.box(cx, Math.round(side * 0.42), 7, 7, eave + skin.roofHeight - 6, eave + skin.roofHeight + 8, {
-    top: P.stone[3],
-    lit: P.stone[2],
-    shadow: P.stone[1],
-    edge: P.ink,
-  });
-}
-
 /** A pile of spoil beside a plot: the excavated earth the footings leave. */
 function spoil(iso: IsoPix, side: number): void {
   const x = side + 4;
@@ -754,12 +789,15 @@ function crack(iso: IsoPix, side: number): void {
   }
 }
 
-/** roofDamage is the hole in the roof, drawn in the cap's own cel. */
-function roofDamage(iso: IsoPix, side: number, skin: BuildingSkin): void {
-  const hx = Math.round(side / 2);
-  const hy = Math.round(side / 2);
-  iso.footprint(hx, hy, 6, 6, skin.roofHeight, P.roof[0]);
-  iso.beamX(hx, hx + 6, hy + 3, skin.roofHeight, P.wood[1], 1);
+/**
+ * roofDamage is the hole in the roof, drawn in the cap's own cel.
+ *
+ * It delegates to the kind, because how a roof *fails* is a property of the roof:
+ * a pitched roof is holed through a slope, and a flat roof's bay collapses. One
+ * shared hole would have put a puncture in a lid, which reads as neither.
+ */
+function roofDamage(iso: IsoPix, side: number, roof: RoofKind): void {
+  buildRoofDamage(iso, roof, side, 0);
 }
 
 /** hasDamage is whether the stage has anything standing to be damaged. */
@@ -790,23 +828,33 @@ export function buildBuilding(
   damaged = false,
   turn = 0,
 ): Pix {
-  const skin = skinFor(files, path);
-  const box = boxFor(side, skin, 1);
-  // The composite is a test-only convenience, so its own IsoPix is never
-  // plotted into — the two blits below carry the turn themselves. It is still
-  // constructed with the turn so that the box it derives cannot disagree with
-  // the parts it composes.
+  // The roof comes from the path, like every other path-chosen appearance, so the
+  // composite shows the same roof the scene will draw for that building.
+  const roof = roofFor(path);
+  const box = boxFor(side, roof, 1);
+  // The composite is a test-only convenience, so its own IsoPix is never plotted
+  // into — the blits below carry the turn themselves. It is still constructed with
+  // the turn so that the box it derives cannot disagree with the parts it composes.
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
 
-  // The base carries the ground storey; its cel is already sized for the whole
-  // one-storey building, so it lands at the origin.
-  iso.pix.blit(buildBase(side, files, path, stage, damaged, turn), 0, 0);
-  // The cap is blitted at the base's own origin, NOT one storey above it. Its
-  // cel is sized to the roof alone, so its anchor already sits one storey lower
-  // in its own cel (`capBox` uses `roofHeight`, not `STOREY + roofHeight`), and
-  // the two offsets cancel. Shifting by STOREY as well would lift the roof a
-  // second time and leave a storey of sky between it and the wall.
-  iso.pix.blit(buildCap(side, skin, stage, damaged, turn), 0, 0);
+  // Each part is blitted so that its *own* origin lands where that part's world
+  // origin belongs in the composite. The parts no longer share one box — a base cel
+  // is one storey and a cap cel is a roof, each sized to what it draws — so each has
+  // its own `oy`, and `(0, 0)` would now put the shorter base `capTop` pixels above
+  // its own ground. Deriving the offset from the difference of the two origins is
+  // what keeps this correct as the boxes change; hardcoding a zero was correct only
+  // while they happened to be equal.
+  const footBox = baseBox(side, turn);
+  const topBox = capBox(side, roof, turn);
+
+  // The base is the ground storey: its world origin is z = 0, which is the
+  // composite's own origin row, `box.oy`.
+  iso.pix.blit(buildBase(side, files, path, stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
+  // The cap sits on top of one storey, so its base is at z = STOREY. Its cel's
+  // origin is already the top of the wall rather than the ground (`capBox` uses the
+  // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes
+  // out as `box.oy - STOREY - topBox.oy` rather than a whole storey more.
+  iso.pix.blit(buildCap(side, roof, stage, damaged, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
 
   return iso.pix;
 }
@@ -815,9 +863,12 @@ export function buildBuilding(
  *  building so the town has a floor rather than a set of floating props. */
 export function buildShadow(side: number, files: number, path: string, turn = 0): Pix {
   const skin = skinFor(files, path);
-  const box = boxFor(side, skin, 1, turn);
+  // A shadow is a slab on the ground, so its cel reserves no headroom. It used
+  // the whole-building box, which made a flat shadow as tall as a roofed tower —
+  // and being the second-tallest cel on the sheet, it would have kept the atlas's
+  // cell height high on its own even after the base was fixed.
+  const box = shadowBox(side, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   iso.footprint(2, 3, side + 3, side + 3, 0, P.grass[0]);
   return iso.pix;
 }
-
