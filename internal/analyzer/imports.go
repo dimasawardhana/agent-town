@@ -15,17 +15,21 @@ package analyzer
 // is not an error: a repository this cannot read simply has no import roads, and
 // that is the correct description rather than a failure.
 //
-// Two syntaxes are recognised, because the project is written in them: Go's
-// import block, and the `from "..."` / `require("...")` forms every JavaScript
-// dialect uses. Both are matched on the quoted specifier rather than on the
-// surrounding keywords, so a string that merely *looks* like an import in a
-// comment or a test fixture is not a road.
+// Several syntaxes are recognised, because the project is written in them: Go's
+// import block, and the `from "..."`, `require("...")`, `import("...")` and
+// `export ... from "..."` forms every JavaScript dialect uses.
+//
+// Comments are stripped first, so a string that merely *looks* like an import — in
+// a comment, or in a test fixture describing one — is not a road. That is not
+// hypothetical: this very file, and `layout.go`, contain the literal text
+// `import "../store"` inside Go comments describing the case this scanner is
+// built to reject.
 
 import (
-	"bufio"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -107,46 +111,109 @@ func buildingOf(rel string, buildings map[string]bool) string {
 // what it buys here, and the consequence of being wrong is bounded by
 // `resolveImport`: a specifier that does not land on a real building is dropped.
 func importSpecifiers(file string) []string {
-	f, err := os.Open(file)
+	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil
 	}
-	defer func() { _ = f.Close() }()
-
+	src := stripComments(string(raw))
 	var out []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	inBlock := false
-	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimSpace(line)
 
-		// Go's import block: `import (` … `)`.
-		if strings.HasPrefix(trimmed, "import (") {
-			inBlock = true
-			continue
-		}
-		if inBlock {
-			if trimmed == ")" {
-				inBlock = false
-				continue
+	// Go's block form: `import (` … `)`. The contents are quoted specifiers and
+	// nothing else, so each quoted string inside the block is one.
+	if i := strings.Index(src, "import ("); i >= 0 {
+		if j := strings.Index(src[i:], "\n)"); j >= 0 {
+			for _, line := range strings.Split(src[i+len("import ("):i+j], "\n") {
+				if sp, ok := quoted(line); ok {
+					out = append(out, sp)
+				}
 			}
-			if s, ok := quoted(trimmed); ok {
-				out = append(out, s)
-			}
-			continue
-		}
-
-		// Go's single form, and the JavaScript ones.
-		if !strings.HasPrefix(trimmed, "import ") &&
-			!strings.HasPrefix(trimmed, "require(") {
-			continue
-		}
-		if s, ok := quoted(trimmed); ok {
-			out = append(out, s)
 		}
 	}
+
+	// Everything else, across the whole file rather than line by line.
+	//
+	// A line scanner misses the form this repository mostly uses: 44 of its
+	// TypeScript files open an import with `import {` and close it four lines
+	// later with `} from "./x"`, and the specifier is on neither the first line
+	// nor any other single line. Every one of those imports was invisible.
+	//
+	// So this is a whole-file match with `(?s)`, bounded so it cannot run past
+	// the closing brace, and it is bounded *and* not greedy for the same reason:
+	// an unbounded `.*?` from `import` to the last quote on the page would
+	// happily pair one import with an unrelated string.
+	re := regexp.MustCompile(`(?s)import\s*(?:type\s*)?(?:\{[^}]*\}\s*from\s*)?[('"]+([./][^'"]*)[)'"]`)
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
+	rex := regexp.MustCompile(`(?m)^\s*export\s+(?:type\s*)?(?:\{[^}]*\}\s*)?from\s*['"]([./][^'"]*)['"]`)
+	for _, m := range rex.FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
+	// `require("./x")` and a dynamic `import("./x")` in a body, which is how a
+	// lazily-loaded module names its target.
+	rd := regexp.MustCompile(`(?:require|import)\s*\(\s*['"]([./][^'"]*)['"]`)
+	for _, m := range rd.FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
 	return out
+}
+
+// stripComments removes `//` and block comments, respecting string literals.
+//
+// Without it a commented-out import is a road to a dependency that is not there,
+// and this file's own comment in `layout.go` — which contains the literal text
+// `import "../store"` inside a Go comment — would have been read as one. That is
+// not hypothetical: three files in this repository have comment lines that begin
+// with `import `, and a false road is exactly the confident lie the whole design
+// refuses to draw.
+//
+// The string-awareness is what keeps a `//` inside a string — a URL, a path — from
+// eating the rest of the line.
+func stripComments(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+	inBlock, inStr := false, false
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if inBlock {
+			if c == '*' && i+1 < len(src) && src[i+1] == '/' {
+				inBlock = false
+				i++
+			}
+			continue
+		}
+		if inStr {
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(src) {
+				i++
+				b.WriteByte(src[i])
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			b.WriteByte(c)
+			continue
+		}
+		if c == '/' && i+1 < len(src) {
+			if src[i+1] == '/' {
+				for i < len(src) && src[i] != '\n' {
+					i++
+				}
+				b.WriteByte('\n')
+				continue
+			}
+			if src[i+1] == '*' {
+				inBlock = true
+				i++
+				continue
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // quoted is the first double-quoted string on a line, if there is one.

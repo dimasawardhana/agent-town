@@ -1039,3 +1039,90 @@ func TestImportRoadsOnThisRepository(t *testing.T) {
 	}
 	t.Logf("IMPORT roads on this repo: %d (of %d total)", n, len(l.Roads))
 }
+
+// A multi-line import is an import.
+//
+// This is the form the project mostly uses and the form the line scanner could
+// not see at all: 16 of this repository's TypeScript files open with `import {`
+// and name their specifier on a closing line four rows later. A scanner that
+// reads one line at a time never sees the specifier, so those dependencies were
+// simply not in the map.
+func TestMultiLineImportStillMakesARoad(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("ui/src/a.ts", "import {\n  one,\n  two,\n} from \"../shared\";\n\nexport const a = one + two;\n")
+	mk("ui/shared/b.ts", "export const one = 1;\nexport const two = 2;\n")
+	// The re-export and the lazy form, which the old scanner also missed.
+	mk("ui/src/c.ts", "export { one } from \"../shared\";\nconst later = await import(\"../shared\");\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var importRoads int
+	for _, r := range LayoutTown(town).Roads {
+		if r.Kind == "import" {
+			importRoads++
+		}
+	}
+	if importRoads == 0 {
+		t.Error("no import road for a multi-line import — the specifier is on a closing line and was never read")
+	}
+}
+
+// A commented-out import is not an import.
+//
+// Not hypothetical: `imports.go` and `layout.go` both contain the literal text
+// `import "../store"` inside a Go comment describing this very case. A scanner
+// that reads comments draws a road to a dependency that does not exist, which is
+// the confident lie the whole design refuses to produce.
+func TestCommentedImportIsNotARoad(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The decisive shape: a file whose ONLY import is inside a comment. If the
+	// stripper fails, this is a road to a dependency that does not exist, and
+	// nothing else in the test would notice.
+	mk("web/main.go", "package web\n\n// import \"../store\" — a comment, not a dependency.\nfunc f() {}\n")
+	mk("web/blocks.go", "package web\n\n/* import \"../store\" */\nfunc g() {}\n")
+	mk("web/inside.go", "package web\n\nimport (\n\t// \"../store\"\n\t\"fmt\"\n)\nfunc h() {}\n")
+	// One real TypeScript import, alongside a commented twin on the line above.
+	mk("ui/src/a.ts", "// import { x } from \"../shared\";\nimport { one } from \"../shared\";\n")
+	mk("ui/shared/b.ts", "export const one = 1;\n")
+	mk("store/s.go", "package store\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Zero roads is the whole assertion. A real `import "../store"` sits in the
+	// same file as a commented one in `main.go` before this change, so a test that
+	// merely counted a road would pass with the stripper completely broken.
+	var n int
+	for _, r := range LayoutTown(town).Roads {
+		if r.Kind == "import" {
+			n++
+		}
+	}
+	// Exactly one: the real TypeScript import. Three commented Go imports sit in
+	// this fixture and none of them may contribute, so a stripper that did
+	// nothing would produce four and fail here.
+	if n != 1 {
+		t.Errorf("import roads = %d, want 1 (the real TypeScript import only); a commented-out import was read as a dependency", n)
+	}
+}
