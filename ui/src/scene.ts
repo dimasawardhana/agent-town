@@ -33,6 +33,7 @@ import {
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
+import { SKY_DEPTH, skyTexture } from "./sky";
 import { type Stage, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
@@ -144,6 +145,34 @@ export class TownScene extends Phaser.Scene {
    * off, which means it could not be an event-driven child either.
    */
   private embers: Embers | null = null;
+  /** The backdrop, pinned to the camera. Resized with the view and no further. */
+  private sky: Phaser.GameObjects.Image | null = null;
+
+  /**
+   * resizeSky repaints the backdrop for a new view size.
+   *
+   * Regenerated rather than stretched, because a stretched gradient is a
+   * gradient that has been resampled, and a resampled gradient bands. The old
+   * texture is dropped so the cache does not accumulate one per resize.
+   */
+  private ensureSky(): void {
+    this.sky?.destroy();
+    this.sky = this.add
+      .image(0, 0, skyTexture(this, this.scale.width, this.scale.height))
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(SKY_DEPTH);
+  }
+
+  private resizeSky(): void {
+    if (!this.sky) return;
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const old = this.sky.texture.key;
+    this.sky.setTexture(skyTexture(this, w, h));
+    this.sky.setDisplaySize(w, h).setPosition(0, 0);
+    if (old !== this.sky.texture.key) this.textures.remove(old);
+  }
   // Each building's sprite stack, by site id. A tower is a Container holding one
   // base, N identical bands and a cap, so a status change swaps frames inside
   // the container rather than rebuilding the map — rebuilding would flicker the
@@ -206,6 +235,12 @@ export class TownScene extends Phaser.Scene {
     // The void: a cold near-black, so the lit town sits on something that reads
     // as unlit rather than as part of the picture.
     this.cameras.main.setBackgroundColor(P.void);
+    this.scale.on("resize", () => this.resizeSky());
+    // The sky is a texture rather than a camera colour because the void was the
+    // wrong shape of nothing: a flat fill reads as unfinished, and a horizon
+    // reads as somewhere. Behind the island and never under it — the land keeps
+    // its edge, because a region reads as a region partly by being bounded.
+    this.ensureSky();
     this.turn = normaliseTurn(useTown.getState().turn);
     this.ensureAtlas();
     this.controls();
@@ -311,6 +346,14 @@ export class TownScene extends Phaser.Scene {
     this.chimneys = new Chimneys(this, this.chimneyRooftops(layout), DEPTH.smoke);
     this.embers?.destroy();
     this.embers = new Embers(this, DEPTH.ember);
+
+    // The sky is here for the same reason the chimneys are: the redraw calls
+    // `removeAll`, so anything not re-added here is simply gone. Created in
+    // `create` and not restored, it was alive, textured, and invisible — the
+    // display list did not contain it and the scene held a reference to a
+    // destroyed object. A backdrop is the one thing in the town that has to
+    // survive every redraw, so it is restored with everything else.
+    this.ensureSky();
 
     this.workers?.destroy();
     this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);

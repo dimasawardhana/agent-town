@@ -20,6 +20,21 @@ export const P = {
   // --- Terrain -----------------------------------------------------------
   // The void behind everything, and the base of the sky the town sits in.
   void: "#0e141c",
+  // The sky, which exists only in the generated backdrop and is never baked —
+  // so these are the four colours the town is seen against, and nothing else in
+  // the art is allowed to use them. Keeping them here rather than inline in the
+  // sky module is what makes "the backdrop is the only user" a checkable claim
+  // rather than a convention.
+  skyZenith: "#1a2740",
+  skyMid: "#3d5570",
+  skyHaze: "#7d8a80",
+  skyGlow: "#c9a86a",
+  skyFar: "#4a5f72",
+  skyNear: "#2a3a4a",
+  // The plain the island sits on: below the horizon and behind the land. Darker
+  // than the haze, lighter than the void, so the gap between them reads as
+  // distance rather than as a hole in the picture.
+  skyGround: "#141d26",
   // Ground tones, hue-shifted from a cool shadow green to a warm lit green.
   grass: ["#1d3327", "#274632", "#32583d", "#3e6b49"] as Ramp,
   grassLit: "#4a7d54",

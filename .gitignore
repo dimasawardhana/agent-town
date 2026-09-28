@@ -29,3 +29,4 @@ ui-routing.test.mjs
 ui-embers.test.mjs
 ui-turnalign.test.mjs
 ui-flagcorner.test.mjs
+ui-sky.test.mjs
