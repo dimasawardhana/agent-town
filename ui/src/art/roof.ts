@@ -31,7 +31,11 @@ import { IsoPix } from "./iso";
  * Closed for the same reason `Stage` and `Place` are: a kind has a drawing behind
  * it, and an open set would let one be named with nothing to show for it.
  */
-export const ARCHETYPES = ["tenement", "works", "cottage", "hall", "library", "stadium", "hospital", "chapel", "tower"] as const;
+export const ARCHETYPES = [
+  "tenement", "works", "cottage", "hall", "library",
+  "stadium", "hospital", "chapel", "tower",
+  "market", "school",
+] as const;
 export type Archetype = (typeof ARCHETYPES)[number];
 
 /**
@@ -864,6 +868,130 @@ const tower: RoofKit = {
   },
 };
 
+/**
+ * The market: a low slab under a row of stalls.
+ *
+ * The one archetype identified by **texture rather than outline** — a repeated
+ * rhythm of small pitched stalls, which the eye finds faster than it finds a
+ * shape. That is also why it is the likeliest of the three to fail at the fitted
+ * zoom, and why the ticket allows it to be cut rather than enlarged.
+ *
+ * The stalls are drawn as separate boxes with gaps between them. A continuous
+ * run would be cheaper and would seal into one long hole the moment damage
+ * landed on it.
+ */
+const market: RoofKit = {
+  height(side) {
+    if (side <= 44) return 9;
+    if (side <= 60) return 10;
+    if (side <= 78) return 11;
+    return 12;
+  },
+  trim(iso, side) {
+    iso.beamX(0, side, side, 0, P.wood[0], 1);
+    iso.beamY(0, side, side, 0, P.wood[0], 1);
+  },
+  draw(iso, side, eave) {
+    // A low deck, then three stalls across it. Three is deliberate: two reads
+    // as a hut, four or more stops reading as separate things at 91px.
+    iso.box(-2, -2, side + 4, side + 4, eave, eave + 2, {
+      top: P.wood[3],
+      lit: P.wood[2],
+      shadow: P.wood[1],
+      edge: P.ink,
+    });
+    const stalls = 3;
+    const w = Math.max(6, Math.round(side / stalls) - 3);
+    for (let i = 0; i < stalls; i++) {
+      const x = Math.round((side - (w * stalls + 3 * (stalls - 1))) / 2) + i * (w + 3);
+      const y = Math.round(side * 0.2) + (i % 2) * 2;
+      iso.box(x, y, w, Math.round(side * 0.5), eave + 2, eave + market.height(side), {
+        // Striped: alternating canvas and accent is the only saturated thing in
+        // the town that is not the verification flag, which is exactly the read
+        // a market wants — and the reason a Market and a verified Tenement are
+        // told apart by the flag's position rather than its colour.
+        top: i % 2 === 0 ? P.canvas[3] : P.accent,
+        lit: i % 2 === 0 ? P.canvas[2] : P.accent,
+        shadow: i % 2 === 0 ? P.canvas[1] : P.accent,
+        edge: P.ink,
+      });
+    }
+  },
+  stack(iso, side, top) {
+    // Crates and a barrow, because a market's roof is somebody's stock.
+    const w = Math.max(4, Math.round(side / 12));
+    iso.box(Math.round(side * 0.16), Math.round(side * 0.66), w, w, top, top + 3, {
+      top: P.wood[3],
+      lit: P.wood[2],
+      shadow: P.wood[1],
+      edge: P.ink,
+    });
+  },
+  damage(iso, side, top) {
+    // A stall loses its canopy: a gap in the row where one pitch used to be,
+    // which is the only damage a market can take without taking the market.
+    const d = Math.max(5, Math.round(side / 10));
+    iso.footprint(Math.round(side * 0.44), Math.round(side * 0.24), d, d, top - 3, P.ink);
+  },
+};
+
+/**
+ * The school: a steep pitch with a bell on the ridge.
+ *
+ * Taller and steeper than the Restaurant, and the bell breaks the ridge line —
+ * which is what separates it from the Cottage. Two pitched roofs are two
+ * silhouettes only if something other than their pitch differs; the bell is
+ * that something, and it is one small box at the top of the roof.
+ */
+const school: RoofKit = {
+  height(side) {
+    // Kept under the Chapel's 30 at every footprint, so the cell height the
+    // Chapel already set is not moved again.
+    if (side <= 44) return 20;
+    if (side <= 60) return 23;
+    if (side <= 78) return 26;
+    return 28;
+  },
+  trim(iso, side) {
+    iso.beamX(0, side, side, 0, P.stone[0], 1);
+    iso.beamY(0, side, side, 0, P.stone[0], 1);
+  },
+  draw(iso, side, eave) {
+    const w = Math.round(side * 0.9);
+    const o = Math.round((side - w) / 2);
+    iso.gable(o, o, w, w, eave, school.height(side) - 6, {
+      near: P.stone[2],
+      far: P.stone[1],
+      ridge: P.metal[3],
+      gable: P.plaster[3],
+      edge: P.ink,
+    });
+    // The bell turret: a narrow box standing proud of the ridge, so the roof's
+    // outline is not a clean triangle.
+    const c = Math.round(side / 2);
+    const bw = Math.max(4, Math.round(side * 0.14));
+    iso.box(c - bw, c - bw, bw * 2, bw * 2, eave + school.height(side) - 6, eave + school.height(side), {
+      top: P.stone[3],
+      lit: P.stone[2],
+      shadow: P.stone[1],
+      edge: P.ink,
+    });
+  },
+  stack(iso, side, top) {
+    // The bell itself, in the accent — one saturated pixel in the town's
+    // vertical middle, and the reason a School reads from across the map.
+    const c = Math.round(side / 2);
+    iso.footprint(c - 1, c - 1, 3, 3, top + 1, P.accent);
+  },
+  damage(iso, side, top) {
+    // A slate slipped and the ridge is open: the pitched kind's damage, on its
+    // own roof, one rung below the ridge rather than mid-slope.
+    const d = Math.max(5, Math.round(side / 14));
+    const c = Math.round(side / 2);
+    iso.footprint(c - d, c - d, d * 2, d * 2, top - 8, P.ink);
+  },
+};
+
 const KITS: Record<Archetype, RoofKit> = {
   tenement: flat,
   works: sawtooth,
@@ -874,6 +1002,8 @@ const KITS: Record<Archetype, RoofKit> = {
   hospital,
   chapel,
   tower,
+  market,
+  school,
 };
 
 /** The rise a kind stands above the wall top, for a footprint. This is what sizes

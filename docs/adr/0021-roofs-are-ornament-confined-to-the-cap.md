@@ -116,6 +116,14 @@ is not a spire, and the Chapel is the town's only vertical accent. 204 cels
 remain, and the lesson generalises — the next thing taller than the current
 tallest cel costs about 110 cels however innocent it sounds.
 
+With **eleven** archetypes the atlas holds **1220 cels** against that 1296
+ceiling, 76 spare. One archetype was cut on the way: a Restaurant whose identity
+was an awning could not be drawn, because a gable's ridge is a *line* and
+anything placed on or across it either straddles the two slopes or floats above
+them. The enclosed-hole invariant caught four attempts. Every other archetype
+carries roof furniture without a hole, because their roofs have areas rather
+than lines — which is worth knowing before the next ornament is designed.
+
 The alternative — letting a roof kind multiply with the skin axis rather than
 replacing it on the cap — gives `4 × 2 × N × 8 × 2` cap cels. At N=4 that is
 **1012 cels against 756**, and against the same 1408 ceiling it runs out at seven

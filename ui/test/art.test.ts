@@ -1503,7 +1503,7 @@ test("in a real town's paths, several archetypes occur", () => {
   // spread rather than exhaustive.
   assert.ok(
     seen.size >= 4,
-    `only ${[...seen].join(",")} occurred among ten real paths; a nine-wide axis should spread them`,
+    `only ${[...seen].join(",")} occurred among ten real paths; an eleven-wide axis should spread them`,
   );
 });
 
