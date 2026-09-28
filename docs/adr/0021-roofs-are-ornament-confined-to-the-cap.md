@@ -103,10 +103,18 @@ ticket 04) is a second bake of the whole cap family — **+320 cels**, 820 becom
 **1140** — which leaves 268 spare and takes the roof ceiling to **nine kinds**:
 N=9 is 1396 and fits, N=10 is 1460 and does not. The flag cost *no* height, which
 was the thing that had to be checked rather than assumed: it is drawn inside the
-eight units above the roof that the pitched chimney already occupied, so `cellH` is
-still 93 and the tallest cel is still 91 px. Had it reached one unit higher it
-would have cost the ceiling roughly 110 cels for the privilege, which is what
-paying per-ornament looks like.
+eight units above the roof that the pitched chimney already occupied, so it grew
+no cel. Had it reached one unit higher it would have cost the ceiling roughly 110
+cels for the privilege, which is what paying per-ornament looks like.
+
+The ceiling has since moved a third time, and this time because of an
+*archetype* rather than an ornament. The Chapel is 30 units tall at the largest
+footprint, which puts the tallest cel at 99 px and `cellH` at 101 — so the
+ceiling is **1296**, not 1408. That is the same arithmetic as paying per-ornament
+and it was taken on purpose: a spire that is not the tallest thing on the skyline
+is not a spire, and the Chapel is the town's only vertical accent. 204 cels
+remain, and the lesson generalises — the next thing taller than the current
+tallest cel costs about 110 cels however innocent it sounds.
 
 The alternative — letting a roof kind multiply with the skin axis rather than
 replacing it on the cap — gives `4 × 2 × N × 8 × 2` cap cels. At N=4 that is

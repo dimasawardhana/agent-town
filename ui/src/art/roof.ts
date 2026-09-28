@@ -31,7 +31,7 @@ import { IsoPix } from "./iso";
  * Closed for the same reason `Stage` and `Place` are: a kind has a drawing behind
  * it, and an open set would let one be named with nothing to show for it.
  */
-export const ARCHETYPES = ["tenement", "works", "cottage", "hall", "library"] as const;
+export const ARCHETYPES = ["tenement", "works", "cottage", "hall", "library", "stadium", "hospital", "chapel", "tower"] as const;
 export type Archetype = (typeof ARCHETYPES)[number];
 
 /**
@@ -565,7 +565,316 @@ const domed: RoofKit = {
   },
 };
 
-const KITS: Record<Archetype, RoofKit> = { tenement: flat, works: sawtooth, cottage: pitched, hall: gantried, library: domed };
+/**
+ * The stadium: the widest, lowest thing on the map.
+ *
+ * Chosen for **proportion above all**, because that is the only thing that
+ * survives 91 pixels. A stadium drawn at the same height as a library is a
+ * library with a different curve on it; drawn wide and shallow it is the one
+ * silhouette on the skyline that cannot be anything else. The height therefore
+ * *falls* as the footprint grows, which is the opposite of every other kind and
+ * is the whole point — a big stadium must still read as low.
+ */
+const stadium: RoofKit = {
+  height(side) {
+    if (side <= 44) return 8;
+    if (side <= 60) return 9;
+    if (side <= 78) return 9;
+    return 8;
+  },
+  trim(iso, side) {
+    // A fascia band around the rim rather than a gutter: a stadium's edge is a
+    // wall, not an overhang, so the line is on the vertical face.
+    iso.beamX(0, side, side, 0, P.stone[0], 1);
+    iso.beamY(0, side, side, 0, P.stone[0], 1);
+  },
+  draw(iso, side, eave) {
+    // An elliptical bowl rather than a dome: squashed on both axes, so the
+    // silhouette is a wide shallow curve and not a hemisphere.
+    //
+    // The pitch is deliberately *not* sunk below the rim. Sinking it opens a
+    // pocket between the bowl and the inner square, and once damage lands on
+    // that square the outline pass inks the pocket shut — an enclosed hole in
+    // the roof, which is the one thing a roof may never have. The first draft
+    // did exactly that and the hole invariant caught it. The bowl reads from its
+    // curve alone.
+    const rise = stadium.height(side);
+    iso.dome(-3, -3, side + 6, side + 6, eave, (t) => {
+      const lip = 1 - t * t * t;
+      return t >= 1 ? 0 : rise * (lip * 0.55);
+    }, {
+      top: P.stone[3],
+      near: P.stone[2],
+      far: P.stone[1],
+      eave: P.stone[0],
+      edge: P.ink,
+    });
+    // The pitch, as three lines across the bowl rather than a plane below it.
+    // A beam cannot enclose anything, and it is enough to say "arena".
+    const inner = Math.round(side * 0.5);
+    const o = Math.round((side - inner) / 2);
+    const z = eave + Math.max(1, Math.round(rise * 0.4));
+    iso.beamX(o, o + inner, o, z, P.stone[1], 1);
+    iso.beamY(o, o, o, z, P.stone[1], 1);
+    iso.beamY(o + inner, o + inner, o, z, P.stone[1], 1);
+  },
+  stack(iso, side, top) {
+    // Floodlights, at the corners a bowl's rim would leave clearest. Posts of
+    // one pixel read as masts at this zoom; anything heavier reads as another
+    // building sitting on the roof.
+    const p = Math.max(4, Math.round(side * 0.12));
+    for (const [x, y] of [[p, p], [side - p, p], [p, side - p], [side - p, side - p]]) {
+      iso.box(x, y, 1, 1, top - 2, top + 5, {
+        top: P.stone[3],
+        lit: P.stone[2],
+        shadow: P.stone[1],
+        edge: P.ink,
+      });
+    }
+  },
+  damage(iso, side, top) {
+    // A stand gives way: a wedge of seating gone, drawn as a dark bite out of
+    // the rim rather than a hole in the middle, because a stadium's damage is
+    // always at its edge.
+    //
+    // The z is *down* the bowl rather than at the crown. The surface at the rim
+    // of a dome is far below its highest point, so a mark placed at `top` floats
+    // clear of the roof and the outline pass seals the gap as an enclosed hole
+    // — the first draft did exactly that. Two pixels down puts it on the curve
+    // at every footprint.
+    const d = Math.max(6, Math.round(side / 7));
+    const z = top - 5;
+    const hy = Math.round(side * 0.3);
+    iso.footprint(0, hy, d, d, z, P.ink);
+    iso.beamX(0, d, hy + Math.round(d / 2), z, P.wood[1], 1);
+  },
+};
+
+/**
+ * The hospital: wide, low, and flat, with a mark on the roof.
+ *
+ * Distinguished from a Tenement by being *wider than it is tall* at every
+ * footprint, which is why its height is a fraction of the others' — a hospital
+ * that stands tall reads as a tower that happens to be white. The cross is
+ * drawn flat on the roof rather than on the facade because a facade mark is
+ * invisible from the fitted zoom, and a roof mark is the one plane a reader
+ * can see.
+ */
+const hospital: RoofKit = {
+  height(side) {
+    if (side <= 44) return 5;
+    if (side <= 60) return 6;
+    if (side <= 78) return 7;
+    return 8;
+  },
+  trim(iso, side) {
+    // A parapet, like the tenement's, so a run of flat roofs is not a row of
+    // identical lids. The difference between the two archetypes is the roof
+    // furniture and the height, not the coping.
+    iso.beamX(0, side, side, 0, P.stone[0], 1);
+    iso.beamY(0, side, side, 0, P.stone[0], 1);
+  },
+  draw(iso, side, eave) {
+    // A low slab with a raised block at the centre, which is the mass a
+    // hospital is: a wide single storey with the plant on top of it.
+    iso.box(-2, -2, side + 4, side + 4, eave, eave + hospital.height(side) - 3, {
+      top: P.plaster[3],
+      lit: P.plaster[2],
+      shadow: P.plaster[1],
+      edge: P.ink,
+    });
+    const w = Math.round(side * 0.4);
+    const o = Math.round((side - w) / 2);
+    iso.box(o, o, w, w, eave + hospital.height(side) - 3, eave + hospital.height(side), {
+      top: P.plaster[3],
+      lit: P.plaster[2],
+      shadow: P.plaster[1],
+      edge: P.ink,
+    });
+    // The mark. Two bars, drawn on the roof plane, in the accent so it is the
+    // one saturated thing on an otherwise white roof.
+    const c = Math.round(side * 0.16);
+    const m = Math.round(side / 2);
+    iso.beamX(m - c, m + c, m, eave + hospital.height(side) + 1, P.accent, 2);
+    iso.beamY(m, m, m - c, eave + hospital.height(side) + 1, P.accent, 2);
+  },
+  stack(iso, side, top) {
+    // Plant and an ambulance bay marker — a low block, kept off the centre so it
+    // never covers the mark.
+    const w = Math.max(4, Math.round(side / 10));
+    iso.box(Math.round(side * 0.12), Math.round(side * 0.62), w, w, top, top + 4, {
+      top: P.metal[3],
+      lit: P.metal[2],
+      shadow: P.metal[1],
+      edge: P.ink,
+    });
+  },
+  damage(iso, side, top) {
+    // A ward block loses its roof: a dark square with the slab's own broken
+    // edge, because a hospital's failure is a hole in a flat roof.
+    const d = Math.max(5, Math.round(side / 9));
+    iso.footprint(Math.round(side * 0.6), Math.round(side * 0.16), d, d, top, P.ink);
+    iso.footprint(
+      Math.round(side * 0.6) + 1,
+      Math.round(side * 0.16) + 1,
+      d - 2,
+      d - 2,
+      top + 1,
+      P.stone[0],
+    );
+  },
+};
+
+/**
+ * The chapel: the only spike on the skyline.
+ *
+ * One of two kinds here whose height is driven by a *single* point rather than
+ * a mass. A spire is narrow and tall, so the whole archetype is legible from
+ * its outline at a distance where a stadium is a smudge — which is the reason
+ * it is here: the town's vertical accent, and the one thing that is never
+ * confused for anything else.
+ */
+const chapel: RoofKit = {
+  height(side) {
+    if (side <= 44) return 16;
+    if (side <= 60) return 21;
+    if (side <= 78) return 26;
+    return 30;
+  },
+  trim(iso, side) {
+    iso.beamX(0, side, side, 0, P.stone[0], 1);
+    iso.beamY(0, side, side, 0, P.stone[0], 1);
+  },
+  draw(iso, side, eave) {
+    // A narrow body carrying a tall spire. The body is almost the width of the
+    // wall so the spire does not read as a separate building beside it.
+    const w = Math.max(10, Math.round(side * 0.46));
+    const o = Math.round((side - w) / 2);
+    iso.gable(o, o, w, w, eave, chapel.height(side) - 14, {
+      near: P.rust[2],
+      far: P.rust[1],
+      ridge: P.rust[3],
+      gable: P.stone[3],
+      edge: P.ink,
+    });
+    // The spire: a stack of narrowing blocks, which at 91px is how a spire is
+    // actually drawn — a stepped taper, not a smooth cone.
+    const c = Math.round(side / 2);
+    let half = Math.max(2, Math.round(w * 0.16));
+    let z = eave + chapel.height(side) - 14;
+    for (let i = 0; i < 4; i++) {
+      iso.box(c - half, c - half, half * 2, half * 2, z, z + 5, {
+        top: P.rust[3],
+        lit: P.rust[2],
+        shadow: P.rust[1],
+        edge: P.ink,
+      });
+      z += 5;
+      half = Math.max(1, half - 1);
+    }
+  },
+  stack(iso, side, top) {
+    // A cross finial, so the spire's tip is a cross and not a peg.
+    const c = Math.round(side / 2);
+    iso.box(c, c, 1, 1, top - 2, top + 3, {
+      top: P.accent,
+      lit: P.accent,
+      shadow: P.accent,
+      edge: P.ink,
+    });
+  },
+  damage(iso, side, top) {
+    // A missing slate: a dark patch on the slope and a bare beam across it, which
+    // is the pitched kind's damage and is right here because a spire is a roof.
+    const d = Math.max(5, Math.round(side / 12));
+    const hx = Math.round(side * 0.42);
+    const hy = Math.round(side * 0.42);
+    iso.footprint(hx, hy, d, d, top - 4, P.ink);
+    iso.beamX(hx, hx + d, hy + Math.round(d / 2), top - 4, P.wood[1], 1);
+  },
+};
+
+/**
+ * The office tower: the tallest thing that is not a spire.
+ *
+ * The town's vertical extreme, and deliberately *not* a spire — a flat slab
+ * with a parapet and a plant deck. It is the counterpart to the stadium: same
+ * axis, opposite end, and a reader should be able to name both from the
+ * skyline without a label.
+ */
+const tower: RoofKit = {
+  height(side) {
+    if (side <= 44) return 14;
+    if (side <= 60) return 19;
+    if (side <= 78) return 24;
+    return 28;
+  },
+  trim(iso, side) {
+    iso.beamX(0, side, side, 0, P.metal[0], 1);
+    iso.beamY(0, side, side, 0, P.metal[0], 1);
+  },
+  draw(iso, side, eave) {
+    // A slab, not a lid: thin overhang, metal rather than stone, and a setback
+    // at the top so the crown is narrower than the shaft. A tower whose crown is
+    // the same width as its base reads as a box.
+    const rise = tower.height(side);
+    iso.box(-1, -1, side + 2, side + 2, eave, eave + rise - 6, {
+      top: P.metal[3],
+      lit: P.metal[2],
+      shadow: P.metal[1],
+      edge: P.ink,
+    });
+    const w = Math.round(side * 0.78);
+    const o = Math.round((side - w) / 2);
+    iso.box(o, o, w, w, eave + rise - 6, eave + rise, {
+      top: P.metal[3],
+      lit: P.metal[2],
+      shadow: P.metal[1],
+      edge: P.ink,
+    });
+  },
+  stack(iso, side, top) {
+    // A mast and two vents, on a crown small enough that this is the only
+    // furniture it can carry without becoming the building.
+    const c = Math.round(side * 0.5);
+    const w = Math.max(4, Math.round(side / 12));
+    iso.box(c, c, 1, 1, top, top + 6, {
+      top: P.metal[3],
+      lit: P.metal[2],
+      shadow: P.metal[1],
+      edge: P.ink,
+    });
+    for (const y of [Math.round(side * 0.22), Math.round(side * 0.74)]) {
+      iso.box(c - w, y, w, w, top, top + 3, {
+        top: P.metal[3],
+        lit: P.metal[2],
+        shadow: P.metal[1],
+        edge: P.ink,
+      });
+    }
+  },
+  damage(iso, side, top) {
+    // A blown panel: a missing square of cladding and the frame behind it, which
+    // is what a glass tower's failure looks like from the outside.
+    const d = Math.max(5, Math.round(side / 10));
+    const hx = Math.round(side * 0.28);
+    const hy = Math.round(side * 0.3);
+    iso.footprint(hx, hy, d, d, top - 6, P.ink);
+    iso.footprint(hx + 1, hy + 1, d - 2, d - 2, top - 5, P.glass[1]);
+  },
+};
+
+const KITS: Record<Archetype, RoofKit> = {
+  tenement: flat,
+  works: sawtooth,
+  cottage: pitched,
+  hall: gantried,
+  library: domed,
+  stadium,
+  hospital,
+  chapel,
+  tower,
+};
 
 /** The rise a kind stands above the wall top, for a footprint. This is what sizes
  *  the cap cel, so every kind must include its own rooftop furniture in it. */

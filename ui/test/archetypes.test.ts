@@ -16,13 +16,11 @@ import { EDGES, GROUND_KINDS } from "../src/art/terrain";
 import { FRAME_MS } from "../src/art/worker";
 
 test("the axis is named places, not roof shapes", () => {
-  // The whole point of ticket 03. A reader cannot name "gantried"; they can
-  // name the Hall. If a roof-shape word comes back the axis has reverted.
   const shapeWords = ["pitched", "flat", "sawtooth", "gantried", "domed", "gable"];
   for (const a of ARCHETYPES) {
     assert.ok(!shapeWords.includes(a), `"${a}" is a roof shape, not a place`);
   }
-  assert.equal(ARCHETYPES.length, 5, "five archetypes ship; the rest are tickets 04 and 05");
+  assert.equal(ARCHETYPES.length, 9, "nine archetypes ship; the last three are ticket 05");
 });
 
 test("every archetype is reachable and the selector is deterministic", () => {
@@ -110,6 +108,14 @@ test("the atlas still fits after the cutover", () => {
   const props = ALL_PROP_KINDS.length * 2;
   const workers = 2 * Object.values(FRAME_MS).reduce((n, f) => n + f.length, 0);
   assert.equal(cels.length, workers + 4 * perFootprint + ground + props);
-  assert.equal(layout.cellH, 93, "cell height changed; re-measure the ceiling in ADR-0021");
+  // Cell height is 101, not 93: the Chapel is 30 units tall at the largest
+  // footprint, and a spire that is not the tallest thing on the skyline is not
+  // a spire. That costs 112 cels of ceiling (1408 -> 1296) and is worth it — the
+  // ticket records the trade rather than hiding it.
+  assert.equal(layout.cellH, 101, "cell height changed; re-measure the ceiling in ADR-0021");
   assert.equal(layout.height, 8192, "the sheet grew a power of two; re-measure ADR-0021");
+  assert.ok(
+    cels.length <= 1296,
+    `${cels.length} cels against a 1296 ceiling — the headroom the budget assumed is gone`,
+  );
 });
