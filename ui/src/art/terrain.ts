@@ -44,10 +44,10 @@ export const TILE_PX = { w: TILE + 1, h: TILE / 2 + 1, ox: TILE / 2, oy: 0 } as 
  * between them (ADR-0012), so a road tile had nothing to place it and was baked
  * as dead art.
  */
-export type Ground = "grass" | "grassDark" | "yard" | "earth" | "deck" | "flags";
+export type Ground = "grass" | "grassDark" | "yard" | "earth" | "deck" | "flags" | "road";
 
 /** Every kind, in a stable order, so the bake does not depend on key order. */
-export const GROUND_KINDS: readonly Ground[] = ["grass", "grassDark", "yard", "earth", "deck", "flags"];
+export const GROUND_KINDS: readonly Ground[] = ["grass", "grassDark", "yard", "earth", "deck", "flags", "road"];
 
 /** Each kind's ramp, base index, and its lit and shadowed facet steps. */
 const GROUND_RAMP: Record<Ground, { ramp: Ramp; base: number; lit: string; dark: string }> = {
@@ -81,6 +81,19 @@ const GROUND_RAMP: Record<Ground, { ramp: Ramp; base: number; lit: string; dark:
   // is the exact failure the edge test exists to catch. One step of separation
   // between the surface and its own dark step is the minimum that shows.
   flags: { ramp: P.stone, base: 2, lit: P.stone[3], dark: P.stone[1] },
+  // The road, which is the one surface that connects two things rather than
+  // being one of them.
+  //
+  // Cool grey, and deliberately not the stone ramp the Depot is flagged with: a
+  // road is outdoors and a Depot is not, and sharing the ramp would make an
+  // indoor floor and a street the same material. The `rubber` ramp is the
+  // town's one cold dark, which is also the honest read — tarmac is closer to
+  // rubber than to slate.
+  //
+  // `base: 2` for the same reason `flags` uses it. A surface sitting on its own
+  // ramp's dark step has an edge that draws nothing, and the road's whole job
+  // is to have an edge.
+  road: { ramp: P.rubber, base: 2, lit: P.metal[2], dark: P.rubber[1] },
 };
 
 /**

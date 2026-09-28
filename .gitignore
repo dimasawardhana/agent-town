@@ -22,3 +22,4 @@ ui/ui-atlas.test.mjs
 ui-blankcaps.test.mjs
 ui-archetypes.test.mjs
 ui-damage.test.mjs
+ui-roads.test.mjs

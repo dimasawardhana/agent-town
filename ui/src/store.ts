@@ -15,6 +15,12 @@ import { create } from "zustand";
 // boundary, so this one points at the other rather than restating the reason.
 export const SITE_ID_BUILDING_PREFIX = "building:";
 
+export interface Road {
+  x: number; y: number; w: number; h: number;
+  /** "row" or "containment" — which rule produced the band. */
+  kind: string;
+}
+
 export interface Site {
   id: string;
   kind: "building" | "container" | "workshop" | "yard" | "depot";
@@ -73,6 +79,7 @@ export interface PlacedDistrict {
 
 export interface Layout {
   sites: Site[];
+  roads?: Road[];
   districts: PlacedDistrict[];
   width: number;
   height: number;

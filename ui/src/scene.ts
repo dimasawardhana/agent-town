@@ -489,6 +489,11 @@ export class TownScene extends Phaser.Scene {
     // pixels per section as Game Objects would be a frame budget spent on
     // something static. It also guarantees the kerb and its ground cannot
     // z-fight, because they are the same pixels.
+    // Roads, over the tiles and under the kerbs: a road is a made surface laid
+    // on the ground, and a kerb is the boundary of whatever it bounds — a road's
+    // own kerb has to sit on top of it, not under it.
+    this.paintRoads(ctx, toCanvas, l);
+
     this.paintKerb(ctx, toCanvas, l);
 
     const textureKey = "ground";
@@ -516,6 +521,56 @@ export class TownScene extends Phaser.Scene {
    * inside a district — which is the truth — rather than as two shapes that
    * had a bite taken out of one.
    */
+  /**
+   * paintRoads draws the layout's road bands onto the ground texture.
+   *
+   * This is the pass whose absence killed the road kind once. The art existed and
+   * was baked, and nothing ever asked for it, so it was dead weight in the
+   * atlas — which is the whole reason `terrain.ts` no longer had a `road`. The
+   * bands come from the layout rather than being derived here, because a road
+   * the browser works out for itself is a road the browser can get wrong
+   * (ADR-0012).
+   *
+   * The band is walked in whole tiles and clipped to the band's own extent, so a
+   * road ends where the layout says it ends rather than where a tile happens to
+   * fall. Half a tile of overhang is what makes a road look like it was painted
+   * on rather than paved.
+   */
+  private paintRoads(
+    ctx: CanvasRenderingContext2D,
+    toCanvas: (wx: number, wy: number) => [number, number],
+    l: Layout,
+  ): void {
+    for (const r of l.roads ?? []) {
+      // The tile grid is walked from the band's own origin, aligned so the road
+      // starts and ends on a tile boundary. Aligned to the *world* grid rather
+      // than the band's, or two bands would meet with a seam between them.
+      const x0 = Math.floor(r.x / TILE) * TILE;
+      const y0 = Math.floor(r.y / TILE) * TILE;
+      const x1 = Math.ceil((r.x + r.w) / TILE) * TILE;
+      const y1 = Math.ceil((r.y + r.h) / TILE) * TILE;
+      for (let wy = y0; wy < y1; wy += TILE) {
+        for (let wx = x0; wx < x1; wx += TILE) {
+          // The band's own edge takes a kerb piece, so a road has a boundary
+          // instead of a bare flip against the grass beside it.
+          const onEdge =
+            wx <= r.x ? "west"
+            : wy <= r.y ? "north"
+            : wx + TILE >= r.x + r.w ? "east"
+            : wy + TILE >= r.y + r.h ? "south"
+            : null;
+          const v = tileVariant(wx, wy);
+          const edgeKey = onEdge ? groundEdgeFrame("road", onEdge, v) : null;
+          const key = edgeKey && this.atlas[edgeKey] ? edgeKey : groundFrame("road", v);
+          const f = this.atlas[key];
+          if (!f) continue;
+          const [cx, cy] = toCanvas(wx, wy);
+          ctx.drawImage(this.tileCanvas(key), Math.round(cx - f.ox), Math.round(cy - f.oy));
+        }
+      }
+    }
+  }
+
   private paintKerb(
     ctx: CanvasRenderingContext2D,
     toCanvas: (wx: number, wy: number) => [number, number],

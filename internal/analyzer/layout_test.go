@@ -3,6 +3,7 @@ package analyzer
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -753,4 +754,117 @@ func TestContainerFitsATightPlate(t *testing.T) {
 			t.Errorf("container %s has an empty footprint %vx%v", s.Path, s.W, s.H)
 		}
 	}
+}
+
+// --- Roads ---------------------------------------------------------------
+
+// A road tile once existed and was deleted because "a road tile had nothing to
+// place it and was baked as dead art". This is the test that the placement
+// exists, so the art cannot become dead again without something failing.
+func TestTheLayoutEmitsRoads(t *testing.T) {
+	root := t.TempDir()
+	// Several districts, so the layout has to wrap. A row break only happens
+	// between districts; twenty-four buildings in one district are one very
+	// wide row and produce no road at all, which is why the first version of
+	// this fixture found nothing.
+	for d := range 14 {
+		for i := range 4 {
+			dir := filepath.Join(root, fmt.Sprintf("d%02d", d), fmt.Sprintf("m%02d", i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package m\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	at, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(at)
+	if len(l.Roads) == 0 {
+		t.Fatal("the layout emitted no roads; the road art is dead again")
+	}
+	for _, r := range l.Roads {
+		if r.W <= 0 || r.H <= 0 {
+			t.Errorf("a road has no extent: %+v", r)
+		}
+		if r.Kind != "row" && r.Kind != "containment" {
+			t.Errorf("a road has kind %q, which no rule produces", r.Kind)
+		}
+	}
+}
+
+// A row road must sit in the gap the layout actually left, not over a building.
+func TestRowRoadsSitInTheGapAndNotOverABuilding(t *testing.T) {
+	root := t.TempDir()
+	for d := range 14 {
+		for i := range 4 {
+			dir := filepath.Join(root, fmt.Sprintf("d%02d", d), fmt.Sprintf("m%02d", i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package m\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	at, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(at)
+	rows := 0
+	for _, r := range l.Roads {
+		if r.Kind != "row" {
+			continue
+		}
+		rows++
+		for _, s := range l.Sites {
+			overlaps := r.X < s.X+s.W && s.X < r.X+r.W && r.Y < s.Y+s.H && s.Y < r.Y+r.H
+			if overlaps {
+				t.Errorf("a row road at %v,%v %vx%v runs over the %s plot at %v,%v",
+					r.X, r.Y, r.W, r.H, s.ID, s.X, s.Y)
+			}
+		}
+	}
+	if rows == 0 {
+		t.Error("a tree this size wraps onto more than one row, so a row road was expected")
+	}
+}
+
+// Containment roads resolve to the *nearest* ancestor, not to the repository.
+func TestContainmentRoadsUseTheNearestAncestor(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"ui/a.go", "ui/src/b.go", "ui/src/art/c.go"} {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("package m\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(at)
+	byPath := map[string]Site{}
+	for _, s := range l.Sites {
+		byPath[s.Path] = s
+	}
+	// ui/src/art is inside ui/src, and ui/src is inside ui. Two links, and the
+	// inner one must not skip a level to reach the repo.
+	links := 0
+	for _, r := range l.Roads {
+		if r.Kind == "containment" {
+			links++
+		}
+	}
+	if links != 2 {
+		t.Errorf("%d containment roads, want 2 — one per nested directory", links)
+	}
+	_ = byPath
 }

@@ -3,6 +3,7 @@ package analyzer
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 // SiteIDBuildingPrefix marks a Site whose ID names a building rather than one
@@ -102,8 +103,32 @@ type PlacedDistrict struct {
 type Layout struct {
 	Sites     []Site           `json:"sites"`
 	Districts []PlacedDistrict `json:"districts"`
-	Width     float64          `json:"width"`
-	Height    float64          `json:"height"`
+	// Roads are paved bands in world coordinates. They travel rather than being
+	// derived in the browser: the layout is the single source of truth for
+	// geometry (ADR-0012), and a renderer working out its own roads could
+	// disagree with the gaps the layout actually left between its rows.
+	Roads  []Road  `json:"roads"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// Road is one paved band: a rectangle in the same world space as a site's.
+//
+// A rectangle rather than a path, because the layout's roads genuinely are
+// rectangles — the gap between two rows is a band, and the strip between a
+// building and the one containing it is a band. A road that had to be walked
+// tile by tile in the browser would be the browser re-deriving geometry, which
+// is the thing ADR-0012 rules out.
+type Road struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+	// Kind is "row" or "containment". It is carried so the two can be drawn
+	// differently if they ever need to be — a row road is a street and a
+	// containment road is a footpath — and so a reader debugging the map can
+	// tell which rule produced a band.
+	Kind string `json:"kind"`
 }
 
 // buildingSize scales a building's footprint by its source-file count.
@@ -220,7 +245,7 @@ func ContainerFloors(c Container) int {
 func LayoutTown(t *Town) Layout {
 	// Sites and districts are always non-nil: the three special places exist
 	// even for an empty project, and the UI should never receive a null list.
-	l := Layout{Sites: []Site{}, Districts: []PlacedDistrict{}}
+	l := Layout{Sites: []Site{}, Districts: []PlacedDistrict{}, Roads: []Road{}}
 
 	// --- The three places that are not in the directory tree ---
 	//
@@ -261,6 +286,17 @@ func LayoutTown(t *Town) Layout {
 		// edge, outside the camera bounds the width implies — reachable only
 		// by nothing.
 		if x > rowStart && x+w > maxRowW {
+			// The gap this row break leaves *is* the road. It is not an
+			// afterthought between blocks — it is the space the layout made
+			// for exactly this, and it is emitted here rather than drawn by
+			// the browser so that the band and the gap can never disagree.
+			l.Roads = append(l.Roads, Road{
+				X:    rowStart,
+				Y:    y + rowH,
+				W:    maxRowW - rowStart,
+				H:    rowGap,
+				Kind: "row",
+			})
 			x = rowStart
 			y += rowH + rowGap
 			rowH = 0
@@ -273,6 +309,19 @@ func LayoutTown(t *Town) Layout {
 			rowH = blk.H
 		}
 	}
+
+	// --- Containment roads ---
+	//
+	// A building whose path is nested inside another building's gets a band
+	// between the two plots. This is a true statement about the tree and the
+	// only one available without a dependency graph: `ui/src/art` really is
+	// inside `ui`, and a reader scanning the town is trying to learn the shape
+	// of the tree.
+	//
+	// Import dependency would say far more — "this calls that" rather than
+	// "this sits inside that" — and is out of scope: it is a real analysis the
+	// daemon does not perform. See the spec.
+	containmentRoads(&l)
 
 	// --- Bounds ---
 	//
@@ -505,4 +554,56 @@ func buildingsIn(t *Town, district string) []Building {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// containmentRoads adds a band from every nested building to the building that
+// contains it.
+//
+// Longest-prefix match, so a path resolves to its *nearest* ancestor rather than
+// to the repository root: `ui/src/art` is inside `ui/src`, and saying it is
+// inside the repo would be true and useless. The band is a plain rectangle
+// spanning the two plots, which is honest about what it is — a link, not a
+// street — and needs no path-walking in the browser.
+func containmentRoads(l *Layout) {
+	byPath := make(map[string]Site, len(l.Sites))
+	for _, s := range l.Sites {
+		if s.Path != "" {
+			byPath[s.Path] = s
+		}
+	}
+	// Sorted so the layout is a pure function of the tree: a map's iteration
+	// order is not, and ADR-0012 requires determinism.
+	paths := make([]string, 0, len(byPath))
+	for p := range byPath {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	const band = 10.0
+	for _, child := range paths {
+		best := ""
+		for _, cand := range paths {
+			if cand == child || !strings.HasPrefix(child, cand+"/") {
+				continue
+			}
+			if len(cand) > len(best) {
+				best = cand
+			}
+		}
+		if best == "" {
+			continue
+		}
+		c, p := byPath[child], byPath[best]
+		// Centre to centre, so the band reaches whichever way round the two
+		// happen to sit on the map — a child is not always below its parent.
+		cx, cy := c.X+c.W/2, c.Y+c.H/2
+		px, py := p.X+p.W/2, p.Y+p.H/2
+		l.Roads = append(l.Roads, Road{
+			X:    math.Min(cx, px) - band/2,
+			Y:    math.Min(cy, py) - band/2,
+			W:    math.Abs(px-cx) + band,
+			H:    math.Abs(py-cy) + band,
+			Kind: "containment",
+		})
+	}
 }
