@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
 import { actionInfo, targetOf } from "./actions";
+import { EMBER_MS } from "./embers";
 import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
@@ -58,6 +59,94 @@ const BUILD_STAGE_LABEL: Record<BuildingState["status"], string> = {
   doored: "door hung",
   completed: "complete",
 };
+/**
+ * The stage ladder, in build order, with the label a developer would use.
+ *
+ * Order is the point: a count per stage is only readable if the stages read
+ * left to right as progress, so this is the ladder and not the alphabet.
+ */
+const LADDER: { key: BuildingState["status"]; label: string }[] = [
+  { key: "planned", label: "plot" },
+  { key: "framed", label: "framed" },
+  { key: "walled", label: "walled" },
+  { key: "roofed", label: "roofed" },
+  { key: "completed", label: "done" },
+];
+
+/**
+ * TownPulse replaces a line that read "14 buildings · 5 districts".
+ *
+ * That was true and useless. The panel exists to answer *what has the agent
+ * actually built here*, and a count of buildings cannot answer it — the same
+ * 14 buildings are a staked field or a finished town, and the difference is
+ * exactly what a reader came for. So this is the one place that says it: how far
+ * along the ladder the town is, what is failing, and what is being worked on
+ * right now.
+ */
+function TownPulse() {
+  const town = useTown((s) => s.town);
+  const live = useTown((s) => s.live);
+  if (!town) return null;
+
+  const at = new Map<string, number>();
+  for (const b of live.buildings) at.set(b.status, (at.get(b.status) ?? 0) + 1);
+  const damaged = live.buildings.filter((b) => b.damaged).length;
+  const verified = live.buildings.filter((b) => b.verified).length;
+
+  // The same two minutes the ember claims, counted the same way. Reusing the
+  // constant is the point: a "recently worked" figure that disagreed with the
+  // glow on the map would be two different claims about one fact.
+  const now = Date.now();
+  const recent = live.buildings.filter((b) => now - b.updated < EMBER_MS).length;
+
+  const present = LADDER.filter((l) => (at.get(l.key) ?? 0) > 0);
+
+  return (
+    <section className="pulse">
+      <h2>Town</h2>
+      <p className="meta">
+        {town.buildings.length} buildings · {town.districts.length} districts
+      </p>
+
+      {present.length > 0 && (
+        <ul className="ladder">
+          {present.map((l) => {
+            const n = at.get(l.key) ?? 0;
+            return (
+              <li key={l.key} title={`${n} at ${l.label}`}>
+                <span className="lcount">{n}</span>
+                <span className="lname">{l.label}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Only what is present. A row of zeroes is noise, and its absence
+          already says the thing it would have said. */}
+      {(damaged > 0 || verified > 0 || recent > 0) && (
+        <p className="signals">
+          {damaged > 0 && (
+            <span className="sig down">
+              {damaged} failing
+            </span>
+          )}
+          {verified > 0 && (
+            <span className="sig done">
+              {verified} verified
+            </span>
+          )}
+          {recent > 0 && (
+            <span className="sig hot" title="worked on in the last two minutes">
+              {recent} just worked
+            </span>
+          )}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function App() {
   const town = useTown((s) => s.town);
   const projects = useTown((s) => s.projects);
@@ -181,11 +270,7 @@ export function App() {
 
         {error && <p className="error">{error}</p>}
 
-        {town && (
-          <p className="meta">
-            {town.buildings.length} buildings · {town.districts.length} districts
-          </p>
-        )}
+        {town && <TownPulse />}
 
         {/* The detail control. It limits which buildings are *drawn*, by how
             deep they sit below the repo root.
@@ -394,9 +479,10 @@ export function App() {
           <h2>Activity</h2>
           {events.length === 0 ? (
             <p className="muted">
-              No events yet. Install the AI Town extension, then start your
-              agent with <code>AI_TOWN_URL</code> set — <code>townd</code>
-              prints the exact commands on startup.
+              No events yet. Install the AI Town extension and start your
+              agent — it finds the daemon on the default port, so no environment
+              variable is needed. Only a daemon started with <code>--port</code>{" "}
+              wants <code>AI_TOWN_URL</code>.
             </p>
           ) : (
             <ul>
