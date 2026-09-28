@@ -220,15 +220,23 @@ function turnRect(turn: Turn, r: WorldRect): WorldRect {
  * The result is re-based to start at (0, 0), because the ground painter and the
  * land box assume a layout whose coordinates begin at the origin.
  */
-export function turnLayout<S extends WorldRect, D extends WorldRect>(
+export function turnLayout<S extends WorldRect, D extends WorldRect, R extends WorldRect = WorldRect & { kind?: string }>(
   turn: number,
-  layout: { sites: S[]; districts: D[]; width: number; height: number },
-): { sites: S[]; districts: D[]; width: number; height: number } {
+  layout: { sites: S[]; districts: D[]; roads?: R[]; width: number; height: number },
+): { sites: S[]; districts: D[]; roads?: R[]; width: number; height: number } {
   const t = normaliseTurn(turn);
   if (t === 0) return layout;
 
   const sites = layout.sites.map((s) => ({ ...s, ...turnRect(t, s) }));
   const districts = layout.districts.map((d) => ({ ...d, ...turnRect(t, d) }));
+  // Roads are geometry like everything else, and they are rotated and shifted
+  // by the same two steps. They were not, and the failure was silent and total:
+  // the type did not mention them, so the turned layout came back with no roads
+  // at all and the painter — correctly, following the layout it was given —
+  // drew nothing. A field the turn does not know about is a field that vanishes
+  // rather than one that drifts, which is why this is a named line and not a
+  // spread over the return.
+  const roads = layout.roads?.map((r) => ({ ...r, ...turnRect(t, r) }));
 
   // One shift for everything, from the whole town's box — derived from the outline
   // the layout declares rather than from the rects, which would be the same number
@@ -241,6 +249,7 @@ export function turnLayout<S extends WorldRect, D extends WorldRect>(
   return {
     sites: sites.map(move),
     districts: districts.map(move),
+    roads: roads?.map(move),
     // Width and height swap on an odd turn, which is exactly what `turnRect` of
     // the whole town computes.
     width: whole.w,

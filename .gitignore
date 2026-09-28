@@ -23,3 +23,4 @@ ui-blankcaps.test.mjs
 ui-archetypes.test.mjs
 ui-damage.test.mjs
 ui-roads.test.mjs
+ui-turnroads.test.mjs

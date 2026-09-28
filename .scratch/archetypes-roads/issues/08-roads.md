@@ -82,3 +82,23 @@ nothing. The fixture now builds fourteen districts so the layout has to wrap.
 
 That is the same shape as the original deletion: a road kind with no geometry
 behind it, which is indistinguishable from a road kind nobody asked for.
+
+### A defect found after the ticket closed: the roads vanished on a turn
+
+Reported against a town that turned correctly in every other respect.
+
+`turnLayout`'s parameter and return types listed `sites` and `districts` and
+nothing else, so a turned layout came back with **no roads at all**. The painter
+followed the layout it was handed, found none, and drew none. The roads did not
+drift — they were absent, which is why the map looked like a town that had simply
+never had roads rather than one that had lost them.
+
+A field the turn does not know about is a field that disappears, not one that
+misbehaves, which is why the fix names the road explicitly in the transform
+rather than spreading it over the return type. `turnroads.test.ts` pins it three
+ways: the roads are present, they moved when the sites moved, and a band that was
+horizontal comes out vertical — a road that kept its dimensions would be a band
+pointing the wrong way down a street.
+
+The same argument applies to any future field on the layout, which is recorded
+where the next one will be added.
