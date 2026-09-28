@@ -22,9 +22,10 @@
 
 import Phaser from "phaser";
 import { CREW_COLOURS } from "./art/palette";
-import { ATLAS, type Atlas, workerFrame } from "./art/bake";
+import { ATLAS, type Atlas, machineFrame } from "./art/bake";
 import { routeAlongRoads, type RoadLine } from "./view";
 import { FRAME_MS, type Tier, type WorkerState } from "./art/worker";
+import { POSE_FOR, machineFor, type MachineKind } from "./art/machine";
 import { PLACARD, placard } from "./art/placard";
 import { actionInfo, targetOf } from "./actions";
 import { SITE_ID_BUILDING_PREFIX, type Action, type Layout, type Site, type Worker, useTown } from "./store";
@@ -135,6 +136,9 @@ function pointAlong(path: { x: number; y: number }[], t: number): { x: number; y
 interface AnimState {
   state: WorkerState;
   tier: Tier;
+  /** Which machine this session drives. Carried on the animation rather than
+   *  looked up, so the frame can be resolved without the worker list. */
+  agent: string;
   /** Milliseconds spent in the current frame. */
   elapsed: number;
   index: number;
@@ -324,8 +328,11 @@ export class WorkerLayer {
     this.shadows.set(w.id, shadow);
 
     const tier: Tier = w.tier === "sub" ? "sub" : "chief";
-    const sprite = this.scene.add.sprite(at.x, at.y, ATLAS, workerFrame(tier, "idle", 0));
-    const frame = this.atlas[workerFrame(tier, "idle", 0)];
+    // A machine per agent, chosen by hash so the same session is the same
+    // machine on every client and across every reload.
+    const kind = machineFor(w.agent || w.id);
+    const sprite = this.scene.add.sprite(at.x, at.y, ATLAS, machineFrame(kind, tier, "idle"));
+    const frame = this.atlas[machineFrame(kind, tier, "idle")];
     // The origin is the cel's own recorded anchor — between the feet for a
     // worker — so the figure stands on its point instead of being centred on it.
     if (frame) sprite.setOrigin(frame.ox / frame.w, frame.oy / frame.h);
@@ -390,7 +397,7 @@ export class WorkerLayer {
       if (!this.dragged()) useTown.getState().focus(workerLabelId(w.id));
     });
 
-    this.anim.set(w.id, { state: "idle", tier, elapsed: 0, index: 0 });
+    this.anim.set(w.id, { state: "idle", tier, agent: w.agent || w.id, elapsed: 0, index: 0 });
   }
 
   /**
@@ -594,33 +601,39 @@ export class WorkerLayer {
           0,
           1,
         );
-        const count = FRAME_MS.walk.length;
-        const index = Math.min(count - 1, Math.floor(p * count));
-        if (a.state !== "walk") {
-          a.state = "walk";
-          a.index = index;
-          sprite.setFrame(workerFrame(a.tier, "walk", index));
-        } else if (index !== a.index) {
-          a.index = index;
-          sprite.setFrame(workerFrame(a.tier, "walk", index));
-        }
+        a.state = "walk";
+        sprite.setFrame(this.frameFor(a, "walk"));
         continue;
       }
 
+      // The rhythm still advances from the art's own table, so a machine keeps
+      // the cadence of the action it stands for — but the frame it lands on is a
+      // *pose*, not a frame of an animation. The state and the pose are kept
+      // apart deliberately: ten states fold onto four poses, and folding them
+      // here rather than baking ten would mean a new state could not drift out
+      // of sync with its silhouette.
       const durations = FRAME_MS[a.state];
       a.elapsed += delta;
       let guard = 0;
-      while (a.elapsed >= durations[a.index] && guard++ < 4) {
-        a.elapsed -= durations[a.index];
+      while (a.elapsed >= durations[a.index % durations.length] && guard++ < 4) {
+        a.elapsed -= durations[a.index % durations.length];
         a.index = (a.index + 1) % durations.length;
-        sprite.setFrame(workerFrame(a.tier, a.state, a.index));
       }
-      // The first frame of a new animation is set here rather than in setState,
-      // because setState runs on the sync path where the frame may not exist yet.
-      if (sprite.frame.name !== workerFrame(a.tier, a.state, a.index)) {
-        sprite.setFrame(workerFrame(a.tier, a.state, a.index));
+      if (sprite.frame.name !== this.frameFor(a, a.state)) {
+        sprite.setFrame(this.frameFor(a, a.state));
       }
     }
+  }
+
+  /**
+   * frameFor is the pose an animation's state is standing in.
+   *
+   * The single place the ten states meet the four poses, so the folding is
+   * written out once and cannot be got wrong in two places.
+   */
+  private frameFor(a: AnimState, state: WorkerState): string {
+    const kind: MachineKind = machineFor(a.agent);
+    return machineFrame(kind, a.tier, POSE_FOR[state] ?? "idle");
   }
 
   /** remove tears down one figure and everything attached to it. */

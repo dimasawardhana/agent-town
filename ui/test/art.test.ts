@@ -36,6 +36,7 @@ import { hex, sprite, Pix } from "../src/art/surface";
 import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
+import { MACHINES, MACHINE_POSES } from "../src/art/machine";
 import { bakedCels, layoutAtlas, SIZES, NO_DAMAGE_FRAME, NO_VERIFIED_FRAME } from "../src/art/bake";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, MATERIALS } from "../src/art/roof";
 import {
@@ -123,7 +124,14 @@ test("the bake and its invariants enumerate the same cels", () => {
   // and verified, broken and known-good only on different occasions, and a
   // flag that appeared only alongside damage would report the opposite of
   // what it means.
-  const workers = 2 * Object.values(FRAME_MS).reduce((n, f) => n + f.length, 0);
+  // The fleet replaced the crew, so the enumeration counts machines: five kinds
+  // by four poses by two tiers. Written from the roster rather than as a
+  // literal, because a hard-coded 40 is a number that stops meaning anything the
+  // moment a kind is added.
+  // Five kinds by four poses by two tiers, from the roster and the pose list
+  // rather than as a literal — a hard-coded 40 stops meaning anything the moment
+  // a kind is added, and then it is a number nobody checks.
+  const machines = MACHINES.length * MACHINE_POSES.length * 2;
   const stages = STAGE_ORDER.length;
   // Neither condition is a cap axis now. Below `roofed` the cap draws nothing,
   // so those stages are baked once per footprint; and damage and the pennant are
@@ -152,7 +160,7 @@ test("the bake and its invariants enumerate the same cels", () => {
   const props = ALL_PROP_KINDS.length * 2;
   assert.equal(
     cels.length,
-    workers + buildings + ground + props,
+    machines + buildings + ground + props,
     `bakedCels produced ${cels.length}, which does not match the tables it iterates`,
   );
   // The cap family must carry a cel for **every** archetype, so one added to

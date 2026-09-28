@@ -20,6 +20,7 @@
 // fill operations, which is far cheaper than the decode of the PNG it replaces.
 
 import Phaser from "phaser";
+import { MACHINES, machineOrigin, buildMachine, type MachineKind, type MachinePose } from "./machine";
 import { P, paletteSet } from "./palette";
 import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
@@ -102,8 +103,9 @@ export function shadowFrame(side: number, turn = 0): string {
 }
 
 /** Frame name for a worker tier in a state's nth animation frame. */
-export function workerFrame(tier: Tier, state: WorkerState, i: number): string {
-  return `w:${tier}:${state}:${i}`;
+/** machineFrame is one pose of one machine, for one agent's kind. */
+export function machineFrame(kind: MachineKind, tier: Tier, pose: MachinePose): string {
+  return `m:${kind}:${tier}:${pose}`;
 }
 
 /** Frame name for a ground tile. */
@@ -307,12 +309,17 @@ export function bakedCels(turn = 0): BakedCel[] {
   // --- Workers -----------------------------------------------------------
   // The worker's origin is at its feet, so it stands on a building's ground
   // rather than on its roof.
-  for (const tier of ["chief", "sub"] as const) {
-    const sheet = buildWorker(tier);
-    for (const state of Object.keys(sheet.cels) as WorkerState[]) {
-      sheet.cels[state].forEach((pix, i) => {
-        cels.push({ key: workerFrame(tier, state, i), pix, ox: WORKER_OX, oy: WORKER_OY });
-      });
+  // The fleet, not the crew. Five kinds so a session is a machine with a
+  // silhouette a glance can separate, four poses so the pose says working /
+  // parked / moving / finished without claiming a verb the silhouette cannot
+  // support. 40 cels against the figure's 76.
+  for (const kind of MACHINES) {
+    for (const tier of ["chief", "sub"] as const) {
+      for (const pose of ["work", "idle", "travel", "done"] as const) {
+        const pix = buildMachine(kind, pose, tier, turn);
+        const box = machineOrigin(pix, turn);
+        cels.push({ key: machineFrame(kind, tier, pose), pix, ox: box.ox, oy: box.oy });
+      }
     }
   }
 

@@ -6,6 +6,7 @@
 // what the town draws, not about how the lookup is written.
 
 import { strict as assert } from "node:assert";
+import { MACHINES, MACHINE_POSES } from "../src/art/machine";
 
 /** The footprints the bake actually draws, rather than a list that drifts from it. */
 const SIDES = SIZES.map((s) => s.side);
@@ -114,9 +115,11 @@ test("the atlas still fits after the cutover", () => {
     1 /* one contact shadow per footprint */;
   const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
   const props = ALL_PROP_KINDS.length * 2;
-  const workers = 2 * Object.values(FRAME_MS).reduce((n, f) => n + f.length, 0);
+  // The fleet, from the roster — the same derivation as `art.test.ts`, so the
+  // two counts cannot drift apart and then each blame the other.
+  const machines = MACHINES.length * MACHINE_POSES.length * 2;
   // The two shared condition blanks are once for the whole town, not per footprint.
-  assert.equal(cels.length, workers + SIZES.length * perFootprint + 2 + ground + props);
+  assert.equal(cels.length, machines + SIZES.length * perFootprint + 2 + ground + props);
   // Cell height is 101, not 93: the Chapel is 30 units tall at the largest
   // footprint, and a spire that is not the tallest thing on the skyline is not
   // a spire. That costs 112 cels of ceiling (1408 -> 1296) and is worth it — the
