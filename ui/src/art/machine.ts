@@ -84,8 +84,16 @@ export function machineFor(key: string): MachineKind {
  * authority on where a machine's anchor is, rather than a constant somebody
  * tuned until it looked right at turn 0.
  */
-const FOOT = 8;
-const TALL = 16;
+// The machine's own footprint, in the same world units a building uses.
+//
+// It was 8 against a smallest building of 44 — a machine a sixth the width of
+// the shed it was working on, which is the size a person was, so the whole
+// change bought nothing at the zoom the town is read at. 20 is deliberately
+// well under the smallest building: a machine should read as *at* a building,
+// never as one. Nothing here touches the atlas — a machine is narrower than a
+// narrowest cel, so it costs no budget at any size.
+const FOOT = 20;
+const TALL = 38;
 const M = 3;
 
 /**
@@ -110,7 +118,7 @@ export function machineOrigin(pix: Pix, turn: number): { ox: number; oy: number 
  * they are bolted to, and a cel sized to the footprint clips the arm off at the
  * edge — which is how this started, with the excavator's bucket sheared away.
  */
-const REACH = 9;
+const REACH = 20;
 
 function machineBox(turn: number): { w: number; h: number; ox: number; oy: number } {
   const v = new WorldView(turn);
@@ -169,7 +177,7 @@ const K: Record<string, string> = {
  * through `IsoPix`, which knows the turn.
  */
 export function buildMachine(kind: MachineKind, pose: MachinePose, tier: "chief" | "sub", turn = 0): Pix {
-  const scale = tier === "chief" ? 1.15 : 1;
+  const scale = tier === "chief" ? 1.2 : 1;
   const t = normaliseTurn(turn);
   const box = machineBox(t);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, t);
@@ -177,36 +185,36 @@ export function buildMachine(kind: MachineKind, pose: MachinePose, tier: "chief"
   // way a building's does. A machine stands *on* its footprint, so this is the
   // near corner rather than a figure's centre line.
   const base = 0;
-  const w = FOOT - 1;
-  const d = Math.round(6 * scale);
+  const w = FOOT - 2;
+  const d = Math.round(12 * scale);
   const bx = 0;
   const by = 0;
 
   switch (kind) {
     case "excavator":
       tracks(iso, bx, by, w, d, base, K.t, K.T);
-      cab(iso, bx + 1, by + 1, Math.round(4 * scale), Math.round(3 * scale), base + 2, K.y, K.Y, K.g);
+      cab(iso, bx + 1, by + 1, Math.round(10 * scale), Math.round(7 * scale), base + 4, K.y, K.Y, K.g);
       boom(iso, bx, by, w, d, base, scale, pose, 1);
       break;
     case "crane":
       tracks(iso, bx, by, w, d, base, K.t, K.T);
-      mast(iso, bx, by, Math.round(1 * scale) + 1, base + 14, K.v, K.V, pose);
+      mast(iso, bx, by, Math.round(3 * scale), base + 30, K.v, K.V, pose);
       break;
     case "loader":
       wheels(iso, bx, by, w, d, base, K.t, K.T);
-      cab(iso, bx + 1, by, Math.round(4 * scale), Math.round(3 * scale), base + 2, K.y, K.Y, K.g);
+      cab(iso, bx + 1, by, Math.round(10 * scale), Math.round(7 * scale), base + 4, K.y, K.Y, K.g);
       // A loader has no boom: the bucket is bolted to the front, so the pose
       // moves the bucket rather than an arm, and "work" is a raised bucket.
       bucket(iso, bx, by, w, d, base, scale, pose);
       break;
     case "driver":
       tracks(iso, bx, by, w, d, base, K.t, K.T);
-      frame(iso, bx, by, Math.round(5 * scale), base + 15, K.v, K.V);
+      frame(iso, bx, by, Math.round(13 * scale), base + 32, K.v, K.V);
       hammer(iso, bx, by, scale, pose);
       break;
     case "dozer":
       tracks(iso, bx, by, w, d, base, K.t, K.T);
-      cab(iso, bx + 1, by + 1, Math.round(3 * scale), Math.round(3 * scale), base + 2, K.y, K.Y, K.g);
+      cab(iso, bx + 2, by + 1, Math.round(8 * scale), Math.round(7 * scale), base + 4, K.y, K.Y, K.g);
       blade(iso, bx, by, w, d, base, scale, pose);
       break;
   }
@@ -216,21 +224,21 @@ export function buildMachine(kind: MachineKind, pose: MachinePose, tier: "chief"
 
 /** tracks is the undercarriage every kind but the loader sits on. */
 function tracks(iso: IsoPix, x: number, y: number, w: number, d: number, z: number, dark: string, light: string): void {
-  iso.box(x, y, w, d, z, z + 2, { top: light, lit: light, shadow: dark, edge: K.o });
+  iso.box(x, y, w, d, z, z + 5, { top: light, lit: light, shadow: dark, edge: K.o });
 }
 
 /** wheels is the loader's, because rubber and a track are different silhouettes. */
 function wheels(iso: IsoPix, x: number, y: number, w: number, d: number, z: number, dark: string, light: string): void {
-  iso.box(x, y, w, d, z, z + 2, { top: light, lit: light, shadow: dark, edge: K.o });
+  iso.box(x, y, w, d, z, z + 5, { top: light, lit: light, shadow: dark, edge: K.o });
   // A hub on the near wheel, so it reads as a wheel rather than a low box.
-  iso.footprint(x + Math.round(w / 2) - 1, y + d - 1, 2, 1, z + 2, K.s);
+  iso.footprint(x + Math.round(w / 2) - 2, y + d - 2, 4, 2, z + 5, K.s);
 }
 
 /** cab is the operator's box: glass on the two faces the camera can see. */
 function cab(iso: IsoPix, x: number, y: number, w: number, d: number, z: number, body: string, lit: string, glass: string): void {
-  iso.box(x, y, w, d, z, z + 3, { top: body, lit: body, shadow: body, edge: K.o });
-  iso.footprint(x, y, w, d, z + 3, K.Y);
-  iso.box(x + 1, y + 1, w - 2, d - 1, z + 1, z + 3, { top: glass, lit: glass, shadow: glass, edge: K.o });
+  iso.box(x, y, w, d, z, z + 9, { top: body, lit: body, shadow: body, edge: K.o });
+  iso.footprint(x, y, w, d, z + 9, K.Y);
+  iso.box(x + 1, y + 1, w - 2, d - 1, z + 3, z + 9, { top: glass, lit: glass, shadow: glass, edge: K.o });
 }
 
 /** boom swings from down (working) to up (parked), which is the whole pose. */

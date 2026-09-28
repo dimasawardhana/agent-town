@@ -874,7 +874,7 @@ func TestTheLayoutEmitsRoads(t *testing.T) {
 		if r.W <= 0 || r.H <= 0 {
 			t.Errorf("a road has no extent: %+v", r)
 		}
-		if r.Kind != "row" && r.Kind != "containment" {
+		if r.Kind != "row" && r.Kind != "containment" && r.Kind != "district" {
 			t.Errorf("a road has kind %q, which no rule produces", r.Kind)
 		}
 	}

@@ -16,12 +16,22 @@ const SiteIDBuildingPrefix = "building:"
 // World units are pixels. The frontend scales the camera; it never recomputes
 // positions, so the layout stays the single source of truth (ADR-0012).
 const (
-	cellPad    = 20.0   // padding inside a district block
-	cellGap    = 14.0   // gap between buildings
-	labelSpace = 30.0   // room for a district label above its buildings
-	rowGap     = 28.0   // gap between district rows
-	maxRowW    = 1400.0 // target row width; a busy row may exceed it
-	rowStart   = 40.0   // left margin, and where each new row begins
+	cellPad    = 20.0 // padding inside a district block
+	cellGap    = 14.0 // gap between buildings
+	labelSpace = 30.0 // room for a district label above its buildings
+	// rowGap is the space between one district and the next, in either
+	// direction, and it is what a road is drawn in.
+	//
+	// It was 28 against a cellGap of 14 — a 2:1 ratio, which does not read as
+	// a section boundary. At that separation the districts were a field of
+	// buildings with slightly wider seams, and a reader could not tell where one
+	// district ended and the next began without reading the labels. The ratio is
+	// what carries the hierarchy, so it is now 64 against 14: buildings stay
+	// neighbours, districts become quarters, and the road has room to be a road
+	// rather than a stripe.
+	rowGap   = 64.0   // gap between districts, and the width of the road
+	maxRowW  = 1400.0 // target row width; a busy row may exceed it
+	rowStart = 40.0   // left margin, and where each new row begins
 
 	// testPitch tightens a test district's cell spacing. Below 1 so a sprawl
 	// of one-file spec directories reads as a compact cluster rather than
@@ -274,6 +284,22 @@ func LayoutTown(t *Town) Layout {
 	// what keeps the layout deterministic.
 	x := 40.0
 	rowH := 0.0
+	// Where the current row's top edge is, so a road between two districts in the
+	// same row can span the whole gap and not just the shorter block.
+	rowTop := 0.0
+	// The gap the previous block left, held so the road can be emitted into it
+	// once the *next* block is known. Emitted on the wrap alone, a town whose
+	// districts all fit in one row had no roads at all — which is most towns.
+	gapX := 0.0
+	gapY := 0.0
+	gapH := 0.0
+
+	emitGapRoad := func(to *Layout, x, y, h float64) {
+		if h <= 0 {
+			return
+		}
+		to.Roads = append(to.Roads, Road{X: x, Y: y, W: rowGap, H: h, Kind: "district"})
+	}
 
 	for _, d := range t.Districts {
 		buildings := buildingsIn(t, d.Name)
@@ -288,6 +314,7 @@ func LayoutTown(t *Town) Layout {
 		// edge, outside the camera bounds the width implies — reachable only
 		// by nothing.
 		if x > rowStart && x+w > maxRowW {
+			emitGapRoad(&l, gapX, rowTop, rowH)
 			// The gap this row break leaves *is* the road. It is not an
 			// afterthought between blocks — it is the space the layout made
 			// for exactly this, and it is emitted here rather than drawn by
@@ -302,15 +329,24 @@ func LayoutTown(t *Town) Layout {
 			x = rowStart
 			y += rowH + rowGap
 			rowH = 0
+			rowTop = y
+		} else if x > rowStart {
+			// The gap this placement left between two districts *is* the road.
+			// The same rule as the wrap, for the same reason: the space is made
+			// by the layout, so the band and the gap cannot disagree.
+			emitGapRoad(&l, x, y, blk0(rowH))
 		}
 
 		blk := placeDistrict(&l, d, buildings, containersIn(t, d.Name), x, y)
 
+		gapX, gapY, gapH = x+blk.W, y, blk.H
 		x += blk.W + rowGap
 		if blk.H > rowH {
 			rowH = blk.H
 		}
 	}
+	// The last district's trailing gap closes the row.
+	emitGapRoad(&l, gapX, gapY, gapH)
 
 	// --- Containment roads ---
 	//
@@ -353,6 +389,10 @@ func LayoutTown(t *Town) Layout {
 
 	return l
 }
+
+// blk0 is the running row height, kept as a function so the road emission above
+// reads as one rule rather than two.
+func blk0(rowH float64) float64 { return rowH }
 
 // districtWidth returns the width a district's block will occupy.
 //
