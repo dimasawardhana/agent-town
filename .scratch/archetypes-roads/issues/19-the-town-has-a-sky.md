@@ -11,6 +11,7 @@
 - [x] The backdrop survives a redraw
 - [x] No backdrop colour leaks into baked art
 - [x] No `Math.random()`
+- [x] The plain shares the grass's hue and is separated by value and saturation
 
 ## Comments
 
@@ -45,6 +46,19 @@ Zero cels. The sheet is a power of two on every axis and every cel in it is paid
 for by the whole town, so a baked backdrop would have come out of the archetype
 budget. The seventh colour set in the palette and the only one a test forbids from
 appearing in baked art.
+
+### The plain is the same world
+
+The first plain was a blue-grey, and it belonged to no landscape in the picture —
+a different world, not a different field. It is now a desaturated relative of the
+grass ramp, separated from the town by **value and saturation rather than by
+hue**, which is what a distant field actually looks like and what atmosphere
+does to one. Hue 140 against the grass's 135-147; saturation 0.15 against 0.42-0.44.
+
+An intermediate version at the same hue and half the saturation still failed, at
+14 units from one step of the grass ramp: related but not separate enough. The
+fix was to lighten it as well, because distance lifts things as well as dulls
+them, and that is what put every step of the ramp out of reach.
 
 ### The machines
 

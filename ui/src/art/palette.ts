@@ -31,10 +31,18 @@ export const P = {
   skyGlow: "#c9a86a",
   skyFar: "#4a5f72",
   skyNear: "#2a3a4a",
-  // The plain the island sits on: below the horizon and behind the land. Darker
-  // than the haze, lighter than the void, so the gap between them reads as
-  // distance rather than as a hole in the picture.
-  skyGround: "#141d26",
+  // The plain the island sits on: below the horizon and behind the land.
+  //
+  // A desaturated relative of the grass ramp, not a different material. The
+  // region is a clearing in a field, so the field around it should read as the
+  // same world — and it is separated from the town by *value and saturation*
+  // rather than by hue, which is what a distant field actually looks like: a
+  // duller, hazier, lighter version of the same green, because that is what
+  // atmosphere does to a field. A
+  // colour unrelated to the grass said "different world"; a colour too close
+  // would say "more of your land", and the ground tiles already draw that edge
+  // themselves.
+  skyGround: "#46524a",
   // Ground tones, hue-shifted from a cool shadow green to a warm lit green.
   grass: ["#1d3327", "#274632", "#32583d", "#3e6b49"] as Ramp,
   grassLit: "#4a7d54",

@@ -51,12 +51,79 @@ test("the plain below the horizon is neither the void nor the haze", () => {
   assert.ok(lum(P.skyGround) < lum(P.skyHaze), "the plain is lighter than the haze");
 });
 
+test("the plain is the same world as the grass, and clearly not our land", () => {
+  // A pair of claims that pull against each other, which is why both are tested.
+  // Relatedness is a *hue* relation and separateness is a *value and saturation*
+  // relation — the same two a distant field is separated by, and testing the
+  // hexes instead would have missed the first attempt, which was a blue-grey
+  // that belonged to no landscape in the picture at all.
+  const rgb = (c: string): [number, number, number] => [
+    parseInt(c.slice(1, 3), 16),
+    parseInt(c.slice(3, 5), 16),
+    parseInt(c.slice(5, 7), 16),
+  ];
+  const hue = (c: string): number => {
+    const [r, g, b] = rgb(c).map((v) => v / 255) as [number, number, number];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max === min) return 0;
+    const d = max - min;
+    let h: number;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    return ((h * 60) + 360) % 360;
+  };
+  const sat = (c: string): number => {
+    const [r, g, b] = rgb(c);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    return max === 0 ? 0 : (max - min) / max;
+  };
+  const dist = (a: string, b: string): number => {
+    const [r1, g1, b1] = rgb(a);
+    const [r2, g2, b2] = rgb(b);
+    return Math.hypot(r1 - r2, g1 - g2, b1 - b2);
+  };
+
+  // Related: the plain's hue is within a fifth of the way round the wheel from
+  // the grass it stands in for. A blue-grey plain sits 180 degrees away and is
+  // a different world, which is what the first attempt was.
+  for (const g of P.grass) {
+    const d = Math.abs(hue(P.skyGround) - hue(g));
+    const around = Math.min(d, 360 - d);
+    assert.ok(around < 40, `plain hue ${hue(P.skyGround).toFixed(0)} is ${around.toFixed(0)} from grass ${g}`);
+  }
+  // Separate: far enough from every step of the ramp that it cannot be read as
+  // more of the town's own ground.
+  for (const g of P.grass) {
+    assert.ok(dist(P.skyGround, g) > 20, `plain is only ${dist(P.skyGround, g).toFixed(0)} from grass ${g}`);
+  }
+  // And duller, which is the whole mechanism: distance reads as less saturation.
+  const grassSat = Math.max(...P.grass.map(sat));
+  assert.ok(sat(P.skyGround) < grassSat, "the plain is more saturated than the grass it stands in");
+});
+
 test("no backdrop colour is allowed into baked art", () => {
   // The sky is generated; if one of its colours leaked into a cel it would be
   // baked, paid for by the whole town, and the separation would be a convention
   // rather than a fact.
   const skyColours = [P.skyZenith, P.skyMid, P.skyHaze, P.skyGlow, P.skyFar, P.skyNear, P.skyGround];
-  const art = [P.ink, ...P.stone, ...P.wood, ...(P.brick ?? []), P.done, P.down, P.accent, P.accentDim].filter((c): c is string => typeof c === "string");
+  // Named from the palette rather than guessed, because a name that does not
+  // exist is a colour that is silently not being checked.
+  const ramp = (v: string | readonly string[]): string[] =>
+    typeof v === "string" ? [v] : [...v];
+  const art: string[] = [
+    P.ink,
+    ...ramp(P.stone),
+    ...ramp(P.wood),
+    ...ramp(P.grass),
+    ...ramp(P.earth),
+    ...ramp(P.rust),
+    ...ramp(P.metal),
+    P.accent,
+    P.accentDim,
+  ];
   for (const a of art) {
     for (const s of skyColours) {
       assert.notEqual(
