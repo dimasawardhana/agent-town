@@ -32,6 +32,7 @@ import {
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
+import { Embers } from "./embers";
 import { type Stage, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
@@ -89,6 +90,8 @@ const DEPTH = {
    *  below the labels, so a puff is never half-hidden behind a name. */
   smoke: 80000,
   label: 90000,
+  /** Below the labels: a name must never be half-hidden by a glow. */
+  ember: 85000,
 } as const;
 
 export class TownScene extends Phaser.Scene {
@@ -132,6 +135,15 @@ export class TownScene extends Phaser.Scene {
    * ends up with four hundred chimneys.
    */
   private chimneys: Chimneys | null = null;
+  /**
+   * The recent-activity layer, ticked rather than event-driven.
+   *
+   * Separate from the building's container on purpose: restaging swaps frames
+   * by index, so anything that changes a stack's child count is a bug waiting
+   * for the next event. An ember has to *cool*, which means no event to hang it
+   * off, which means it could not be an event-driven child either.
+   */
+  private embers: Embers | null = null;
   // Each building's sprite stack, by site id. A tower is a Container holding one
   // base, N identical bands and a cap, so a status change swaps frames inside
   // the container rather than rebuilding the map — rebuilding would flicker the
@@ -297,6 +309,8 @@ export class TownScene extends Phaser.Scene {
     // the draw, so a redraw cannot leave two emitters on the same chimney.
     this.chimneys?.destroy();
     this.chimneys = new Chimneys(this, this.chimneyRooftops(layout), DEPTH.smoke);
+    this.embers?.destroy();
+    this.embers = new Embers(this, DEPTH.ember);
 
     this.workers?.destroy();
     this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
@@ -1194,6 +1208,29 @@ export class TownScene extends Phaser.Scene {
     if (!this.workers || !this.layout) return;
     this.restage();
     this.workers.sync(this.layout);
+  }
+
+  /**
+   * tick cools the embers, and is the scene's own frame rather than an event's.
+   *
+   * Nothing happens to a building for two minutes after it is worked on, and the
+   * fading is the entire point — wiring this to events would leave every ember
+   * lit forever, which is the claim the whole thing was built to avoid.
+   */
+  override update(): void {
+    if (!this.embers || !this.layout) return;
+    const { live } = useTown.getState();
+    const byPath = new Map(live.buildings.map((b) => [b.path, b.updated]));
+    const touched: { id: string; x: number; y: number; updated: number }[] = [];
+    for (const s of this.layout.sites) {
+      if (s.kind !== "building" || !s.path) continue;
+      const updated = byPath.get(s.path);
+      if (updated === undefined) continue;
+      // The near corner, which is where every other ground-level mark is placed.
+      const p = this.project(s.x + s.w, s.y + s.h);
+      touched.push({ id: s.id, x: p.x, y: p.y, updated });
+    }
+    this.embers.reconcile(touched);
   }
 
   /**

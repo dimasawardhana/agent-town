@@ -26,3 +26,4 @@ ui-roads.test.mjs
 ui-turnroads.test.mjs
 ui-materials.test.mjs
 ui-routing.test.mjs
+ui-embers.test.mjs
