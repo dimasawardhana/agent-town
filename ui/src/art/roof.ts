@@ -59,7 +59,8 @@ export function hashPath(path: string): number {
 }
 
 /**
- * archetypeFor chooses an archetype from a path.
+ * The hash picks an archetype from a path. `archetypeFor` above is the public
+ * entry, because a declaration outranks this.
  *
  * It reads the hash **one bit above** the skin's `% 2`, and that is not a detail.
  * Both reading the low bit would give every warm-walled building the same roof, so
@@ -73,7 +74,7 @@ export function hashPath(path: string): number {
  * clock. The same repository therefore always yields the same roofs, which is what
  * keeps the town a pure function of the project.
  */
-export function archetypeFor(path: string): Archetype {
+function archetypeFor_(path: string): Archetype {
   const bits = Math.abs(hashPath(path)) >>> 0;
   return ARCHETYPES[(bits >>> 1) % ARCHETYPES.length];
 }
@@ -1008,6 +1009,31 @@ const KITS: Record<Archetype, RoofKit> = {
 
 /** The rise a kind stands above the wall top, for a footprint. This is what sizes
  *  the cap cel, so every kind must include its own rooftop furniture in it. */
+/**
+ * The archetype a building is drawn as: the repository's declaration when this
+ * build recognises it, otherwise the path hash.
+ *
+ * This is the *only* copy of the precedence, and both callers — the scene that
+ * draws and the panel that names — go through it. They were duplicates once,
+ * which is the shape that lets a map and a label disagree about which building
+ * got which name.
+ *
+ * A declaration this build cannot draw falls back rather than drawing nothing.
+ * A repository that declared an archetype since renamed, or one that never
+ * existed, should get an arbitrary-but-sane building rather than a hole in the
+ * map; the declared *name* is still reported by the panel, so the request is
+ * visible even when it could not be met.
+ *
+ * An empty path resolves to a fixed archetype rather than a random one — the
+ * same "no path, no variety" rule the skin uses — so the three special places,
+ * which have no path at all, still get a stable answer.
+ */
+export function archetypeFor(declared: string | undefined, path: string | undefined): Archetype {
+  const named = declared as Archetype | undefined;
+  if (named && ARCHETYPES.includes(named)) return named;
+  return archetypeFor_(path ?? "");
+}
+
 export function archetypeHeight(kind: Archetype, side: number): number {
   return KITS[kind].height(side);
 }

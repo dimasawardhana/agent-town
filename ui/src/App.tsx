@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
 import { actionInfo, targetOf } from "./actions";
+import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -19,6 +20,34 @@ import { TownCanvas } from "./TownCanvas";
  * what happened. Kept in step with `Stage` by the index signature, so a rank
  * added to the union fails the build here rather than rendering blank.
  */
+/**
+ * The archetype a site is drawn as, by the same precedence the scene uses: a
+ * declaration this build recognises, otherwise the path hash.
+ *
+ * Duplicated rather than imported from the scene because the scene's copy is a
+ * private method on a Phaser object and this is a React component — sharing it
+ * would mean hoisting a rule out of the renderer for the sake of one label. The
+ * two must agree, so the precedence is pinned once in `archetypes.test.ts` and
+ * this comment says where the other half lives.
+ */
+export function archetypeForSite(site: { archetype?: string; path?: string }): Archetype {
+  const declared = site.archetype as Archetype | undefined;
+  if (declared && ARCHETYPES.includes(declared)) return declared;
+  return archetypeFor(site.archetype, site.path);
+}
+
+/**
+ * The declared name even when this build cannot draw it.
+ *
+ * A repository asking for something the town has never heard of is worth
+ * reporting rather than silently replacing with whatever the hash picked: the
+ * declaration is the repository's own assertion, and a reader looking at the
+ * panel is exactly the person who should see that the request went unmet.
+ */
+function declaredArchetypeName(site: { archetype?: string }): string | null {
+  return site.archetype ? site.archetype : null;
+}
+
 const BUILD_STAGE_LABEL: Record<BuildingState["status"], string> = {
   planned: "plot staked out",
   foundation: "foundations in",
@@ -67,6 +96,11 @@ export function App() {
   // than buildings. A place is never "built", so this and `built` are mutually
   // exclusive and the panel picks one branch or the other.
   const place = selected ? placeInfoFor(selected) : null;
+  // What this building is drawn as, and what the repository said it is when the
+  // two differ. Computed here rather than in the scene so the panel and the map
+  // cannot disagree about which building got which name.
+  const drawnName = selected && selected.kind === "building" ? archetypeForSite(selected) : null;
+  const declaredName = selected && selected.kind === "building" ? declaredArchetypeName(selected) : null;
 
   // The deepest building the daemon reported, so the detail control's range
   // reflects the town rather than a guessed ceiling. A town whose buildings are
@@ -250,6 +284,24 @@ export function App() {
                   <>
                     <dt>Path</dt>
                     <dd className="path">{selected.path}</dd>
+                  </>
+                )}
+                {/* What this building *is*, named. The silhouette has to work
+                    on its own — a placard would let a weak drawing hide behind
+                    a strong word — so this is the fallback for a reader who is
+                    not sure, and the only place the archetype is ever written
+                    down. It reports what the repository declared where there is
+                    a declaration, and the hash's pick otherwise, because a name
+                    the renderer could not draw is still worth saying: it is what
+                    the repository asked for. */}
+                {selected.kind === "building" && (
+                  <>
+                    <dt>Built as</dt>
+                    <dd className="archetype">
+                      {declaredName
+                        ? `${declaredName}${drawnName !== declaredName ? " (declared)" : ""}`
+                        : drawnName}
+                    </dd>
                   </>
                 )}
                 {selected.files > 0 && (

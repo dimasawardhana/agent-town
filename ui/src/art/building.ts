@@ -841,7 +841,7 @@ export function buildBuilding(
 ): Pix {
   // The roof comes from the path, like every other path-chosen appearance, so the
   // composite shows the same roof the scene will draw for that building.
-  const roof = archetypeFor(path);
+  const roof = archetypeFor(undefined, path);
   const box = boxFor(side, roof, 1);
   // The composite is a test-only convenience, so its own IsoPix is never plotted
   // into — the blits below carry the turn themselves. It is still constructed with

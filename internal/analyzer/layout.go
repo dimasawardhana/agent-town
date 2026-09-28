@@ -74,6 +74,11 @@ type Site struct {
 	//
 	// Zero for a building, which has no children to wait for and is simply drawn
 	// while `Depth <= filter`.
+	// Archetype is the repository's own declaration of what this building is,
+	// carried so the renderer does not have to read the manifest a second time
+	// and risk disagreeing with the analyzer about it (ADR-0012). Empty means the
+	// repository declared nothing and the renderer should hash the path.
+	Archetype     string  `json:"archetype,omitempty"`
 	MinChildDepth int     `json:"minChildDepth,omitempty"`
 	X             float64 `json:"x"`
 	Y             float64 `json:"y"`
@@ -411,6 +416,7 @@ func placeDistrict(l *Layout, d District, buildings []Building, containers []Con
 			Files:        b.Files,
 			Bytes:        b.TotalBytes,
 			Floors:       Floors(b),
+			Archetype:    b.Archetype,
 			Depth:        b.Depth,
 			X:            bx,
 			Y:            by,

@@ -26,7 +26,7 @@ import {
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
 import { type Stage, skinVariant } from "./art/building";
-import { archetypeFor, type Archetype } from "./art/roof";
+import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
@@ -1252,7 +1252,19 @@ export class TownScene extends Phaser.Scene {
    * the skin uses.
    */
   private archetypeOf(s: Site): Archetype {
-    return archetypeFor(s.path ?? "");
+    // A repository's own declaration wins over the hash. The declaration arrives
+    // on the site rather than being read from the manifest here, because the
+    // analyzer is what reads it and two authorities over one fact is the split
+    // ADR-0012 exists to prevent.
+    //
+    // An unrecognised name falls back rather than drawing nothing: a repo that
+    // declared `bakery` — or that declared an archetype this build has since
+    // renamed — should get an arbitrary-but-sane building, not a hole in the
+    // map. The name is kept for the label either way, so a reader can see what
+    // the repository asked for even when the renderer could not draw it.
+    const declared = s.archetype as Archetype | undefined;
+    if (declared && ARCHETYPES.includes(declared)) return declared;
+    return archetypeFor(s.archetype, s.path);
   }
 
   private baseKey(s: Site): string {

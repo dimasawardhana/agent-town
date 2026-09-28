@@ -27,8 +27,8 @@ test("every archetype is reachable and the selector is deterministic", () => {
   const seen = new Set<Archetype>();
   for (let i = 0; i < 2000; i++) {
     const path = `src/pkg${i}/mod.ts`;
-    const first = archetypeFor(path);
-    assert.equal(archetypeFor(path), first, `${path} resolved differently on a second call`);
+    const first = archetypeFor(undefined, path);
+    assert.equal(archetypeFor(undefined, path), first, `${path} resolved differently on a second call`);
     seen.add(first);
   }
   assert.deepEqual(
@@ -118,4 +118,45 @@ test("the atlas still fits after the cutover", () => {
     cels.length <= 1296,
     `${cels.length} cels against a 1296 ceiling — the headroom the budget assumed is gone`,
   );
+});
+
+// --- Declared archetypes -------------------------------------------------
+
+test("a declaration this build knows wins over the hash", () => {
+  // The whole point of the manifest: a repository saying what a directory is
+  // beats a hash that knows nothing about it.
+  assert.equal(archetypeFor("stadium", "ui/src"), "stadium");
+  // And it wins even when the hash would have said something else.
+  for (const a of ARCHETYPES) {
+    const site = { path: "internal/town", archetype: a };
+    assert.equal(archetypeFor(site.archetype, site.path), a, `a declaration of ${a} was overridden`);
+  }
+});
+
+test("an undeclared path falls back to the hash", () => {
+  // A repo with no manifest behaves exactly as it did before declarations
+  // existed, which is what makes this safe to add.
+  for (const path of ["ui/src", "internal/town", "cmd/townd", "docs/adr"]) {
+    assert.equal(archetypeFor(undefined, path), archetypeFor(undefined, path));
+  }
+  // An empty string is no declaration either.
+  assert.equal(archetypeFor("", "ui/src"), archetypeFor(undefined, "ui/src"));
+});
+
+test("a declaration this build cannot draw falls back rather than vanishing", () => {
+  // A repo that declared an archetype this build has since renamed, or one that
+  // never existed, should get a sane building rather than a hole in the map.
+  // The *name* is still reported by the panel, so the request is not lost —
+  // this only says the map falls back.
+  const hashed = archetypeFor(undefined, "ui/src");
+  assert.equal(archetypeFor("bakery", "ui/src"), hashed);
+  assert.equal(archetypeFor("cathedral", "ui/src"), hashed);
+});
+
+test("a site with neither a path nor a declaration still resolves", () => {
+  // The Yard and the three special places have no path; the rule must not throw
+  // or return undefined on them.
+  for (const [declared, path] of [[undefined, undefined], [undefined, ""], ["stadium", undefined]] as const) {
+    assert.ok(ARCHETYPES.includes(archetypeFor(declared, path)), `${declared}/${path} did not resolve`);
+  }
 });

@@ -649,3 +649,166 @@ func TestTheRuleRemovesExactlyTheArtefactDirectoryFromThisRepo(t *testing.T) {
 		t.Errorf("buildings = %d (%v), want 14 — re-record what this repository measures", len(town.Buildings), got)
 	}
 }
+
+// --- Declared archetypes -------------------------------------------------
+
+// writeManifest puts a declaration file in a throwaway repo.
+func writeManifest(t *testing.T, root, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "ai-town.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A repository may declare what a directory is, and the declaration travels.
+// This is the repository asserting something about itself, which is the whole
+// difference from the path hash: a wrong claim here is a lie somebody chose,
+// where the hash is arbitrary and nobody minds.
+func TestADeclaredArchetypeTravelsOnTheWire(t *testing.T) {
+	root := build(t, map[string]string{
+		"src/auth/service.ts": "export const a = 1\n",
+		"src/auth/token.ts":   "export const b = 2\n",
+	})
+	writeManifest(t, root, `{"archetypes": {"src/auth": "stadium"}}`)
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, b := range town.Buildings {
+		if b.Path == "src/auth" && b.Archetype == "stadium" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("src/auth was declared a stadium but the declaration did not reach the building")
+	}
+
+	// And it must reach the *layout*, because the layout is what the browser
+	// reads. A declaration that stops at the analyzer is a declaration the
+	// renderer never sees.
+	l := LayoutTown(town)
+	for _, s := range l.Sites {
+		if s.Path == "src/auth" {
+			if s.Archetype != "stadium" {
+				t.Errorf("layout site archetype = %q, want stadium", s.Archetype)
+			}
+			return
+		}
+	}
+	t.Error("src/auth has no layout site")
+}
+
+// Everything not declared falls back to the hash, so a repo with no manifest
+// behaves exactly as it did before this existed.
+func TestUndeclaredPathsCarryNoDeclaration(t *testing.T) {
+	root := build(t, map[string]string{
+		"src/a.ts":      "export const a = 1\n",
+		"src/deep/b.ts": "export const b = 2\n",
+	})
+	writeManifest(t, root, `{"archetypes": {"src": "hospital"}}`)
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range town.Buildings {
+		want := ""
+		if b.Path == "src" {
+			want = "hospital"
+		}
+		if b.Archetype != want {
+			t.Errorf("%q archetype = %q, want %q — an undeclared path must fall back to the hash", b.Path, b.Archetype, want)
+		}
+	}
+}
+
+// A manifest is author input and author input is wrong. None of these may fail
+// the analysis: the town must still draw, because a broken declaration is the
+// author's problem and a town that refuses to render is ours.
+func TestABrokenManifestIsIgnoredNotFatal(t *testing.T) {
+	for name, body := range map[string]string{
+		"not json":      `this is not json`,
+		"no archetypes": `{"somethingElse": 1}`,
+		"empty object":  `{}`,
+		"wrong value":   `{"archetypes": {"src": 42}}`,
+		"not an object": `["src"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := build(t, map[string]string{"src/a.ts": "export const a = 1\n"})
+			writeManifest(t, root, body)
+			town, err := Analyze(root)
+			if err != nil {
+				t.Fatalf("a broken manifest must not fail analysis: %v", err)
+			}
+			if len(town.Buildings) == 0 {
+				t.Fatal("the town lost its buildings over a broken manifest")
+			}
+			for _, b := range town.Buildings {
+				if b.Archetype != "" {
+					t.Errorf("%q took archetype %q from a manifest that does not say it", b.Path, b.Archetype)
+				}
+			}
+		})
+	}
+}
+
+// A path that no longer exists must not be resurrected by a declaration. The
+// town is a map of what is there.
+func TestAManifestCannotResurrectAVanishedPath(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "export const a = 1\n"})
+	writeManifest(t, root, `{"archetypes": {"src": "hospital", "src/deleted": "stadium"}}`)
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range town.Buildings {
+		if b.Path == "src/deleted" {
+			t.Error("a manifest entry invented a building for a directory that does not exist")
+		}
+	}
+}
+
+// A repo with no manifest at all is the normal case and must be silent.
+func TestNoManifestIsNotAnError(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "export const a = 1\n"})
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range town.Buildings {
+		if b.Archetype != "" {
+			t.Errorf("%q has an archetype without a manifest", b.Path)
+		}
+	}
+}
+
+// An archetype name the renderer has never heard of **travels anyway** and is
+// ignored there.
+//
+// This is the one case that looks like a bug and is not. The analyzer has no
+// vocabulary — the renderer owns the set — so validating a name here would mean
+// keeping the list in two languages and letting them drift, which is the exact
+// failure the archetype axis was built to avoid. Dropping unknown names early
+// would also make a *renamed* archetype silently break every repo that declared
+// the old one, with nothing to say so.
+func TestAnUnknownArchetypeNameTravelsForTheRendererToIgnore(t *testing.T) {
+	root := build(t, map[string]string{"src/a.ts": "export const a = 1\n"})
+	writeManifest(t, root, `{"archetypes": {"src": "bakery"}}`)
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range town.Buildings {
+		if b.Path == "src" {
+			if b.Archetype != "bakery" {
+				t.Errorf("archetype = %q, want the declaration carried through verbatim", b.Archetype)
+			}
+			return
+		}
+	}
+	t.Error("no building for src")
+}

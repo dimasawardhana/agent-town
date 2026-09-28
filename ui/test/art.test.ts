@@ -677,7 +677,7 @@ test("boxFor leaves headroom for everything drawn outside the footprint", () => 
   // Getting it wrong clipped the outline rather than failing.
   for (const [side, files] of SIDES) {
     for (const path of ["a", "b"]) {
-      const box = boxFor(side, archetypeFor(path));
+      const box = boxFor(side, archetypeFor(undefined, path));
       for (const stage of STAGE_ORDER) {
         const pix = buildBuilding(side, files, path, stage);
         assert.equal(pix.w, box.w, `${side}/${path}/${stage}: cel width disagrees with boxFor`);
@@ -702,7 +702,7 @@ test("every shipped cel is exactly the size of its own box", () => {
       const skin = skinFor(files, path);
       const foot = baseBox(side);
       const storey = bandBox(side);
-      const top = capBox(side, archetypeFor(path));
+      const top = capBox(side, archetypeFor(undefined, path));
       const cast = shadowBox(side);
       // The parts that carry a height must agree with their boxes exactly.
       assert.equal(foot.h, storey.h, `${side}: a base cel and a band cel are both one storey and must match`);
@@ -711,7 +711,7 @@ test("every shipped cel is exactly the size of its own box", () => {
           const b = buildBase(side, files, path, stage, damaged);
           assert.equal(b.w, foot.w, `${side}/${path}/${stage}/${damaged}: base width disagrees with baseBox`);
           assert.equal(b.h, foot.h, `${side}/${path}/${stage}/${damaged}: base height disagrees with baseBox`);
-          const c = buildCap(side, archetypeFor(path), stage, damaged);
+          const c = buildCap(side, archetypeFor(undefined, path), stage, damaged);
           assert.equal(c.w, top.w, `${side}/${path}/${stage}/${damaged}: cap width disagrees with capBox`);
           assert.equal(c.h, top.h, `${side}/${path}/${stage}/${damaged}: cap height disagrees with capBox`);
         }
@@ -1295,7 +1295,7 @@ test("a single-storey building is solid: no hole between its plinth and its roof
   // because every function involved is individually correct.
   const side = 60, files = 5;
   const b = buildBase(side, files, "a", "completed");
-  const c = buildCap(side, archetypeFor("a"), "completed", false);
+  const c = buildCap(side, archetypeFor(undefined, "a"), "completed", false);
   const sheet = new Pix(b.w, b.h);
   sheet.blit(b, 0, 0);
   sheet.blit(c, 0, 0);
@@ -1329,8 +1329,8 @@ test("each added storey raises the tower by exactly one storey", () => {
   const skin = skinFor(files, path);
   const base = buildBase(side, files, path, stage);
   const band = buildBand(side, skin, stage);
-  const cap = buildCap(side, archetypeFor(path), stage, false);
-  const footCel = baseBox(side), bandCel = bandBox(side), capCel = capBox(side, archetypeFor(path));
+  const cap = buildCap(side, archetypeFor(undefined, path), stage, false);
+  const footCel = baseBox(side), bandCel = bandBox(side), capCel = capBox(side, archetypeFor(undefined, path));
 
   // The ground line is a fixed row in every canvas, so a taller tower grows
   // upward from the same place. Sizing the canvas to the tower and anchoring the
@@ -1479,11 +1479,11 @@ test("a roof is a pure function of the path", () => {
   // asking twice for the same set and requiring the same answer, which is what a
   // hidden dependency would break.
   const paths = ["ui/src", "internal/analyzer", "cmd/townd", "", "a", "docs/agents"];
-  const first = paths.map((p) => archetypeFor(p));
-  const second = paths.map((p) => archetypeFor(p));
-  assert.deepEqual(second, first, "roofFor returned a different roof the second time");
+  const first = paths.map((p) => archetypeFor(undefined, p));
+  const second = paths.map((p) => archetypeFor(undefined, p));
+  assert.deepEqual(second, first, "the archetype for a path changed between calls");
   for (const r of first) {
-    assert.ok((ARCHETYPES as readonly string[]).includes(r), `roofFor returned "${r}", not a kind`);
+    assert.ok((ARCHETYPES as readonly string[]).includes(r), `the hash returned "${r}", not an archetype`);
   }
 });
 
@@ -1496,9 +1496,9 @@ test("in a real town's paths, several archetypes occur", () => {
     "internal/analyzer", "internal/town", "internal/web", "cmd/townd",
     "ui/src", "ui/src/art", "ui/test", "docs", "docs/adr", "scripts",
   ].map((dir) => `${dir}/`);
-  const seen = new Set(paths.map((p) => archetypeFor(p)));
-  // Ten paths cannot be expected to hit all nine of a nine-wide axis — that is a
-  // property of these particular strings, not of the hash. What matters is that a
+  const seen = new Set(paths.map((p) => archetypeFor(undefined, p)));
+  // Ten paths cannot be expected to hit all eleven rungs of an eleven-wide axis —
+  // that is a property of these particular strings, not of the hash. What matters is that a
   // roof nobody ever sees is ornament paid for and not delivered, so the bar is
   // spread rather than exhaustive.
   assert.ok(
@@ -1518,7 +1518,7 @@ test("the roof does not restate the skin", () => {
   for (let i = 0; i < 200; i++) {
     const path = `dir/nested/path-${i}`;
     // The joint outcome, so a correlation in either direction shows up.
-    const key = `${skinVariant(path)}/${archetypeFor(path)}`;
+    const key = `${skinVariant(path)}/${archetypeFor(undefined, path)}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   assert.equal(
@@ -1559,9 +1559,9 @@ test("each archetype draws a different picture, and the cap answers to it not th
       }
       // And the skin cannot reach the cap: two variants of the same building wear
       // the same roof, at the same footprint, stage and damage.
-      const a = buildCap(side, archetypeFor("a"), stage, false);
-      const b = buildCap(side, archetypeFor("b"), stage, false);
-      if (archetypeFor("a") === archetypeFor("b")) {
+      const a = buildCap(side, archetypeFor(undefined, "a"), stage, false);
+      const b = buildCap(side, archetypeFor(undefined, "b"), stage, false);
+      if (archetypeFor(undefined, "a") === archetypeFor(undefined, "b")) {
         assert.equal(ink(a), ink(b), `${side}/${stage}: the same roof drew differently`);
       }
     }

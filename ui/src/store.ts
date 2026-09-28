@@ -31,6 +31,15 @@ export interface Site {
    *  truth for geometry (ADR-0012) and a second derivation would drift. */
   depth: number;
 
+  /** What the repository declared this building to be, or undefined when it
+   *  declared nothing. Undefined is the normal case and means "hash the path".
+   *
+   *  Sent rather than read from the manifest in the browser: a declaration is
+   *  the repository asserting something about itself, and the analyzer is what
+   *  reads it. The browser resolving it a second time is two authorities over
+   *  one fact, which is the split ADR-0012 exists to prevent. */
+  archetype?: string;
+
   /** Total source bytes, and the storeys derived from them. Distinct from
    *  `files`, which drives the footprint: `files` is how many parts a building
    *  is divided into, `bytes` is how much there is of it. Sent by the daemon

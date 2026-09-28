@@ -19,19 +19,19 @@ label is what a reader gets when the silhouette did not convince them.
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A manifest declares an archetype per directory path
-- [ ] A declared archetype overrides the hash; undeclared directories are
+- [x] A manifest declares an archetype per directory path
+- [x] A declared archetype overrides the hash; undeclared directories are
       unaffected and behave exactly as before
-- [ ] A path naming an archetype that does not exist falls back to the hash rather
+- [x] A path naming an archetype that does not exist falls back to the hash rather
       than drawing nothing
-- [ ] A directory with no entry is not an error, and an entry for a path that no
+- [x] A directory with no entry is not an error, and an entry for a path that no
       longer exists is ignored
-- [ ] The manifest is read by the daemon; the browser never becomes a second
+- [x] The manifest is read by the daemon; the browser never becomes a second
       authority on what a building is
-- [ ] Selecting a building names its archetype
-- [ ] The town stays deterministic: the same tree plus the same manifest gives the
+- [x] Selecting a building names its archetype
+- [x] The town stays deterministic: the same tree plus the same manifest gives the
       same town
 
 ## Comments
@@ -42,3 +42,35 @@ format would be a second thing to learn.
 
 A repo with no manifest is unaffected by this entire ticket, which is the point:
 it can land without changing anything anyone already has.
+
+### Implemented: `ai-town.json` at the repository root
+
+```json
+{ "archetypes": { "ui/src/art": "chapel", "internal/town": "stadium" } }
+```
+
+**Measured against this repository**, with a manifest declaring three paths:
+all three read back, and the town drew the declared chapel while falling back for
+an unknown name.
+
+### Two decisions worth keeping
+
+**The analyzer does not validate archetype names.** A declaration of `bakery`
+travels verbatim and the renderer ignores it. Validating here would mean holding
+the vocabulary in two languages and letting them drift — the exact failure the
+axis was built to avoid — and dropping unknown names early would make a *renamed*
+archetype silently break every repo that declared the old one, with nothing to
+say so. The panel still reports the declared name, so the request is visible
+even when it could not be met.
+
+**The precedence lives in one function.** `archetypeFor(declared, path)` is now
+the only copy of the rule, and both the scene that draws and the panel that names
+go through it. They were duplicates for a while, which is the shape that lets a
+map and a label disagree about which building got which name — and importing the
+panel's copy into a node test is what exposed that, since it dragged React in
+behind it.
+
+Everything a manifest can get wrong — absent, malformed, a non-object, a
+non-string value, a path that no longer exists — yields no declaration and
+nothing else. A town that refused to draw because a JSON file was mistyped would
+be a worse failure than a town that quietly draws something else.
