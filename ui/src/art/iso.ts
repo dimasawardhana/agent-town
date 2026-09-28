@@ -166,6 +166,36 @@ export class IsoPix {
    * turned point rather than from a table of which axis is near at which turn,
    * so it cannot disagree with the projection it is deciding about.
    */
+  /**
+   * frontCorner is the footprint corner nearest the camera, for a square of
+   * `side` at the origin.
+   *
+   * Anything drawn *on* a building rather than *of* it has to ask this, because
+   * a fixed world coordinate is only ever on the right corner at one turn. That
+   * is not a small error: the verification pennant was anchored at
+   * (0.6s, 0.28s), which is a roof corner at turn 0 and empty air at turn 1 — so
+   * the flag appeared to float beside the building as soon as the town turned.
+   *
+   * Ties are broken on screen x, so the choice is the same every time for a
+   * given turn rather than depending on sort order — the flag must not hop from
+   * one corner to another as the art is re-baked.
+   */
+  frontCorner(side: number): { x: number; y: number } {
+    const corners = [
+      { x: 0, y: 0 },
+      { x: side, y: 0 },
+      { x: 0, y: side },
+      { x: side, y: side },
+    ];
+    const best = corners.reduce((a, b) => {
+      const da = this.depth(a.x, a.y);
+      const db = this.depth(b.x, b.y);
+      if (db !== da) return db > da ? b : a;
+      return this.screenX(b.x, b.y) > this.screenX(a.x, a.y) ? b : a;
+    });
+    return best;
+  }
+
   private depth(wx: number, wy: number): number {
     const p = turnPoint(this.turn, wx, wy);
     return p.x + p.y;

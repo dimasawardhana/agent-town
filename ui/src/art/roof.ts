@@ -1157,8 +1157,14 @@ export function buildRoofFlag(iso: IsoPix, kind: Archetype, side: number, eave: 
   // as a scratch on the roof rather than as a flag.
   if (side < 60) return;
   const top = eave + archetypeHeight(kind, side);
-  const fx = Math.round(side * 0.6);
-  const fy = Math.round(side * 0.28);
+  // On the corner the camera is actually looking at, rather than on a fixed
+  // fraction of the footprint. A fixed fraction is a roof corner at exactly one
+  // turn and empty air at the other three.
+  const c = iso.frontCorner(side);
+  // Inset from that corner toward the middle, so the pole stands *on* the roof
+  // rather than on its edge.
+  const fx = Math.round(c.x + (side / 2 - c.x) * 0.4);
+  const fy = Math.round(c.y + (side / 2 - c.y) * 0.4);
   iso.box(fx, fy, 1, 1, top - 4, top + 6, {
     top: P.stone[3],
     lit: P.stone[2],
