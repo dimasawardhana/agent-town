@@ -1350,7 +1350,7 @@ export class TownScene extends Phaser.Scene {
     // which art a site wants.
     const size = s.w;
     const m = materialFor(this.archetypeOf(s));
-    const keys = [baseFrame(size, m, "completed", false, this.atlasTurn)];
+    const keys = [baseFrame(size, m, "completed", this.atlasTurn)];
     for (let i = 1; i < floors; i++) keys.push(bandFrame(size, m, "completed", this.atlasTurn));
     keys.push(capFrame(size, this.archetypeOf(s), "completed", this.atlasTurn));
     return keys;
@@ -1384,13 +1384,15 @@ export class TownScene extends Phaser.Scene {
   }
 
   private baseKey(s: Site): string {
-    return baseFrame(
-      s.w,
-      materialFor(this.archetypeOf(s)),
-      this.statusOf(s.path),
-      this.damagedOf(s.path),
-      this.atlasTurn,
-    );
+    // No `damaged` here, and its absence was a real bug for a while. The base's
+    // damage became an overlay like the roof's, so the bake stopped emitting a
+    // `:dmg` base — but this still asked for one, and `stackContainer` *skips* a
+    // key the atlas cannot answer. A damaged building therefore lost its ground
+    // storey entirely, which put every child of the stack one index out of step
+    // with `restage`: the first band drew on the base's frame and the pennant
+    // was never swapped at all. Every test passed `false` for `damaged`, so
+    // nothing saw it.
+    return baseFrame(s.w, materialFor(this.archetypeOf(s)), this.statusOf(s.path), this.atlasTurn);
   }
 
   private bandKey(s: Site): string {

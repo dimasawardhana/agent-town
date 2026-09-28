@@ -51,9 +51,9 @@ its own.
 | archetypes | total | spare |
 |---|---|---|
 | 4 (at Phase 0) | 1144 | 152 |
-| **11 (what shipped)** | **1239** | **57** |
-| 12 (a further archetype) | ~1269 | ~27 |
-| 13 (the ceiling) | ~1299 | over |
+| **11 archetypes** | **1239** | **57** |
+| **12 (what shipped)** | **1279** | **17** |
+| 13 (the ceiling) | ~1309 | over |
 
 Five widths and three overlays on every roof — damage, verification, and the base
 rubble — are what the last tickets bought.
@@ -73,10 +73,11 @@ Each archetype carries its own height, so its cel box differs and every archetyp
 is genuinely distinct. That is also how a Stadium and a Library are told apart
 without a second axis: the Stadium is wide and low, the Library tall and formal.
 
-**Eleven, not twelve.** Twelve was the plan; the Restaurant was cut in ticket 05
-after four attempts, because a gable's ridge is a *line* and nothing can be
-placed on one. At 91px only silhouette carries a name, and eleven is what the
-atlas could hold and the hole invariant would pass.
+**Twelve, and it nearly was not.** The Restaurant was cut in ticket 05 after four
+attempts, because a gable's ridge is a *line* and nothing can be placed on one.
+It came back in ticket 13 as a **flat** roof under a canopy: a flat roof does not
+rise, so there is no wall behind the canopy to close a void against, and a
+canopy drawn as two surfaces cannot enclose anything. Zero holes, at 40 cels.
 
 | # | archetype | silhouette |
 |---|---|---|
@@ -91,6 +92,7 @@ atlas could hold and the hole invariant would pass.
 | 9 | **Hall** | long arched |
 | 10 | **Market** | stall row, awnings |
 | 11 | **School** | tall pitched, bell |
+| 12 | **Restaurant** | flat roof under a projecting canopy |
 
 The five shipped roof shapes become entries 1, 3, 4, 7 and 9, so the town kept
 rendering through the transition and the art that existed was not thrown away.

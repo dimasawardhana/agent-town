@@ -28,8 +28,8 @@ test("measure turn dependence", () => {
       for (const v of [0, 1] as const) {
         const path = v === 0 ? "b" : "a";
         for (const dmg of [false, true]) {
-          const a = buildBase(side, archetypeFor(undefined, path), stage, dmg, 0 as 0);
-          const b = buildBase(side, archetypeFor(undefined, path), stage, dmg, 1 as 1);
+          const a = buildBase(side, materialFor(archetypeFor(undefined, path)), stage, dmg, 0 as 0);
+          const b = buildBase(side, materialFor(archetypeFor(undefined, path)), stage, dmg, 1 as 1);
           bump("base", differs(a, b), !differs(a, b));
         }
         const ba = buildBand(side, materialFor(archetypeFor(undefined, path)), stage, 0 as 0);

@@ -39,10 +39,14 @@ export const TILE_PX = { w: TILE + 1, h: TILE / 2 + 1, ox: TILE / 2, oy: 0 } as 
  *
  * Every kind here is one the scene actually places: grass for the field and the
  * town, `grassDark` for the land outside it, `earth` for a test district and
- * the Workshop/Depot plots, `yard` for the Yard. There is deliberately no
- * `road`: the layout puts districts in wrapped rows and the roads are the gaps
- * between them (ADR-0012), so a road tile had nothing to place it and was baked
- * as dead art.
+ * the Workshop/Depot plots, `yard` for the Yard, and `road` for the bands the
+ * layout emits between districts and between nested buildings.
+ *
+ * `road` was here once and was removed, because nothing placed it: the layout
+ * puts districts in wrapped rows and the roads are the gaps between them
+ * (ADR-0012), so a road tile was baked as dead art. It is back because
+ * `paintRoads` now places it — the same rule that killed it the first time, and
+ * it is the first thing to check if the kind ever looks unused again.
  */
 export type Ground = "grass" | "grassDark" | "yard" | "earth" | "deck" | "flags" | "road";
 

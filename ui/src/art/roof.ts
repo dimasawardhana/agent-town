@@ -34,7 +34,7 @@ import { IsoPix } from "./iso";
 export const ARCHETYPES = [
   "tenement", "works", "cottage", "hall", "library",
   "stadium", "hospital", "chapel", "tower",
-  "market", "school",
+  "market", "school", "restaurant",
 ] as const;
 export type Archetype = (typeof ARCHETYPES)[number];
 
@@ -993,6 +993,65 @@ const school: RoofKit = {
   },
 };
 
+/**
+ * The restaurant: a flat roof under a canopy that projects past the eaves.
+ *
+ * This is the second attempt, and it is flat rather than pitched for a reason
+ * that has nothing to do with taste. The first four attempts all put an awning
+ * in front of a **pitched** roof, and every one of them sealed a hole: a pitched
+ * roof *rises* behind the awning, so the awning's own faces, the roof's front
+ * wall and the slope between them close a triangular void that `outline` then
+ * inks shut.
+ *
+ * A flat roof does not rise. There is no wall behind the canopy to close against,
+ * so a canopy drawn as two **surfaces** — a footprint and a beam along its front
+ * lip — cannot enclose anything, because a surface has no inside. The canopy is
+ * the whole identity: it breaks a flat roof's parapet line, which is exactly what
+ * the Tenement's silhouette is, so the two cannot be confused.
+ */
+const restaurant: RoofKit = {
+  height: () => 8,
+  trim(iso, side) {
+    iso.beamX(0, side, side, 0, P.rust[0], 1);
+    iso.beamY(0, side, side, 0, P.rust[0], 1);
+  },
+  draw(iso, side, eave) {
+    // The slab, inset from the canopy so the canopy has somewhere to project
+    // into and nothing of its own sits above the roof's front edge.
+    const inset = 5;
+    iso.box(inset, inset, side - inset * 2, side - inset * 2, eave, eave + restaurant.height(side), {
+      top: P.plaster[3],
+      lit: P.plaster[2],
+      shadow: P.plaster[1],
+      edge: P.ink,
+    });
+    // The canopy: one surface and one lip, hung off the front two edges. Drawn
+    // at the eave so it hangs *below* the slab, and inset far enough that the
+    // slab's own front face never closes the gap between them.
+    const c = eave + 1;
+    iso.footprint(-2, -7, side + 4, 9, c, P.canvas[3]);
+    iso.beamX(-2, side + 2, -7, c, P.canvas[0], 1);
+    iso.beamY(-2, -7, 2, c, P.canvas[0], 1);
+    // A pair of tables on it, which is what a canopy is for, and which is the
+    // only saturated thing on the roof.
+    const t = Math.max(3, Math.round(side / 8));
+    for (const x of [Math.round(side * 0.28), Math.round(side * 0.62)]) {
+      iso.footprint(x, -5, t, t, c + 1, P.accent);
+    }
+  },
+  stack() {
+    // No rooftop furniture. A canopy already breaks the outline, and anything
+    // standing on it would be furniture on an awning.
+  },
+  damage(iso, side, top) {
+    // A canopy tears before a roof fails, so the damage is on the canopy: a
+    // gap in the cloth and the bare support under it.
+    const d = Math.max(5, Math.round(side / 10));
+    iso.footprint(Math.round(side * 0.34), -7, d, d, top - 7, P.ink);
+    iso.beamX(Math.round(side * 0.34), Math.round(side * 0.34) + d, -5, top - 7, P.wood[1], 1);
+  },
+};
+
 const KITS: Record<Archetype, RoofKit> = {
   tenement: flat,
   works: sawtooth,
@@ -1005,6 +1064,7 @@ const KITS: Record<Archetype, RoofKit> = {
   tower,
   market,
   school,
+  restaurant,
 };
 
 /** The rise a kind stands above the wall top, for a footprint. This is what sizes
@@ -1180,6 +1240,7 @@ const MATERIAL_OF: Record<Archetype, MaterialName> = {
   tower: "glass",
   market: "timber",
   school: "stone",
+  restaurant: "timber",
 };
 
 /** What each family is made of, in one place. */

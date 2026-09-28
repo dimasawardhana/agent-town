@@ -70,7 +70,9 @@ export class Chimneys {
     private scene: Phaser.Scene,
     /** Where a building's roof is, in picture pixels. */
     roofs: { x: number; y: number }[],
-    /** Above the labels, so a puff is never half-hidden behind a name. */
+    /** Above the buildings and below the labels: a puff is never half-hidden by
+     *  a roof, and a name is never half-hidden by a puff. The scene passes
+     *  `DEPTH.smoke` for exactly that ordering. */
     depth: number,
   ) {
     const texture = smokeTexture(scene);

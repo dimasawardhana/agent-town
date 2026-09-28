@@ -744,7 +744,7 @@ test("every shipped cel is exactly the size of its own box", () => {
       assert.equal(foot.h, storey.h, `${side}: a base cel and a band cel are both one storey and must match`);
       for (const stage of STAGE_ORDER) {
         for (const damaged of [false, true]) {
-          const b = buildBase(side, archetypeFor(undefined, path), stage, damaged);
+          const b = buildBase(side, materialFor(archetypeFor(undefined, path)), stage, damaged);
           assert.equal(b.w, foot.w, `${side}/${path}/${stage}/${damaged}: base width disagrees with baseBox`);
           assert.equal(b.h, foot.h, `${side}/${path}/${stage}/${damaged}: base height disagrees with baseBox`);
           const c = buildCap(side, archetypeFor(undefined, path), stage);
@@ -798,7 +798,7 @@ test("the base, band and shadow cels fill their own height", () => {
       let band = Infinity;
       for (const stage of STAGE_ORDER) {
         for (const damaged of [false, true]) {
-          base = Math.min(base, topGap(buildBase(side, archetypeFor(undefined, path), stage, damaged)));
+          base = Math.min(base, topGap(buildBase(side, materialFor(archetypeFor(undefined, path)), stage, damaged)));
         }
         band = Math.min(band, topGap(buildBand(side, materialFor(archetypeFor(undefined, path)), stage)));
       }
@@ -1330,7 +1330,7 @@ test("a single-storey building is solid: no hole between its plinth and its roof
   // a single file, so this is the common case, and it is invisible in the code
   // because every function involved is individually correct.
   const side = 60, files = 5;
-  const b = buildBase(side, archetypeFor(undefined, "a"), "completed");
+  const b = buildBase(side, materialFor(archetypeFor(undefined, "a")), "completed");
   const c = buildCap(side, archetypeFor(undefined, "a"), "completed");
   const sheet = new Pix(b.w, b.h);
   sheet.blit(b, 0, 0);
@@ -1363,7 +1363,7 @@ test("each added storey raises the tower by exactly one storey", () => {
   // does not appear at one floor — it only appears once there are two.
   const side = 78, files = 9, path = "a", stage = "completed";
   const skin = skinFor(files, path);
-  const base = buildBase(side, archetypeFor(undefined, path), stage);
+  const base = buildBase(side, materialFor(archetypeFor(undefined, path)), stage);
   const band = buildBand(side, materialFor(archetypeFor(undefined, path)), stage);
   const cap = buildCap(side, archetypeFor(undefined, path), stage);
   const footCel = baseBox(side), bandCel = bandBox(side), capCel = capBox(side, archetypeFor(undefined, path));

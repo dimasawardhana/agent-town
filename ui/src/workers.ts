@@ -207,6 +207,8 @@ export class WorkerLayer {
    */
   private roads: RoadLine[] = [];
   private travel = new Map<string, Journey>();
+  /** One per figure in flight, so its update listener can be removed again. */
+  private steppers = new Map<string, () => void>();
   private disposed = false;
 
   /** setRoads gives the layer the network to route along. Called when the map
@@ -455,7 +457,15 @@ export class WorkerLayer {
     // walk cycle is driven off the same progress, so feet plant at the same
     // rate on a long road as on a short one.
     const started = sprite.scene.time.now;
-    this.scene.events.on(`update`, this.stepper(w.id, started, ms));
+    // The listener is held so it can be removed again. It is not enough to let a
+    // finished journey's closure die on its own: the layer is destroyed and
+    // rebuilt on every draw — that is, on every event — and nothing was
+    // unhooking these, so a live session accumulated one per journey forever.
+    // The map leaked memory a few hundred bytes at a time and nothing ever
+    // failed, which is the worst way for a leak to present.
+    const step = this.stepper(w.id, started, ms);
+    this.steppers.set(w.id, step);
+    this.scene.events.on(`update`, step);
   }
 
   /**
@@ -478,8 +488,17 @@ export class WorkerLayer {
       if (t >= 1) {
         this.travel.delete(id);
         this.syncVisual(id);
+        this.unhook(id);
       }
     };
+  }
+
+  /** unhook removes a finished journey's per-frame listener. */
+  private unhook(id: string): void {
+    const step = this.steppers.get(id);
+    if (!step) return;
+    this.scene.events.off(`update`, step);
+    this.steppers.delete(id);
   }
 
   /** syncVisual keeps a figure's depth, shadow, tag and caption together while
@@ -624,6 +643,10 @@ export class WorkerLayer {
 
   /** destroy tears down every figure. Used when the map is rebuilt. */
   destroy(): void {
+    // Every listener goes before the figures, whether or not they finished their
+    // walk: a layer torn down mid-journey would otherwise leave its closures
+    // bound to the scene forever.
+    for (const id of [...this.steppers.keys()]) this.unhook(id);
     for (const id of [...this.sprites.keys()]) this.remove(id);
   }
 }

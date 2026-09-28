@@ -32,7 +32,7 @@ import { STOREY, bandHeight, towerTop } from "./stack";
 import { Pix } from "./surface";
 import {
   ARCHETYPES, buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath,
-  archetypeFor, archetypeHeight, material, materialByName, type Archetype, type MaterialName,
+  archetypeFor, archetypeHeight, material, materialByName, materialFor, type Archetype, type MaterialName,
 } from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
@@ -441,12 +441,12 @@ function cornerBoards(iso: IsoPix, side: number, skin: BuildingSkin): void {
  */
 export function buildBase(
   side: number,
-  archetype: Archetype,
+  materialName: MaterialName,
   stage: Stage,
   damaged = false,
   turn = 0,
 ): Pix {
-  const skin = material(archetype);
+  const skin = materialByName(materialName);
   // The base's own box, not the whole building's: `buildBase` draws one storey and
   // no roof, so a cel carrying roof headroom would be taller than its contents —
   // and this cel is the tallest on the sheet, which makes its height the sheet's
@@ -920,7 +920,7 @@ export function buildBuilding(
 
   // The base is the ground storey: its world origin is z = 0, which is the
   // composite's own origin row, `box.oy`.
-  iso.pix.blit(buildBase(side, archetypeFor(undefined, path), stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
+  iso.pix.blit(buildBase(side, materialFor(archetypeFor(undefined, path)), stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
   // The cap sits on top of one storey, so its base is at z = STOREY. Its cel's
   // origin is already the top of the wall rather than the ground (`capBox` uses the
   // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes

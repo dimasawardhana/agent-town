@@ -37,7 +37,7 @@ test("base and band agree, so a building is one material throughout", () => {
   // The failure this prevents is the obvious one: a concrete base under
   // plaster upper floors, which reads as two buildings sharing a plot.
   for (const a of ARCHETYPES) {
-    const base = buildBase(78, a, "completed", false);
+    const base = buildBase(78, materialFor(a), "completed", false);
     const band = buildBand(78, materialFor(a), "completed");
     assert.ok(!base.empty() && !band.empty(), `${a} drew an empty base or band`);
   }
@@ -64,7 +64,7 @@ test("a base damage overlay exists for every family, and a blank beside it", () 
 test("the body is keyed on the archetype, not the file count", () => {
   // Two buildings of the same size but different archetypes must differ. This is
   // the whole change: before it, the body came from `files` and a path hash.
-  const a1 = baseFrame(78, materialFor("chapel"), "completed", false, 0);
-  const a2 = baseFrame(78, materialFor("tower"), "completed", false, 0);
+  const a1 = baseFrame(78, materialFor("chapel"), "completed", 0);
+  const a2 = baseFrame(78, materialFor("tower"), "completed", 0);
   assert.notEqual(a1, a2, "two archetypes share one base frame; the body is still keyed on size");
 });

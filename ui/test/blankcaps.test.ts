@@ -73,7 +73,7 @@ test("every storey and cap resolves at every stage, so the child count cannot dr
         for (const variant of [0, 1] as const) {
           // The ground storey, which is drawn whatever the stage.
           assert.ok(
-            keys.has(baseFrame(side, "stone", stage, false, 0)),
+            keys.has(baseFrame(side, "stone", stage, 0)),
             `side ${side} ${a} ${stage}: the base has no frame, so this stage would have one fewer child`,
           );
           // And the cap, whether it draws a roof or shares the blank.

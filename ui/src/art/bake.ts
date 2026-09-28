@@ -154,10 +154,9 @@ export function baseFrame(
   side: number,
   material: MaterialName,
   stage: Stage,
-  damaged: boolean,
   turn = 0,
 ): string {
-  const base = `base:${side}:${stage}:${material}${damaged ? ":dmg" : ""}`;
+  const base = `base:${side}:${stage}:${material}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
@@ -361,8 +360,8 @@ export function bakedCels(turn = 0): BakedCel[] {
           oy: storeyBox.oy,
         });
         cels.push({
-          key: baseFrame(side, m, stage, false, turn),
-          pix: buildBase(side, archetypeFor(m, `mat/${m}`), stage, false, turn),
+          key: baseFrame(side, m, stage, turn),
+          pix: buildBase(side, m, stage, false, turn),
           ox: footBox.ox,
           oy: footBox.oy,
         });

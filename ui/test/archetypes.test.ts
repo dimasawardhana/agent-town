@@ -23,7 +23,7 @@ test("the axis is named places, not roof shapes", () => {
   for (const a of ARCHETYPES) {
     assert.ok(!shapeWords.includes(a), `"${a}" is a roof shape, not a place`);
   }
-  assert.equal(ARCHETYPES.length, 11, "eleven archetypes ship; the Restaurant was cut in ticket 05");
+  assert.equal(ARCHETYPES.length, 12, "twelve archetypes ship");
 });
 
 test("every archetype is reachable and the selector is deterministic", () => {

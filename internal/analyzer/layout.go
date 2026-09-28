@@ -567,9 +567,13 @@ func buildingsIn(t *Town, district string) []Building {
 // spanning the two plots, which is honest about what it is — a link, not a
 // street — and needs no path-walking in the browser.
 func containmentRoads(l *Layout) {
+	// Buildings only. A container is a *summary* of the directories beneath it,
+	// so linking one to its child would draw a road between a district and its
+	// own neighbourhood — which is the confusion the containment road exists to
+	// make clearer, not to create.
 	byPath := make(map[string]Site, len(l.Sites))
 	for _, s := range l.Sites {
-		if s.Path != "" {
+		if s.Kind == PlaceBuilding && s.Path != "" {
 			byPath[s.Path] = s
 		}
 	}
