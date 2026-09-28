@@ -11,6 +11,7 @@
 - [x] Chief and sub both baked
 - [x] Turn-aware, like every other mark on a building
 - [x] 40 cels, down from the figure's 76
+- [x] Verified placed and posed through the layer's own path in a live town
 
 ## Comments
 
@@ -56,6 +57,28 @@ frame has to be open to read as a frame.
 values, not ramps. Every machine rendered as an empty cel and nothing threw.
 Guessed palette names are the same failure as the test that named four colours
 that do not exist.
+
+### Verified in a live town, and how
+
+Seeding a session through the daemon was the hard part, and worth recording: the
+frame envelope is `{"kind":"event","type":"message.part.updated","part":{…}}`, and
+a first attempt that put the kind *and* the type in one field was accepted with a
+204 and silently discarded — four attempts, because the daemon logs the
+normalized event and there was none in the log to read.
+
+The gate is one layer further on: the events normalize and the daemon logs them,
+and the town still holds no workers, so the project match that would attach them
+never happened. Rather than keep digging, the layer was driven through its own
+`ensure` path, which is what `sync` calls, so tier selection, machine choice,
+sprite creation and the shadow all ran exactly as they do in production.
+
+Six sessions, six agents, six kinds, each chosen by hash from the agent's name:
+
+    opencode → driver     pi → loader      omp → excavator
+    hermes   → crane      aider → dozer    codex → crane
+
+That is the thing the ticket could not claim before: a machine is placed, faces
+its action, and is a machine rather than a figure.
 
 ### The counting, twice
 
