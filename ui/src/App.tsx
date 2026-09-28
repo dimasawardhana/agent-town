@@ -8,6 +8,7 @@ import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
 import { actionInfo, targetOf } from "./actions";
 import { EMBER_MS } from "./embers";
 import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
+import { STAGE_ORDER, type Stage } from "./art/building";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -64,14 +65,27 @@ const BUILD_STAGE_LABEL: Record<BuildingState["status"], string> = {
  *
  * Order is the point: a count per stage is only readable if the stages read
  * left to right as progress, so this is the ladder and not the alphabet.
+ *
+ * **Every rank, derived from `STAGE_ORDER` rather than restated.** A hand-typed
+ * five-entry version dropped `foundation`, `glazed` and `doored`, and because
+ * the counts are filtered through this list those buildings were then reported
+ * nowhere — the chips did not sum to the "N buildings" line printed directly
+ * above them. CONTEXT.md is explicit that the ladder never skips a rank, so the
+ * panel cannot either: the list is the art's own, and a rank added there shows
+ * up here without anyone remembering this file.
  */
-const LADDER: { key: BuildingState["status"]; label: string }[] = [
-  { key: "planned", label: "plot" },
-  { key: "framed", label: "framed" },
-  { key: "walled", label: "walled" },
-  { key: "roofed", label: "roofed" },
-  { key: "completed", label: "done" },
-];
+const STAGE_LABELS: Partial<Record<Stage, string>> = {
+  planned: "plot",
+  foundation: "found",
+  framed: "framed",
+  walled: "walled",
+  roofed: "roofed",
+  glazed: "glazed",
+  doored: "doored",
+  completed: "done",
+};
+
+const LADDER = STAGE_ORDER.map((key) => ({ key, label: STAGE_LABELS[key] ?? key }));
 
 /**
  * TownPulse replaces a line that read "14 buildings · 5 districts".

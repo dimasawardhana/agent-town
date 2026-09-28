@@ -158,15 +158,8 @@ export class IsoPix {
       : { x: (f.from + f.to) / 2, y: f.fixed };
   }
 
-  /**
-   * depth is how near a world point is to the camera, larger being nearer.
-   *
-   * The projection puts larger `x + y` lower on screen, and lower on screen is
-   * nearer the viewer for anything standing on the ground. Derived from the
-   * turned point rather than from a table of which axis is near at which turn,
-   * so it cannot disagree with the projection it is deciding about.
-   */
-  /**
+  
+/**
    * frontCorner is the footprint corner nearest the camera, for a square of
    * `side` at the origin.
    *
@@ -196,6 +189,14 @@ export class IsoPix {
     return best;
   }
 
+  /**
+   * depth is how near a world point is to the camera, larger being nearer.
+   *
+   * The projection puts larger `x + y` lower on screen, and lower on screen is
+   * nearer the viewer for anything standing on the ground. Derived from the
+   * turned point rather than from a table of which axis is near at which turn,
+   * so it cannot disagree with the projection it is deciding about.
+   */
   private depth(wx: number, wy: number): number {
     const p = turnPoint(this.turn, wx, wy);
     return p.x + p.y;

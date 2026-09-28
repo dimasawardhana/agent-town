@@ -17,7 +17,7 @@ export const SITE_ID_BUILDING_PREFIX = "building:";
 
 export interface Road {
   x: number; y: number; w: number; h: number;
-  /** "row" or "containment" — which rule produced the band. */
+  /** "row", "district" or "containment" — which rule produced the band. */
   kind: string;
 }
 

@@ -145,7 +145,10 @@ func importSpecifiers(file string) []string {
 	for _, m := range re.FindAllStringSubmatch(src, -1) {
 		out = append(out, m[1])
 	}
-	rex := regexp.MustCompile(`(?m)^\s*export\s+(?:type\s*)?(?:\{[^}]*\}\s*)?from\s*['"]([./][^'"]*)['"]`)
+	// A re-export: `export … from "./x"`, and `export * from "./x"` which
+	// re-exports a whole module and names no braces at all — a form the first
+	// version missed, so a barrel file's edges were simply absent.
+	rex := regexp.MustCompile(`(?m)^\s*export\s+(?:type\s+)?(?:(?:\{[^}]*\}|\*)\s+)?from\s*['"]([./][^'"]*)['"]`)
 	for _, m := range rex.FindAllStringSubmatch(src, -1) {
 		out = append(out, m[1])
 	}
@@ -172,7 +175,7 @@ func importSpecifiers(file string) []string {
 func stripComments(src string) string {
 	var b strings.Builder
 	b.Grow(len(src))
-	inBlock, inStr := false, false
+	inBlock, inStr := false, byte(0)
 	for i := 0; i < len(src); i++ {
 		c := src[i]
 		if inBlock {
@@ -182,18 +185,18 @@ func stripComments(src string) string {
 			}
 			continue
 		}
-		if inStr {
+		if inStr != 0 {
 			b.WriteByte(c)
 			if c == '\\' && i+1 < len(src) {
 				i++
 				b.WriteByte(src[i])
-			} else if c == '"' {
-				inStr = false
+			} else if c == inStr {
+				inStr = 0
 			}
 			continue
 		}
-		if c == '"' {
-			inStr = true
+		if c == '"' || c == '\'' || c == '`' {
+			inStr = c
 			b.WriteByte(c)
 			continue
 		}

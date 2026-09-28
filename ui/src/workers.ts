@@ -633,7 +633,7 @@ export class WorkerLayer {
    */
   private frameFor(a: AnimState, state: WorkerState): string {
     const kind: MachineKind = machineFor(a.agent);
-    return machineFrame(kind, a.tier, POSE_FOR[state] ?? "idle");
+    return machineFrame(kind, a.tier, POSE_FOR[state]);
   }
 
   /** remove tears down one figure and everything attached to it. */

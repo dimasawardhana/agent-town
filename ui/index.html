@@ -307,7 +307,12 @@
       }
       .pulse .sig.down { background: var(--down); }
       .pulse .sig.done { background: var(--done); }
-      .pulse .sig.hot { background: var(--accent); }
+      /* The ember's own colour, not the panel's accent. The two are different
+         hexes --accent is #e6bb38, the ember is drawn in P.accentDim #8a6414 --
+         and a chip that claims to be the glow on the map while being a
+         different colour is the two-claims failure this panel is meant to avoid.
+         Kept in step with `embers.ts` by hand and checked by `sky.test.ts`. */
+      .pulse .sig.hot { background: #8a6414; }
 
       /* The legend explains the three places, which the map can only name.
          Each entry is ruled on its own left edge and carries a live count, so

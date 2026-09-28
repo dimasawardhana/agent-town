@@ -21,10 +21,10 @@ export const P = {
   // The void behind everything, and the base of the sky the town sits in.
   void: "#0e141c",
   // The sky, which exists only in the generated backdrop and is never baked —
-  // so these are the four colours the town is seen against, and nothing else in
-  // the art is allowed to use them. Keeping them here rather than inline in the
-  // sky module is what makes "the backdrop is the only user" a checkable claim
-  // rather than a convention.
+  // so these are the colours the town is seen against, and nothing else in the
+  // art is allowed to use them. Keeping them here rather than inline in the sky
+  // module is what makes "the backdrop is the only user" a checkable claim
+  // rather than a convention, and `sky.test.ts` is what checks it.
   skyZenith: "#1a2740",
   skyMid: "#3d5570",
   skyHaze: "#7d8a80",
@@ -38,10 +38,9 @@ export const P = {
   // same world — and it is separated from the town by *value and saturation*
   // rather than by hue, which is what a distant field actually looks like: a
   // duller, hazier, lighter version of the same green, because that is what
-  // atmosphere does to a field. A
-  // colour unrelated to the grass said "different world"; a colour too close
-  // would say "more of your land", and the ground tiles already draw that edge
-  // themselves.
+  // atmosphere does to a field. A colour unrelated to the grass would have said
+  // "different world"; a colour too close would say "more of your land", and the
+  // ground tiles already draw that edge themselves.
   skyGround: "#46524a",
   // Ground tones, hue-shifted from a cool shadow green to a warm lit green.
   grass: ["#1d3327", "#274632", "#32583d", "#3e6b49"] as Ramp,

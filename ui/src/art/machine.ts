@@ -26,6 +26,7 @@ import { P } from "./palette";
 import { IsoPix } from "./iso";
 import type { Turn } from "../view";
 import { WorldView, normaliseTurn } from "../view";
+import type { WorkerState } from "./worker";
 
 /** The four poses. Coarse, and named for the picture rather than the verb. */
 export type MachinePose = "work" | "idle" | "travel" | "done";
@@ -39,7 +40,7 @@ export type MachinePose = "work" | "idle" | "travel" | "done";
  * demolishing and commanding are all "engaged with something on the ground",
  * which is the most a silhouette can honestly say.
  */
-export const POSE_FOR: Record<string, MachinePose> = {
+export const POSE_FOR: Record<WorkerState, MachinePose> = {
   idle: "idle",
   planning: "idle",
   reading: "idle",
@@ -52,9 +53,16 @@ export const POSE_FOR: Record<string, MachinePose> = {
   celebrating: "done",
 };
 
-/** The five kinds, named by silhouette so the roster reads as a fleet. */
+/**
+ * The four poses, in the order a reader meets them.
+ *
+ * Named for what they *show*, not for the verb: a pose that said "digging"
+ * would claim a test run was an edit, which is the false claim this whole town
+ * exists to avoid (ADR-0004 §9). These are the shapes of the rig.
+ */
 export const MACHINE_POSES: readonly MachinePose[] = ["work", "idle", "travel", "done"];
 
+/** The five kinds, named by silhouette so the roster reads as a fleet. */
 export const MACHINES = ["excavator", "crane", "loader", "driver", "dozer"] as const;
 export type MachineKind = (typeof MACHINES)[number];
 

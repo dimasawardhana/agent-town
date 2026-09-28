@@ -134,3 +134,22 @@ test("no backdrop colour is allowed into baked art", () => {
     }
   }
 });
+
+// The "just worked" chip claims to be the ember's own glow.
+//
+// It was `var(--accent)`, #e6bb38, while `embers.ts` draws the glow in
+// `P.accentDim`, #8a6414 — the panel asserting it mirrors the map while showing
+// a different colour. This is the one place the panel and the map can disagree
+// about a *fact* rather than about a count, so it is checked rather than trusted.
+test("the just-worked chip is the ember's colour, not merely the same family", async () => {
+  const { readFileSync } = await import("node:fs");
+  const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+  const rule = html.match(/\.pulse \.sig\.hot \{ background: ([^;]+); \}/);
+  assert.ok(rule, "the .sig.hot rule is gone; the claim cannot be checked");
+  const declared = rule[1].trim();
+  assert.equal(
+    declared.toLowerCase(),
+    P.accentDim.toLowerCase(),
+    `the chip is ${declared} but the ember is drawn in ${P.accentDim}`,
+  );
+});

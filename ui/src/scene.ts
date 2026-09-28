@@ -149,11 +149,12 @@ export class TownScene extends Phaser.Scene {
   private sky: Phaser.GameObjects.Image | null = null;
 
   /**
-   * resizeSky repaints the backdrop for a new view size.
+   * ensureSky creates the backdrop, replacing any existing one.
    *
-   * Regenerated rather than stretched, because a stretched gradient is a
-   * gradient that has been resampled, and a resampled gradient bands. The old
-   * texture is dropped so the cache does not accumulate one per resize.
+   * It exists rather than a one-line `add.image` at the call site because the
+   * sky has to exist in two places: once on `create`, and once after every
+   * redraw, which calls `removeAll` and takes the sky with it. One method, so
+   * there is one answer to "where does the backdrop come back".
    */
   private ensureSky(): void {
     this.sky?.destroy();
@@ -164,6 +165,15 @@ export class TownScene extends Phaser.Scene {
       .setDepth(SKY_DEPTH);
   }
 
+  /**
+   * resizeSky repaints the backdrop for a new view size.
+   *
+   * Regenerated rather than stretched, because a stretched gradient is a
+   * gradient that has been resampled, and a resampled gradient bands. This is
+   * also the only place the old texture key is dropped — `ensureSky` destroys
+   * the *sprite*, not the texture it was showing, so without this line the
+   * cache would accumulate one canvas per resize.
+   */
   private resizeSky(): void {
     if (!this.sky) return;
     const w = this.scale.width;

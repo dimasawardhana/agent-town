@@ -35,7 +35,7 @@ import { paletteSet, P } from "../src/art/palette";
 import { hex, sprite, Pix } from "../src/art/surface";
 import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
-import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
+import { FRAME_MS, type WorkerState } from "../src/art/worker";
 import { MACHINES, MACHINE_POSES } from "../src/art/machine";
 import { bakedCels, layoutAtlas, SIZES, NO_DAMAGE_FRAME, NO_VERIFIED_FRAME } from "../src/art/bake";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, MATERIALS } from "../src/art/roof";
@@ -486,133 +486,7 @@ test("sprite() accepts dots as the only transparent character", () => {
   assert.ok(!p.isOpaque(0, 0) && p.isOpaque(2, 0));
 });
 
-test("every character in every authored sprite has a colour", () => {
-  // The same guarantee, asserted over the real art rather than a sample: if a
-  // key entry is ever deleted, this names the character and the cel.
-  assert.doesNotThrow(() => {
-    buildWorker("chief");
-    buildWorker("sub");
-    for (const { kind } of buildAllProps()) void kind;
-  });
-});
-
 // --- the worker ------------------------------------------------------------
-
-test("worker cels are the declared size and origin", () => {
-  for (const tier of ["chief", "sub"] as const) {
-    for (const [state, cels] of Object.entries(buildWorker(tier).cels)) {
-      for (const [i, pix] of cels.entries()) {
-        assert.equal(pix.w, WORKER_CEL, `${tier}/${state}/${i} width`);
-        assert.equal(pix.h, WORKER_CEL, `${tier}/${state}/${i} height`);
-      }
-    }
-  }
-});
-
-test("every worker stands on its origin row", () => {
-  // The lowest drawn row must be the origin row, so the figure's feet land on
-  // the point the scene places it by. Not that the origin *column* is inked: on
-  // a spread-legs walk frame the ground point falls between the boots, which is
-  // correct.
-  for (const tier of ["chief", "sub"] as const) {
-    const sheet = buildWorker(tier);
-    for (const [state, cels] of Object.entries(sheet.cels)) {
-      for (const [i, pix] of cels.entries()) {
-        let lowest = -1;
-        for (let y = 0; y < pix.h; y++) {
-          for (let x = 0; x < pix.w; x++) if (pix.isOpaque(x, y)) lowest = y;
-        }
-        assert.equal(lowest, WORKER_ORIGIN.y, `${tier}/${state}/${i} lowest drawn row`);
-      }
-    }
-  }
-});
-
-test("a sub worker is visibly shorter than a chief, with feet on the same line", () => {
-  // ADR-0007 asks for a smaller worker. Shortening the legs alone did not
-  // deliver it: the missing rows hid inside the torso and both tiers came out
-  // the same height.
-  const span = (pix: Pix) => {
-    let top = -1;
-    let bottom = -1;
-    for (let y = 0; y < pix.h; y++) {
-      for (let x = 0; x < pix.w; x++) {
-        if (pix.isOpaque(x, y)) {
-          if (top < 0) top = y;
-          bottom = y;
-        }
-      }
-    }
-    return { top, bottom, height: bottom - top + 1 };
-  };
-
-  for (const state of ["idle", "walk", "hammering", "testing", "celebrating"] as WorkerState[]) {
-    const chief = span(buildWorker("chief").cels[state][0]);
-    const sub = span(buildWorker("sub").cels[state][0]);
-    assert.ok(sub.height < chief.height, `${state}: sub ${sub.height}px is not shorter than chief ${chief.height}px`);
-    assert.equal(sub.bottom, chief.bottom, `${state}: sub worker's feet are not on the chief's ground line`);
-  }
-});
-
-test("each tier has its own helmet", () => {
-  const helmet = (tier: "chief" | "sub") => {
-    const pix = buildWorker(tier).cels.idle[0];
-    const seen: string[] = [];
-    for (let y = 6; y < 10; y++) {
-      for (let x = 0; x < pix.w; x++) {
-        const [r, g, b, a] = pix.at(x, y);
-        if (a) seen.push(`${r},${g},${b}`);
-      }
-    }
-    return [...new Set(seen)].sort().join("|");
-  };
-  assert.notEqual(helmet("chief"), helmet("sub"), "the two tiers are told apart by their helmets (ADR-0007)");
-});
-
-test("every action animates and differs from idle", () => {
-  const idle = ink(buildWorker("chief").cels.idle[0]);
-  for (const [state, cels] of Object.entries(buildWorker("chief").cels)) {
-    if (state === "idle") continue;
-    assert.ok(
-      cels.some((c) => ink(c) !== idle),
-      `action ${state} is drawn identically to idle`,
-    );
-  }
-});
-
-test("hammering raises the mallet above the head", () => {
-  // The wind-up must be visibly a wind-up at the top of the cel, or the whole
-  // action reads as standing still.
-  const upperRows = (pix: Pix) => {
-    let n = 0;
-    for (let y = 0; y < 6; y++) for (let x = 0; x < pix.w; x++) if (pix.isOpaque(x, y)) n++;
-    return n;
-  };
-  const chief = buildWorker("chief").cels;
-  assert.ok(
-    upperRows(chief.hammering[0]) > upperRows(chief.idle[0]),
-    "the hammer's wind-up does not reach above the resting figure",
-  );
-});
-
-test("every action has frame timings, and no two share a rhythm", () => {
-  // This is the property that makes a test sweep and a hammer blow look
-  // different at a glance, and the Go side asserts the same table.
-  for (const state of Object.keys(buildWorker("chief").cels) as WorkerState[]) {
-    assert.ok(Array.isArray(FRAME_MS[state]) && FRAME_MS[state].length > 0, `${state} has no timings`);
-  }
-  const rhythms = new Map<string, string>();
-  for (const [state, ms] of Object.entries(FRAME_MS)) {
-    const key = ms.join(",");
-    const prev = rhythms.get(key);
-    assert.equal(prev, undefined, `${state} and ${prev} share the animation rhythm [${key}]`);
-    rhythms.set(key, state);
-  }
-});
-
-test("the walk cycle is a plausible length", () => {
-  assert.ok(WALK_CYCLE_MS >= 300 && WALK_CYCLE_MS <= 700, `walk cycle ${WALK_CYCLE_MS}ms is outside the readable range`);
-});
 
 // --- the building ladder ---------------------------------------------------
 

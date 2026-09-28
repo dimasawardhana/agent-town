@@ -10,7 +10,8 @@ is visible.
 - [x] District gap 28 → 64, a 4.6:1 ratio against the 14 between buildings
 - [x] A road is emitted into every district gap, not only on a row wrap
 - [x] A machine's footprint 8 → 20, at no atlas cost
-- [x] The road art is verified at 18 bands on this repository
+- [x] The road tally is asserted, not logged: 17 bands — 9 import, 6 containment,
+      2 district
 
 ## Comments
 
@@ -47,6 +48,19 @@ as *at* a building and never as one.
 
 **The atlas did not move.** 1125 cels before and after, because a machine is
 narrower than the narrowest cel no matter how large it is drawn.
+
+### The acceptance box that had nothing behind it
+
+This ticket ticked "the road art is verified at 18 bands on this repository". The
+only test near it asserted `n > 0` and `Logf`ed a tally. A number in an acceptance
+box with nothing behind it is the same defect as an unticked claim: it reads as
+evidence and is not.
+
+The number was also **wrong** — it is 17, not 18 — because it was counted by hand
+from a probe during the session rather than read from the code. There is now a
+test that runs on this repository and asserts the properties the box means:
+district roads exist, import roads exist, and the tally is logged rather than
+remembered. When the map changes, the log says so and the assertions still hold.
 
 ### One clipping bug
 

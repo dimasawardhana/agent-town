@@ -134,10 +134,10 @@ type Road struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
-	// Kind is "row" or "containment". It is carried so the two can be drawn
-	// differently if they ever need to be — a row road is a street and a
-	// containment road is a footpath — and so a reader debugging the map can
-	// tell which rule produced a band.
+	// Kind is "row", "district" or "containment". It is carried so the three can
+	// be drawn differently if they ever need to be — a row road is a street, a
+	// district road runs between quarters, and a containment road is a footpath
+	// — and so a reader debugging the map can tell which rule produced a band.
 	Kind string `json:"kind"`
 }
 

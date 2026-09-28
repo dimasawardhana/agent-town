@@ -23,7 +23,7 @@ import Phaser from "phaser";
 import { MACHINES, machineOrigin, buildMachine, type MachineKind, type MachinePose } from "./machine";
 import { P, paletteSet } from "./palette";
 import { Pix } from "./surface";
-import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
+import type { Tier, WorkerState } from "./worker";
 import {
   STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
   buildBaseDamageCel, buildRoofDamageCel, buildRoofFlagCel, emptyDamageCel, emptyVerifiedCel,
@@ -538,10 +538,11 @@ export function bake(scene: Phaser.Scene, turn = 0): Atlas {
 }
 // The origin offsets come from the art modules' own constants rather than being
 // restated. A cel anchored at the wrong pixel does not fail — it silently
-// shifts a worker off its building — so there is exactly one definition of
-// where each kind of cel's world origin sits.
-const WORKER_OX = WORKER_ORIGIN.x;
-const WORKER_OY = WORKER_ORIGIN.y;
+// shifts a mark off its building — so there is exactly one definition of where
+// each kind of cel's world origin sits. A machine's is computed from its drawn
+// footprint, in , for the same reason.
+// A machine's own origin is computed from its drawn footprint, in machine.ts, for
+// the same reason: a mark anchored at the wrong pixel drifts rather than fails.
 const PROP_OX = PROP_ORIGIN.x;
 const PROP_OY = PROP_ORIGIN.y;
 

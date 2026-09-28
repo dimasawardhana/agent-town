@@ -7,10 +7,11 @@
 // has been tracked and persisted from the start and never drawn. This draws it.
 //
 // What it is allowed to claim is narrow on purpose. An ember means **touched in
-// the last minute or so**, and it fades to nothing and is removed. It is not a
-// "hot" or "busy" badge, because those claim something the town cannot know: a
-// building nobody has touched in an hour is not cold, it is simply untouched, and
-// a marker that lingered would be asserting otherwise.
+// the last two minutes** — see `EMBER_MS`, the only place that number is
+// written — and it fades to nothing and is removed. It is not a "hot" or "busy"
+// badge, because those claim something the town cannot know: a building nobody
+// has touched in an hour is not cold, it is simply untouched, and a marker that
+// lingered would be asserting otherwise.
 //
 // The texture is generated rather than baked, so this costs the atlas nothing —
 // the same trick the smoke uses, and for the same reason: every cel in the sheet
@@ -26,6 +27,11 @@ import { P } from "./art/palette";
  * Long enough to see across a working session, short enough that the ember is
  * never lying. Two minutes: a change made just before a screenshot is in it, and
  * one made five minutes ago is not.
+ *
+ * This is the only statement of the window. A comment here once said "the last
+ * minute or so" and a second said "five minutes ago is not", for a constant set
+ * to two — a file whose entire claim is that it asserts nothing it cannot know,
+ * asserting two different windows.
  */
 export const EMBER_MS = 120_000;
 
