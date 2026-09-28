@@ -26,7 +26,7 @@ test("the stages that draw no roof share one blank frame per footprint", () => {
       for (const roof of ARCHETYPES) {
         for (const damaged of [false, true]) {
           for (const verified of [false, true]) {
-            frames.add(capFrame(side, roof, stage, damaged, verified));
+            frames.add(capFrame(side, roof, stage, verified));
           }
         }
       }
@@ -50,7 +50,7 @@ test("the shared pre-roof frame is baked for every turn", () => {
     const keys = new Set(bakedCels(turn).map((c) => c.key));
     for (const side of [44, 60, 78, 100]) {
       for (const stage of PRE_ROOF) {
-        const key = capFrame(side, ARCHETYPES[0], stage, false, false, turn);
+        const key = capFrame(side, ARCHETYPES[0], stage, false, turn);
         assert.ok(keys.has(key), `turn ${turn}: no baked cel answers to ${key}`);
       }
     }
@@ -79,7 +79,7 @@ test("every storey and cap resolves at every stage, so the child count cannot dr
           );
           // And the cap, whether it draws a roof or shares the blank.
           assert.ok(
-            keys.has(capFrame(side, a, stage, false, false, 0)),
+            keys.has(capFrame(side, a, stage, false, 0)),
             `side ${side} ${a} ${stage}: the cap has no frame, so this stage would have one fewer child`,
           );
         }
@@ -97,24 +97,24 @@ test("every storey and cap resolves at every stage, so the child count cannot dr
 });
 
 
-test("the post-roof stages still resolve per kind, damage and verification", () => {
-  // The sharing must not leak. A `roofed` cap draws its kind's roof, so the
+test("the post-roof stages still resolve per archetype and verification", () => {
+  // The sharing must not leak. A `roofed` cap draws its archetype's roof, so the
   // combinations have to stay apart or a Stadium would render as a Cottage.
+  // Damage is not an axis any more — it is a mark laid over the cap — so the
+  // count is per archetype and verification, not four.
   const POST_ROOF = STAGE_ORDER.filter((s) => stageRank(s) >= stageRank("roofed"));
   for (const side of [44, 60, 78, 100]) {
     for (const stage of POST_ROOF) {
       const seen = new Set<string>();
       for (const roof of ARCHETYPES) {
-        for (const damaged of [false, true]) {
-          for (const verified of [false, true]) {
-            seen.add(capFrame(side, roof, stage, damaged, verified));
-          }
+        for (const verified of [false, true]) {
+          seen.add(capFrame(side, roof, stage, verified));
         }
       }
       assert.equal(
         seen.size,
-        ARCHETYPES.length * 4,
-        `side ${side} at ${stage}: ${seen.size} frames, want one per kind, damage and verification`,
+        ARCHETYPES.length * 2,
+        `side ${side} at ${stage}: ${seen.size} frames, want one per archetype and verification`,
       );
     }
   }

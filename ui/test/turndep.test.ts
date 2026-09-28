@@ -38,8 +38,8 @@ test("measure turn dependence", () => {
         // compared each roof against itself and reported a cap that never turns.
         for (const roof of ARCHETYPES) {
           for (const dmg of [false, true]) {
-            const ca = buildCap(side, roof, stage, dmg, false, 0 as 0);
-            const cb = buildCap(side, roof, stage, dmg, false, 1 as 1);
+            const ca = buildCap(side, roof, stage, false, 0 as 0);
+            const cb = buildCap(side, roof, stage, false, 1 as 1);
             bump("cap", differs(ca, cb), !differs(ca, cb));
           }
         }

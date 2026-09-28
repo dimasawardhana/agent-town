@@ -9,10 +9,11 @@
     "test:blankcaps": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-blankcaps.test.mjs test/blankcaps.test.ts --log-level=warning && node --test ui-blankcaps.test.mjs",
     "test:archetypes": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-archetypes.test.mjs test/archetypes.test.ts --log-level=warning && node --test ui-archetypes.test.mjs",
     "test:visibility": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-visibility.test.mjs test/visibility.test.ts --log-level=warning && node --test ui-visibility.test.mjs",
-    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:visibility && npm run test:light && npm run test:atlas",
+    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:visibility && npm run test:light && npm run test:atlas",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:light": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-light.test.mjs test/light.test.ts --log-level=warning && node --test ui-light.test.mjs",
-    "test:atlas": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-atlas.test.mjs test/atlas.test.ts --log-level=warning && node --test ui-atlas.test.mjs"
+    "test:atlas": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-atlas.test.mjs test/atlas.test.ts --log-level=warning && node --test ui-atlas.test.mjs",
+    "test:damage": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-damage.test.mjs test/damage.test.ts --log-level=warning && node --test ui-damage.test.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1",

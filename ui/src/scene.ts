@@ -20,6 +20,8 @@ import {
   baseFrame,
   bandFrame,
   capFrame,
+  damageFrame,
+  noDamageFrame,
   groundFrame,
   groundEdgeFrame,
   propFrame,
@@ -1140,6 +1142,12 @@ export class TownScene extends Phaser.Scene {
     const keys = [this.baseKey(s)];
     for (let i = 1; i < floors; i++) keys.push(this.bandKey(s));
     keys.push(this.capKey(s));
+    // The damage mark is a child like any other, present whether or not the
+    // building is damaged. Dropping it when the condition clears would change
+    // this array's length, and restaging swaps frames *by index* — every storey
+    // above the cap would slide onto the wrong frame. A blank frame is the only
+    // way to have no damage without having no child.
+    keys.push(this.damageKey(s));
     return keys;
   }
 
@@ -1236,7 +1244,7 @@ export class TownScene extends Phaser.Scene {
     const size = s.w;
     const keys = [baseFrame(size, "completed", v, false, this.atlasTurn)];
     for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v, this.atlasTurn));
-    keys.push(capFrame(size, this.archetypeOf(s), "completed", false, this.verifiedOf(s.path), this.atlasTurn));
+    keys.push(capFrame(size, this.archetypeOf(s), "completed", this.verifiedOf(s.path), this.atlasTurn));
     return keys;
   }
 
@@ -1275,8 +1283,23 @@ export class TownScene extends Phaser.Scene {
     return bandFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.atlasTurn);
   }
 
+  /**
+   * damageKey is the mark drawn over this building's roof, or the shared blank
+   * when it is sound.
+   *
+   * The mark's cel is cut from the cap's own box, so its origin is the cap's
+   * origin and `stackContainer` places it at the cap's position with no
+   * arithmetic of its own. The flag rides the roofline because it was cut from
+   * the same box the roofline was.
+   */
+  private damageKey(s: Site): string {
+    const a = this.archetypeOf(s);
+    if (!this.damagedOf(s.path)) return noDamageFrame(s.w, a);
+    return damageFrame(s.w, a, this.atlasTurn);
+  }
+
   private capKey(s: Site): string {
-    return capFrame(s.w, this.archetypeOf(s), this.statusOf(s.path), this.damagedOf(s.path), this.verifiedOf(s.path), this.atlasTurn);
+    return capFrame(s.w, this.archetypeOf(s), this.statusOf(s.path), this.verifiedOf(s.path), this.atlasTurn);
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the

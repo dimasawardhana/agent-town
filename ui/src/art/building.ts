@@ -29,9 +29,9 @@ import { P, type Ramp } from "./palette";
 import { IsoPix } from "./iso";
 import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight, towerTop } from "./stack";
-import { type Pix } from "./surface";
+import { Pix } from "./surface";
 import {
-  buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath, archetypeFor, archetypeHeight, type Archetype,
+  ARCHETYPES, buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath, archetypeFor, archetypeHeight, type Archetype,
 } from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
@@ -511,7 +511,6 @@ export function buildCap(
   side: number,
   roof: Archetype,
   stage: Stage,
-  damaged: boolean,
   verified = false,
   turn = 0,
 ): Pix {
@@ -530,7 +529,6 @@ export function buildCap(
   // would report the opposite of what it means — that the work is unfinished
   // *and* unverified, when the tests do not care how finished it is.
   if (verified && want >= stageRank("roofed")) buildRoofFlag(iso, roof, side, 0);
-  if (damaged && want >= stageRank("roofed")) roofDamage(iso, side, roof);
 
   return iso.outline(P.ink);
 }
@@ -807,8 +805,34 @@ function crack(iso: IsoPix, side: number): void {
  * a pitched roof is holed through a slope, and a flat roof's bay collapses. One
  * shared hole would have put a puncture in a lid, which reads as neither.
  */
-function roofDamage(iso: IsoPix, side: number, roof: Archetype): void {
-  buildRoofDamage(iso, roof, side, 0);
+/**
+ * buildRoofDamageCel is a roof's damage mark on its own, in a cel of the cap's
+ * size and origin.
+ *
+ * Cut from the same box the cap is, which is what lets the scene lay it at the
+ * cap's position with no arithmetic of its own. `buildBuilding` — the composite
+ * the turn-dependence suite exercises — no longer draws damage at all: a
+ * composite is not a thing the town draws, and a mark floating on one was always
+ * standing in for the real cel.
+ */
+export function buildRoofDamageCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  if (stageRank("roofed") >= stageRank("roofed")) buildRoofDamage(iso, roof, side, 0);
+  return iso.outline(P.ink);
+}
+
+/**
+ * The blank every undamaged building carries in place of a damage mark.
+ *
+ * Cut at the *same* box as the mark it stands in for, origin included. The
+ * origin is the whole point: `setFrame` does not move a sprite, so a blank
+ * with a different origin would leave every mark forty pixels right and thirty
+ * down of its roof the moment a building was damaged.
+ */
+export function emptyDamageCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  return new Pix(box.w, box.h);
 }
 
 /** hasDamage is whether the stage has anything standing to be damaged. */
@@ -865,7 +889,7 @@ export function buildBuilding(
   // origin is already the top of the wall rather than the ground (`capBox` uses the
   // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes
   // out as `box.oy - STOREY - topBox.oy` rather than a whole storey more.
-  iso.pix.blit(buildCap(side, roof, stage, damaged, false, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
+  iso.pix.blit(buildCap(side, roof, stage, false, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
 
   return iso.pix;
 }

@@ -10,7 +10,7 @@ import { test } from "node:test";
 
 import { ARCHETYPES, archetypeFor, archetypeHeight, type Archetype } from "../src/art/roof";
 import { capBox, buildCap, STAGE_ORDER, stageRank } from "../src/art/building";
-import { capFrame, bakedCels, layoutAtlas } from "../src/art/bake";
+import { capFrame, damageFrame, bakedCels, layoutAtlas } from "../src/art/bake";
 import { ALL_PROP_KINDS } from "../src/art/props";
 import { EDGES, GROUND_KINDS } from "../src/art/terrain";
 import { FRAME_MS } from "../src/art/worker";
@@ -64,14 +64,16 @@ test("each archetype is a distinct drawing, not a relabelled one", () => {
 });
 
 test("the frame key names the archetype, so the atlas can be read", () => {
-  const key = capFrame(78, "hall", "completed", false, false, 0);
+  const key = capFrame(78, "hall", "completed", false, 0);
   assert.equal(key, "cap:78:hall:completed");
-  // The conditions keep their suffixes and their order, so the ordinary cap
-  // still carries the short key it has always had.
-  assert.equal(capFrame(78, "hall", "completed", true, false, 0), "cap:78:hall:completed:dmg");
-  assert.equal(capFrame(78, "hall", "completed", false, true, 0), "cap:78:hall:completed:v");
+  // Verification keeps its suffix and its position, so the ordinary cap still
+  // carries the short key it has always had.
+  // Damage is not a cap axis at all: it is a mark laid over the roof, and it
+  // lives under its own key. That is what stopped it doubling the cap family.
+  assert.equal(damageFrame(78, "hall", 0), "dmg:78:hall");
+  assert.equal(capFrame(78, "hall", "completed", true, 0), "cap:78:hall:completed:v");
   // And a pre-roof stage still drops the archetype, because it draws nothing.
-  assert.equal(capFrame(78, "hall", "planned", false, false, 0), "cap:78:planned");
+  assert.equal(capFrame(78, "hall", "planned", false, 0), "cap:78:planned");
 });
 
 test("every archetype's cap is baked, at every stage that draws one", () => {
@@ -81,7 +83,7 @@ test("every archetype's cap is baked, at every stage that draws one", () => {
       for (const stage of STAGE_ORDER) {
         for (const damaged of [false, true]) {
           for (const verified of [false, true]) {
-            const key = capFrame(side, a, stage, damaged, verified, 0);
+            const key = capFrame(side, a, stage, verified, 0);
             assert.ok(keys.has(key), `no baked cel answers to ${key}`);
           }
         }
@@ -102,7 +104,8 @@ test("the atlas still fits after the cutover", () => {
     stages * 2 /* band, per skin */ +
     stages * 2 * 2 /* base, per skin and damage */ +
     preRoof /* the shared blank cap */ +
-    (stages - preRoof) * ARCHETYPES.length * 2 * 2 /* cap, per archetype, damage and verified */ +
+    (stages - preRoof) * ARCHETYPES.length * 2 /* cap, per archetype and verified */ +
+    ARCHETYPES.length * 2 /* a damage mark and its blank, per archetype */ +
     1 /* shadow */;
   const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
   const props = ALL_PROP_KINDS.length * 2;

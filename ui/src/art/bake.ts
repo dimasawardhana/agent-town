@@ -25,7 +25,7 @@ import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
 import {
   STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
-  skinFor, stageRank, type Stage,
+  buildRoofDamageCel, emptyDamageCel, skinFor, stageRank, type Stage,
 } from "./building";
 import { ARCHETYPES, archetypeFor, type Archetype } from "./roof";
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
@@ -117,8 +117,9 @@ export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: b
 }
 
 /**
- * Frame name for a building's cap: the roof, its rooftop furniture, the coping
- * and the roof damage.
+ * Frame name for a building's cap: the roof, its rooftop furniture and its
+ * coping. Damage is **not** an axis here — it is a separate mark laid over the
+ * cap, because baking it in doubled the whole cap family to carry one hole.
  *
  * It carries the **archetype** where it used to carry the skin variant, and that
  * is the axis swap stated in the key itself: two buildings whose paths differ only
@@ -139,7 +140,6 @@ export function capFrame(
   side: number,
   roof: Archetype,
   stage: Stage,
-  damaged: boolean,
   verified = false,
   turn = 0,
 ): string {
@@ -151,7 +151,49 @@ export function capFrame(
     const blank = `cap:${side}:${stage}`;
     return turn === 0 ? blank : `${blank}:t${turn}`;
   }
-  const base = `cap:${side}:${roof}:${stage}${damaged ? ":dmg" : ""}${verified ? ":v" : ""}`;
+  const base = `cap:${side}:${roof}:${stage}${verified ? ":v" : ""}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/**
+ * The frame a building carries when it is **not** damaged.
+ *
+ * Every building has a damage child whether or not it is damaged, because the
+ * child count must not change when a condition does: restaging swaps frames by
+ * index, so dropping the child would slide every storey above it onto the wrong
+ * frame. An absent child is not available; a blank one is.
+ */
+/**
+ * The blank an *undamaged* building of this footprint and archetype carries.
+ *
+ * It exists per archetype rather than one blank for the whole town, and the
+ * reason is positional rather than aesthetic. `setFrame` swaps a sprite's
+ * texture **without moving the sprite**, so a blank swapped in must share the
+ * origin of the mark it replaces — otherwise the mark appears forty pixels
+ * right and thirty down of the roof it belongs to. A shared blank cannot: its
+ * box would have to be eleven roofs at once. Sixteen cels is the price of not
+ * having damage land beside the building.
+ */
+export function noDamageFrame(side: number, roof: Archetype): string {
+  return `dmg:blank:${side}:${roof}`;
+}
+
+/**
+ * Frame name for a roof's damage mark, which is drawn *over* the cap rather
+ * than baked into it.
+ *
+ * One per footprint and archetype, not one per stage, per condition and per
+ * archetype. A roof hole is the same hole at `roofed` as at `completed` — the
+ * building's stage says how finished it is, and baking the damage into every
+ * stage said it again, eleven times over.
+ *
+ * The cel is baked with the *cap's* box, so its origin is the cap's origin and
+ * the scene can lay it at the cap's position with no placement arithmetic of its
+ * own. That is the whole trick: the mark rides the roofline because it was cut
+ * from the same box the roofline was.
+ */
+export function damageFrame(side: number, roof: Archetype, turn = 0): string {
+  const base = `dmg:${side}:${roof}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
@@ -291,8 +333,8 @@ export function bakedCels(turn = 0): BakedCel[] {
       if (stageRank(stage) < stageRank("roofed")) {
         const box = capBox(side, ARCHETYPES[0]);
         cels.push({
-          key: capFrame(side, ARCHETYPES[0], stage, false, false, turn),
-          pix: buildCap(side, ARCHETYPES[0], stage, false, false, turn),
+          key: capFrame(side, ARCHETYPES[0], stage, false, turn),
+          pix: buildCap(side, ARCHETYPES[0], stage, false, turn),
           ox: box.ox,
           oy: box.oy,
         });
@@ -300,23 +342,47 @@ export function bakedCels(turn = 0): BakedCel[] {
       }
       for (const roof of ARCHETYPES) {
         const topBox = capBox(side, roof);
-        for (const damaged of [false, true]) {
-          // Verification doubles the cap family: 320 cels become 640, which is
-          // the whole cost of this feature. It is affordable only because the
-          // flag is drawn inside the box the chimney already fills — a taller
-          // one would raise `cellH` and charge the ceiling for every cel on the
-          // sheet to make a single building taller.
-          for (const verified of [false, true]) {
-            cels.push({
-              key: capFrame(side, roof, stage, damaged, verified, turn),
-              pix: buildCap(side, roof, stage, damaged, verified, turn),
-              ox: topBox.ox,
-              oy: topBox.oy,
-            });
-          }
+        // Verification is the cap's only condition axis. It is affordable
+        // because the flag is drawn inside the box the chimney already fills —
+        // a taller one would raise `cellH` and charge the ceiling for every cel
+        // on the sheet to make a single building taller.
+        for (const verified of [false, true]) {
+          cels.push({
+            key: capFrame(side, roof, stage, verified, turn),
+            pix: buildCap(side, roof, stage, verified, turn),
+            ox: topBox.ox,
+            oy: topBox.oy,
+          });
         }
+
       }
+
     }
+
+      // The damage marks, once per footprint and archetype rather than per
+      // stage. A hole in a roof is the same hole whether the building is roofed
+      // or completed, and baking it into every stage said so four times over for
+      // no picture anyone could tell apart. Each is cut from the cap's own box,
+      // so its origin is the cap's origin and the scene lays it at the cap's
+      // position with no arithmetic of its own — the mark rides the roofline
+      // because it was cut from the same box the roofline was.
+      for (const roof of ARCHETYPES) {
+        const dmgBox = capBox(side, roof, turn);
+        cels.push({
+          key: damageFrame(side, roof, turn),
+          pix: buildRoofDamageCel(side, roof, turn),
+          ox: dmgBox.ox,
+          oy: dmgBox.oy,
+        });
+        // The blank, cut from the *same* box so the two share an origin. This
+        // is the one thing that makes `setFrame` safe here.
+        cels.push({
+          key: noDamageFrame(side, roof),
+          pix: emptyDamageCel(side, roof, turn),
+          ox: dmgBox.ox,
+          oy: dmgBox.oy,
+        });
+      }
 
     // The ground shadow, baked once per footprint. A building without a contact
     // shadow reads as pasted onto the map rather than standing on it — which is

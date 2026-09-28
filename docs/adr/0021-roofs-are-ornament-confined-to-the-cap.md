@@ -116,8 +116,9 @@ is not a spire, and the Chapel is the town's only vertical accent. 204 cels
 remain, and the lesson generalises — the next thing taller than the current
 tallest cel costs about 110 cels however innocent it sounds.
 
-With **eleven** archetypes the atlas holds **1220 cels** against that 1296
-ceiling, 76 spare. One archetype was cut on the way: a Restaurant whose identity
+With **eleven** archetypes the atlas holds **956 cels** against that 1296
+ceiling, 340 spare — damage became a mark laid over the cap rather than a variant
+of it, which took the cap family from 704 to 368 and the atlas from 1220. One archetype was cut on the way: a Restaurant whose identity
 was an awning could not be drawn, because a gable's ridge is a *line* and
 anything placed on or across it either straddles the two slopes or floats above
 them. The enclosed-hole invariant caught four attempts. Every other archetype
