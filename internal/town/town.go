@@ -43,7 +43,14 @@ type BuildingState struct {
 	// Damaged is whether the building is currently damaged. It is a condition
 	// rather than a stage, so damage is drawn over whatever the building has
 	// reached, and a success repairs it without undoing any progress.
-	Damaged   bool   `json:"damaged"`
+	Damaged bool `json:"damaged"`
+	// Verified is whether a test has passed here and nothing has failed since.
+	// A condition, never a stage, for the reason damage is: a building's
+	// standing with its tests is a fact about the code, and folding it into the
+	// ladder would spend a structural rank on a verdict. It is mutually
+	// exclusive with Damaged and together they are exhaustive — a building is
+	// known-good, known-broken, or unknown — so every building is placeable.
+	Verified  bool   `json:"verified"`
 	LastAgent string `json:"lastAgent"`
 	Status    Status `json:"status"`
 	Updated   int64  `json:"updated"`
@@ -160,6 +167,42 @@ func advanceBy(s Status, a Action) (Status, bool) {
 	}
 }
 
+// SeedStatus is the structural rank a building starts from, read off its size.
+//
+// The bottom of the ladder used to be earned rather than read: a building sat
+// on `planned` until an agent made four separate edits, so a directory holding
+// 875KB of finished work could be drawn on its foundations while a script with
+// one touch stood finished. That measures the agent, not the repository, and
+// this repo's own numbers are the argument — `ui` had 101 recorded touches, no
+// failures, and was still at `foundation`, because its work was overwhelmingly
+// tests, and a test cannot raise a roof.
+//
+// So structure is read and finishing is earned. The analyzer already knows every
+// building's authored byte count; this reads the same `AuthoredBytes` that
+// `analyzer.Floors` reads, so a building cannot be tall here and short there.
+// The thresholds are the floor table's own, taking every second step of it, so
+// that each rung of structure is a step a reader can see rather than a
+// difference too small to notice at the fitted zoom.
+//
+// Only the structural half is seeded. `glazed`, `doored` and `completed` are
+// finishing trades, and a finishing trade is work: no file size says the tests
+// pass. Seeding them would claim a verification nobody made, which is the same
+// overstatement this function exists to correct.
+func SeedStatus(b analyzer.Building) Status {
+	switch {
+	case b.AuthoredBytes < 8_000:
+		return StatusPlanned
+	case b.AuthoredBytes < 32_000:
+		return StatusFoundation
+	case b.AuthoredBytes < 128_000:
+		return StatusFramed
+	case b.AuthoredBytes < 512_000:
+		return StatusWalled
+	default:
+		return StatusRoofed
+	}
+}
+
 // Town is the live state: which crews are at work, where their workers stand,
 // and what condition the buildings are in.
 //
@@ -176,13 +219,26 @@ type Town struct {
 }
 
 // New creates a live town for a project.
+//
+// Every building enters seeded, rather than appearing the first time an event
+// happens to land on it. A building nobody has worked on still exists and still
+// has a size, and the ladder is meant to describe the code rather than the
+// agent — so the town has to know about it from the start. Before this the map
+// began empty and the renderer fell back to `planned` for anything missing,
+// which is exactly how a repository nobody had opened yet came to look like a
+// field of empty plots: not because the code was absent, but because no event
+// had been recorded against it.
 func New(t *analyzer.Town) *Town {
-	return &Town{
+	tw := &Town{
 		workers:   map[string]*Worker{},
-		buildings: map[string]*BuildingState{},
+		buildings: make(map[string]*BuildingState, len(t.Buildings)),
 		resolver:  analyzer.NewResolver(t),
 		maxEvents: 200,
 	}
+	for _, b := range t.Buildings {
+		tw.buildings[b.Path] = &BuildingState{Path: b.Path, Status: SeedStatus(b)}
+	}
+	return tw
 }
 
 // Apply folds one event into the town and returns the resulting crew.
@@ -250,6 +306,12 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 			// one that had never failed.
 			b.Problems++
 			b.Damaged = true
+			// A failure withdraws any standing the tests had given it, and
+			// it is not only a failed test that withdraws it: an edit that
+			// does not apply is the same claim — the code is not known to
+			// work. Leaving the flag up here would let a building keep
+			// advertising a passing test suite that nothing has run since.
+			b.Verified = false
 			return w
 		}
 
@@ -262,6 +324,16 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 			// left a completed but damaged building permanently damaged, because
 			// there was no next rank to reach.
 			b.Damaged = false
+			// A passing test is the only thing that can verify, and an edit
+			// changes neither condition. Code can be rewritten without anyone
+			// checking it, so marking a building verified because someone
+			// typed in it would assert something nobody verified — the same
+			// overstatement the seed was written to stop. Damage is still
+			// repaired by any successful work, which is ADR-0004's rule and
+			// predates this field.
+			if c.Action == ActionTest {
+				b.Verified = true
+			}
 			// At most one rank per event, so the ladder is climbed part by part
 			// and never skipped. Reads, shell commands and planning events
 			// cannot advance it at all.

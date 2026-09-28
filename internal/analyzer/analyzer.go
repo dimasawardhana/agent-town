@@ -407,8 +407,20 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	// A directory is a building if it holds source directly. The repo root is
 	// deliberately excluded: root files belong to the Workshop, so they neither
 	// invent a building nor get dropped.
+	//
+	// It must also hold something a person wrote. A directory whose mass is
+	// entirely a compiler's output is not a place, and ADR-0004 §4 says it
+	// should not be one: it "shouldn't create buildings… may appear as
+	// infrastructure but not as buildings." Marking it generated and sizing it
+	// at one storey was a half-measure — harmless while such a building drew as
+	// an anonymous plot, and a false claim the moment buildings are named,
+	// because a 1.7 MB bundle would render as a residence.
+	//
+	// The test is authored bytes rather than the generated flag, so a directory
+	// holding output *and* hand-written source keeps its building: it is a real
+	// place that happens to contain a build artefact.
 	for rel, n := range direct {
-		if rel == "." || n == 0 {
+		if rel == "." || n == 0 || authoredBytes[rel] == 0 {
 			continue
 		}
 		t.Buildings = append(t.Buildings, Building{

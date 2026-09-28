@@ -427,6 +427,10 @@ func TestBuildingByteTotals(t *testing.T) {
 // which holds the embedded UI bundle — contains exactly ONE source file, so
 // "larger than the rest of its directory" was never true and the minified bundle
 // would have been the tallest building in the town.
+//
+// The directory is no longer a building at all (ADR-0004 §4), so the assertion
+// is now the stronger one: it is absent from the map, not merely short. `src`
+// beside it must survive, which is what the flag was there to protect.
 func TestGeneratedOutputIsNotATower(t *testing.T) {
 	root := t.TempDir()
 	// One enormous single-line file, alone among non-source neighbours, exactly
@@ -455,11 +459,14 @@ func TestGeneratedOutputIsNotATower(t *testing.T) {
 		byPath[b.Path] = b
 	}
 
-	if !byPath["assets"].Generated {
-		t.Errorf("assets holds one 160 kB single-line file; it must be flagged Generated")
+	if _, present := byPath["assets"]; present {
+		t.Errorf("assets is one single-line file with no authored bytes; it must not be a building at all")
 	}
 	if byPath["src"].Generated {
 		t.Errorf("src holds ordinary multi-line Go; it must NOT be flagged Generated")
+	}
+	if byPath["src"].AuthoredBytes == 0 {
+		t.Errorf("src holds hand-written Go; it must carry authored mass")
 	}
 }
 
@@ -468,6 +475,10 @@ func TestGeneratedOutputIsNotATower(t *testing.T) {
 // `internal/web/static` contains `assets`, which contains the bundle. Its byte
 // total is dominated by output it did not write, so drawing it as a tower would
 // repeat the same wrong claim one level up.
+//
+// The pure-output child is now absent from the map entirely, so the claim this
+// test protects is the parent's: it still exists, and it is still marked
+// generated, so its height is not read off a compiler's arithmetic.
 func TestGeneratedPropagatesUpward(t *testing.T) {
 	root := t.TempDir()
 	full := filepath.Join(root, "web", "assets")
@@ -490,10 +501,151 @@ func TestGeneratedPropagatesUpward(t *testing.T) {
 	for _, b := range town.Buildings {
 		byPath[b.Path] = b
 	}
-	if !byPath["web/assets"].Generated {
-		t.Errorf("assets must be generated")
+	if _, present := byPath["web/assets"]; present {
+		t.Errorf("web/assets holds one single-line file with no authored bytes; it must not be a building")
 	}
 	if !byPath["web"].Generated {
 		t.Errorf("web contains a generated child; it must be marked generated too")
+	}
+	if byPath["web"].AuthoredBytes == 0 {
+		t.Errorf("web/main.go is hand-written; web must keep its building and its authored mass")
+	}
+}
+
+// A directory holding nothing but a compiler's output is not a place, and
+// ADR-0004 §4 says so: generated output "shouldn't create buildings… may
+// appear as infrastructure but not as buildings." The analyzer marked such a
+// directory generated and sized it at one storey, but it still drew one — which
+// is dull while it is an anonymous plot and a false claim the moment buildings
+// are named, because a compiled bundle would render as a residence.
+func TestADirectoryWithNoAuthoredBytesIsNotABuilding(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A pure artefact, shaped exactly as the embedded UI bundle sits on disk:
+	// one enormous single-line file and one binary neighbour.
+	mk("assets/index.js", strings.Repeat("var a=1;", 20_000))
+	mk("assets/font.woff2", strings.Repeat("x", 50_000))
+	// A real building beside it, which must survive.
+	mk("src/a.go", "package src\n\nfunc a() {}\n"+strings.Repeat("// filler\n", 500))
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range town.Buildings {
+		if b.Path == "assets" {
+			t.Errorf("assets holds no authored bytes but is still a building; it is a compiler's output, not a place")
+		}
+	}
+	if len(town.Buildings) != 1 || town.Buildings[0].Path != "src" {
+		var got []string
+		for _, b := range town.Buildings {
+			got = append(got, b.Path)
+		}
+		t.Errorf("buildings = %v, want exactly [src]", got)
+	}
+}
+
+// The rule is "no authored bytes", not "generated": a directory holding a
+// bundle *and* hand-written source is a real place that happens to contain
+// output, and the earlier rule must not swallow it.
+func TestAGeneratedDirectoryWithAuthoredSourceIsStillABuilding(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("web/assets/index.js", strings.Repeat("var a=1;", 20_000))
+	mk("web/handler.go", "package web\n\nfunc Serve() {}\n"+strings.Repeat("// filler\n", 400))
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range town.Buildings {
+		if b.Path == "web" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("web holds 400 lines of hand-written Go; a generated child must not remove it")
+	}
+}
+
+// A repository that is nothing but build output produces no buildings, and does
+// not fail. An empty town is a correct description of it.
+func TestARepositoryOfOnlyGeneratedOutputYieldsNoBuildings(t *testing.T) {
+	root := t.TempDir()
+	full := filepath.Join(root, "dist", "bundle.js")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(strings.Repeat("var a=1;", 20_000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatalf("a repository of pure output must analyze cleanly, got %v", err)
+	}
+	if len(town.Buildings) != 0 {
+		var got []string
+		for _, b := range town.Buildings {
+			got = append(got, b.Path)
+		}
+		t.Errorf("buildings = %v, want none", got)
+	}
+}
+
+// The filter's real effect, on this repository rather than on a synthetic tree.
+// A synthetic fixture proves the rule; this proves the rule removes what it is
+// meant to remove and nothing else, on a tree nobody curated for the purpose.
+func TestTheRuleRemovesExactlyTheArtefactDirectoryFromThisRepo(t *testing.T) {
+	town, err := Analyze("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]bool{}
+	for _, b := range town.Buildings {
+		paths[b.Path] = true
+	}
+	// The embedded UI bundle sits alone in this directory with no hand-written
+	// bytes at all. It is the one building that was here only because something
+	// wrote it.
+	if paths["internal/web/static/assets"] {
+		t.Errorf("internal/web/static/assets is the bundle directory; it is not a place and must not be a building")
+	}
+	// Everything with authored source survives, including the two directories
+	// beside it that also contain output.
+	for _, want := range []string{
+		"internal/web", "internal/web/static", "internal/analyzer",
+		"internal/town", "ui", "ui/src", "ui/src/art", "ui/test", "cmd/townd",
+	} {
+		if !paths[want] {
+			t.Errorf("%s holds hand-written source and must still be a building", want)
+		}
+	}
+	// Measured on this tree, so a change in what the analyzer counts is visible
+	// rather than silent: 15 directories, 14 buildings, one dropped.
+	if len(town.Buildings) != 14 {
+		var got []string
+		for _, b := range town.Buildings {
+			got = append(got, b.Path)
+		}
+		t.Errorf("buildings = %d (%v), want 14 — re-record what this repository measures", len(town.Buildings), got)
 	}
 }

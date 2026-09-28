@@ -573,6 +573,31 @@ func TestContainerFloorsExcludeGeneratedOutput(t *testing.T) {
 	}
 }
 
+// A building is the same case as a container one level down, and on this
+// repository the numbers are the same: `internal/web` is generated because it
+// holds the embedded UI bundle, and that bundle is 1.7 MB sitting beside 28 KB
+// of hand-written Go. Sizing the building from its total draws the bundle as a
+// sixteen-storey tower and buries the Go — which is the failure the container
+// rule already prevents one level up.
+func TestBuildingFloorsExcludeGeneratedOutput(t *testing.T) {
+	// The measured shape of internal/web. 28,119 sits in the "< 32000 -> 3"
+	// band, so the point is that it is 3 and not the 16 its total would give.
+	authored := Building{Path: "internal/web", Generated: true, TotalBytes: 1_724_316, AuthoredBytes: 28_119}
+	if got := Floors(authored); got != 3 {
+		t.Errorf("Floors with 28119 authored bytes = %d, want 3 (its authored mass)", got)
+	}
+	if floorsForBytes(authored.TotalBytes) != 16 {
+		t.Fatalf("the fixture no longer distinguishes the two readings: its total gives %d", floorsForBytes(authored.TotalBytes))
+	}
+	// A directory that is *only* a bundle has no authored mass at all, and so
+	// nothing else in it to draw. It stays one storey rather than being
+	// stretched to sixteen by a compiler's output.
+	pure := Building{Path: "internal/web/static/assets", Generated: true, TotalBytes: 1_696_197}
+	if got := Floors(pure); got != 1 {
+		t.Errorf("Floors on a pure artefact = %d, want 1", got)
+	}
+}
+
 // TestContainersAreDeterministic pins ADR-0012 for the new list.
 func TestContainersAreDeterministic(t *testing.T) {
 	root := t.TempDir()

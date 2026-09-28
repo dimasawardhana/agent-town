@@ -31,8 +31,8 @@ import { IsoPix } from "./iso";
  * Closed for the same reason `Stage` and `Place` are: a kind has a drawing behind
  * it, and an open set would let one be named with nothing to show for it.
  */
-export const ROOF_KINDS = ["pitched", "flat", "sawtooth", "gantried", "domed"] as const;
-export type RoofKind = (typeof ROOF_KINDS)[number];
+export const ARCHETYPES = ["tenement", "works", "cottage", "hall", "library"] as const;
+export type Archetype = (typeof ARCHETYPES)[number];
 
 /**
  * hashPath reduces a path to a signed 32-bit integer.
@@ -55,7 +55,7 @@ export function hashPath(path: string): number {
 }
 
 /**
- * roofFor chooses a roof kind from a path.
+ * archetypeFor chooses an archetype from a path.
  *
  * It reads the hash **one bit above** the skin's `% 2`, and that is not a detail.
  * Both reading the low bit would give every warm-walled building the same roof, so
@@ -69,13 +69,13 @@ export function hashPath(path: string): number {
  * clock. The same repository therefore always yields the same roofs, which is what
  * keeps the town a pure function of the project.
  */
-export function roofFor(path: string): RoofKind {
+export function archetypeFor(path: string): Archetype {
   const bits = Math.abs(hashPath(path)) >>> 0;
-  return ROOF_KINDS[(bits >>> 1) % ROOF_KINDS.length];
+  return ARCHETYPES[(bits >>> 1) % ARCHETYPES.length];
 }
 
 /**
- * A roof kind: what it looks like, how tall it stands, and what it is made of.
+ * An archetype: what it looks like, how tall it stands, and what it is made of.
  *
  * The drawing takes the footprint rather than being one fixed picture, because a
  * roof has to span the building: the same ridge rise on a 44-unit hut and a
@@ -253,7 +253,7 @@ const flat: RoofKit = {
  * Picked for **silhouette** contrast above all. A pitched roof is a triangle and a
  * flat roof is a line; a sawtooth is a serration, and a serration is unmistakable
  * at any zoom because the eye finds a repeated rhythm faster than it finds a
- * shape. That is the whole value of a roof kind: one that cannot be told apart from
+ * shape. That is the whole value of an archetype: one that cannot be told apart from
  * the others at the size the town is read is art paid for and worth nothing.
  *
  * Its material is the reason the palette has cool colours in it at all. Convention
@@ -565,11 +565,11 @@ const domed: RoofKit = {
   },
 };
 
-const KITS: Record<RoofKind, RoofKit> = { pitched, flat, sawtooth, gantried, domed };
+const KITS: Record<Archetype, RoofKit> = { tenement: flat, works: sawtooth, cottage: pitched, hall: gantried, library: domed };
 
 /** The rise a kind stands above the wall top, for a footprint. This is what sizes
  *  the cap cel, so every kind must include its own rooftop furniture in it. */
-export function roofHeight(kind: RoofKind, side: number): number {
+export function archetypeHeight(kind: Archetype, side: number): number {
   return KITS[kind].height(side);
 }
 
@@ -579,7 +579,7 @@ export function roofHeight(kind: RoofKind, side: number): number {
  * A drawing rather than a colour because whether a kind *has* a coping, and at
  * what height, is a property of its profile — see `RoofKit.trim`.
  */
-export function buildRoofTrim(iso: IsoPix, kind: RoofKind, side: number): void {
+export function buildRoofTrim(iso: IsoPix, kind: Archetype, side: number): void {
   KITS[kind].trim(iso, side);
 }
 
@@ -590,7 +590,7 @@ export function buildRoofTrim(iso: IsoPix, kind: RoofKind, side: number): void {
  * a roof is drawn at 0 to sit on the wall, and its furniture and damage are drawn
  * at the roof's own top, which is a different z.
  */
-export function buildRoof(iso: IsoPix, kind: RoofKind, side: number, eave: number): void {
+export function buildRoof(iso: IsoPix, kind: Archetype, side: number, eave: number): void {
   KITS[kind].draw(iso, side, eave);
 }
 
@@ -604,8 +604,51 @@ export function buildRoof(iso: IsoPix, kind: RoofKind, side: number, eave: numbe
  * its z is how one of them ends up floating above a roof it is drawn to belong
  * to.
  */
-export function buildRoofStack(iso: IsoPix, kind: RoofKind, side: number, eave: number): void {
-  KITS[kind].stack(iso, side, eave + roofHeight(kind, side));
+export function buildRoofStack(iso: IsoPix, kind: Archetype, side: number, eave: number): void {
+  KITS[kind].stack(iso, side, eave + archetypeHeight(kind, side));
+}
+
+/**
+ * buildRoofFlag raises a pennant on a roofline whose building has been verified.
+ *
+ * It is drawn from inside the envelope the chimney already proves fits, rather
+ * than from a box grown to hold it. The cap cel's height sets `cellH` for *every*
+ * cel on the sheet, so a flag that reached one unit higher would charge the whole
+ * atlas — several hundred cels of ceiling — for one ornament on one building.
+ * The eight units used here are the same eight the pitched chimney already
+ * occupies, which the border invariant checks rather than assumes.
+ *
+ * The pole starts four units *below* the roof's top, for the same reason the
+ * chimney's does: `top` is the ridge, and a pole that began there would stand on
+ * air wherever the roof had fallen away beneath it. Starting below the surface is
+ * what makes it read as planted in the roof rather than hovering over it.
+ *
+ * The flag is the palette's accent rather than a new colour, and gold is the one
+ * hue in the town reserved for a single meaning — it was otherwise spent on
+ * nothing, so verification gets it to itself.
+ */
+export function buildRoofFlag(iso: IsoPix, kind: Archetype, side: number, eave: number): void {
+  // A hut is too small to read a flag on, and at that size the pole alone reads
+  // as a scratch on the roof rather than as a flag.
+  if (side < 60) return;
+  const top = eave + archetypeHeight(kind, side);
+  const fx = Math.round(side * 0.6);
+  const fy = Math.round(side * 0.28);
+  iso.box(fx, fy, 1, 1, top - 4, top + 6, {
+    top: P.stone[3],
+    lit: P.stone[2],
+    shadow: P.stone[1],
+    edge: P.ink,
+  });
+  // The pennant hangs off the pole's top, three deep and four across: a square
+  // reads as a blob at this zoom, and a pennant that is only a pole reads as a
+  // mast with nothing on it.
+  iso.box(fx, fy, 5, 1, top + 2, top + 5, {
+    top: P.accent,
+    lit: P.accent,
+    shadow: P.accent,
+    edge: P.ink,
+  });
 }
 
 /**
@@ -622,6 +665,6 @@ export function buildRoofStack(iso: IsoPix, kind: RoofKind, side: number, eave: 
  * gains damage, rather than swapping one picture for another and losing its
  * history (ADR-0004).
  */
-export function buildRoofDamage(iso: IsoPix, kind: RoofKind, side: number, eave: number): void {
-  KITS[kind].damage(iso, side, eave + roofHeight(kind, side));
+export function buildRoofDamage(iso: IsoPix, kind: Archetype, side: number, eave: number): void {
+  KITS[kind].damage(iso, side, eave + archetypeHeight(kind, side));
 }

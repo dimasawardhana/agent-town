@@ -31,7 +31,7 @@ import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight, towerTop } from "./stack";
 import { type Pix } from "./surface";
 import {
-  buildRoof, buildRoofDamage, buildRoofStack, buildRoofTrim, hashPath, roofFor, roofHeight, type RoofKind,
+  buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath, archetypeFor, archetypeHeight, type Archetype,
 } from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
@@ -261,7 +261,7 @@ function footprintBox(side: number, zTop: number, turn = 0): BuildingBox {
  * The height is a parameter because floors are: the same building stands one storey
  * or twenty, and a cel sized for one storey would clip a tower.
  */
-export function boxFor(side: number, roof: RoofKind, floors = 1, turn = 0): BuildingBox {
+export function boxFor(side: number, roof: Archetype, floors = 1, turn = 0): BuildingBox {
   return footprintBox(side, bandHeight(floors) + capTop(side, roof), turn);
 }
 
@@ -352,13 +352,13 @@ export function bandBox(side: number, turn = 0): BuildingBox {
 /**
  * capTop is how far above the wall top the cap's cel must reach.
  *
- * It composes two things that are deliberately separate: the roof kind's own rise,
+ * It composes two things that are deliberately separate: the archetype's own rise,
  * and the 6px the box adds on every side. Keeping the `+ 6` here rather than inside
  * each kind means a kind only ever states the rise of its *artwork*, and the
  * margin stays a property of the projection — which is what it is.
  */
-function capTop(side: number, roof: RoofKind): number {
-  return roofHeight(roof, side) + 6;
+function capTop(side: number, roof: Archetype): number {
+  return archetypeHeight(roof, side) + 6;
 }
 
 /**
@@ -372,7 +372,7 @@ function capTop(side: number, roof: RoofKind): number {
  * building. Sharing one height between them would have meant the taller kind's cel
  * sizing the shorter kind's art.
  */
-export function capBox(side: number, roof: RoofKind, turn = 0): BuildingBox {
+export function capBox(side: number, roof: Archetype, turn = 0): BuildingBox {
   return footprintBox(side, capTop(side, roof), turn);
 }
 
@@ -494,7 +494,7 @@ export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn =
  * `STOREY` here as well would raise the roof a second time and leave a storey of
  * sky between the wall and its roof.
  *
- * **The cap takes the roof kind and not the skin.** This is the cap's whole
+ * **The cap takes the archetype and not the skin.** This is the cap's whole
  * appearance: shape, material, height, furniture and damage all come from the kind,
  * and the wall material the rest of the building wears deliberately does not reach
  * here. ADR-0021 records why — the skin's cap contribution was measured mostly
@@ -507,7 +507,14 @@ export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn =
  * not already look finished, which is precisely the confusion the ladder exists to
  * remove.
  */
-export function buildCap(side: number, roof: RoofKind, stage: Stage, damaged: boolean, turn = 0): Pix {
+export function buildCap(
+  side: number,
+  roof: Archetype,
+  stage: Stage,
+  damaged: boolean,
+  verified = false,
+  turn = 0,
+): Pix {
   const box = capBox(side, roof, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   const want = stageRank(stage);
@@ -517,6 +524,12 @@ export function buildCap(side: number, roof: RoofKind, stage: Stage, damaged: bo
     buildRoofTrim(iso, roof, side);
     buildRoofStack(iso, roof, side, 0);
   }
+  // The flag rides the roof, so it appears with the roof rather than with the
+  // finishing trades: a building whose tests pass is verified whether it is
+  // roofed or still being dressed, and a pennant that waited for `completed`
+  // would report the opposite of what it means — that the work is unfinished
+  // *and* unverified, when the tests do not care how finished it is.
+  if (verified && want >= stageRank("roofed")) buildRoofFlag(iso, roof, side, 0);
   if (damaged && want >= stageRank("roofed")) roofDamage(iso, side, roof);
 
   return iso.outline(P.ink);
@@ -794,7 +807,7 @@ function crack(iso: IsoPix, side: number): void {
  * a pitched roof is holed through a slope, and a flat roof's bay collapses. One
  * shared hole would have put a puncture in a lid, which reads as neither.
  */
-function roofDamage(iso: IsoPix, side: number, roof: RoofKind): void {
+function roofDamage(iso: IsoPix, side: number, roof: Archetype): void {
   buildRoofDamage(iso, roof, side, 0);
 }
 
@@ -828,7 +841,7 @@ export function buildBuilding(
 ): Pix {
   // The roof comes from the path, like every other path-chosen appearance, so the
   // composite shows the same roof the scene will draw for that building.
-  const roof = roofFor(path);
+  const roof = archetypeFor(path);
   const box = boxFor(side, roof, 1);
   // The composite is a test-only convenience, so its own IsoPix is never plotted
   // into — the blits below carry the turn themselves. It is still constructed with
@@ -852,7 +865,7 @@ export function buildBuilding(
   // origin is already the top of the wall rather than the ground (`capBox` uses the
   // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes
   // out as `box.oy - STOREY - topBox.oy` rather than a whole storey more.
-  iso.pix.blit(buildCap(side, roof, stage, damaged, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
+  iso.pix.blit(buildCap(side, roof, stage, damaged, false, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
 
   return iso.pix;
 }

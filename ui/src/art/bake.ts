@@ -25,9 +25,9 @@ import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
 import {
   STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
-  skinFor, type Stage,
+  skinFor, stageRank, type Stage,
 } from "./building";
-import { ROOF_KINDS, roofFor, type RoofKind } from "./roof";
+import { ARCHETYPES, archetypeFor, type Archetype } from "./roof";
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, type Edge, type Ground } from "./terrain";
 
@@ -120,14 +120,38 @@ export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: b
  * Frame name for a building's cap: the roof, its rooftop furniture, the coping
  * and the roof damage.
  *
- * It carries the **roof kind** where it used to carry the skin variant, and that
+ * It carries the **archetype** where it used to carry the skin variant, and that
  * is the axis swap stated in the key itself: two buildings whose paths differ only
  * in the skin's bit now share one cap frame, and two whose paths differ in the
  * roof's bit do not. A reader looking at frame names can therefore see which axis
  * the cap answers to.
+ *
+ * Below `roofed` the kind, the damage and the verification are all dropped from
+ * the key, because a cap at that stage draws nothing and every combination
+ * would be the same empty image. Measured, 320 of the 640 cap cels were that
+ * image, in 18 distinct shapes; they now share sixteen. The arguments are still
+ * accepted and still meaningful for the stages that draw, and the caller still
+ * passes them for every stage — the stack builds one child per storey and
+ * restaging swaps frames by index, so the *number* of keys must not change with
+ * the stage even though the frame they resolve to can.
  */
-export function capFrame(side: number, roof: RoofKind, stage: Stage, damaged: boolean, turn = 0): string {
-  const base = `cap:${side}:${roof}:${stage}${damaged ? ":dmg" : ""}`;
+export function capFrame(
+  side: number,
+  roof: Archetype,
+  stage: Stage,
+  damaged: boolean,
+  verified = false,
+  turn = 0,
+): string {
+  // `:v` rather than a spelled-out word, so a reader scanning the atlas can
+  // tell the two cap families apart without counting colons. Verified comes
+  // last so the ordinary cap keeps exactly the key it has always had — every
+  // existing town renders from the same frame names it did before this.
+  if (stageRank(stage) < stageRank("roofed")) {
+    const blank = `cap:${side}:${stage}`;
+    return turn === 0 ? blank : `${blank}:t${turn}`;
+  }
+  const base = `cap:${side}:${roof}:${stage}${damaged ? ":dmg" : ""}${verified ? ":v" : ""}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
@@ -247,19 +271,49 @@ export function bakedCels(turn = 0): BakedCel[] {
       }
     }
 
-    // The caps, once per roof kind. Outside the skin loop because a cap no longer
-    // depends on the skin, and inside the footprint loop because a roof's height
-    // and pitch scale with the building.
-    for (const roof of ROOF_KINDS) {
-      const topBox = capBox(side, roof);
-      for (const stage of STAGE_ORDER) {
+    // The caps. Outside the skin loop because a cap no longer depends on the
+    // skin, and inside the footprint loop because a roof's height and pitch
+    // scale with the building.
+    //
+    // Below `roofed` a cap draws nothing at all — the roof has not been built
+    // yet — so those stages are baked once per footprint rather than once per
+    // (kind, damage, verification). They still have to *exist*: the stack emits
+    // a key per storey and restaging swaps frames by index, so a building's
+    // child count must not change when its stage does. That is why the band and
+    // cap are deliberately blank before their feature exists, and it is
+    // preserved here. What is not load-bearing is baking the same empty image
+    // 320 times over — `capFrame` sends every pre-roof stage to one shared key,
+    // and this loop bakes that key once.
+    //
+    // Measured: 320 blank cels become 16, and the saving is 304 of the 1408-cel
+    // ceiling. It is the reason a twelve-archetype vocabulary fits at all.
+    for (const stage of STAGE_ORDER) {
+      if (stageRank(stage) < stageRank("roofed")) {
+        const box = capBox(side, ARCHETYPES[0]);
+        cels.push({
+          key: capFrame(side, ARCHETYPES[0], stage, false, false, turn),
+          pix: buildCap(side, ARCHETYPES[0], stage, false, false, turn),
+          ox: box.ox,
+          oy: box.oy,
+        });
+        continue;
+      }
+      for (const roof of ARCHETYPES) {
+        const topBox = capBox(side, roof);
         for (const damaged of [false, true]) {
-          cels.push({
-            key: capFrame(side, roof, stage, damaged, turn),
-            pix: buildCap(side, roof, stage, damaged, turn),
-            ox: topBox.ox,
-            oy: topBox.oy,
-          });
+          // Verification doubles the cap family: 320 cels become 640, which is
+          // the whole cost of this feature. It is affordable only because the
+          // flag is drawn inside the box the chimney already fills — a taller
+          // one would raise `cellH` and charge the ceiling for every cel on the
+          // sheet to make a single building taller.
+          for (const verified of [false, true]) {
+            cels.push({
+              key: capFrame(side, roof, stage, damaged, verified, turn),
+              pix: buildCap(side, roof, stage, damaged, verified, turn),
+              ox: topBox.ox,
+              oy: topBox.oy,
+            });
+          }
         }
       }
     }

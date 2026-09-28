@@ -148,7 +148,20 @@ func buildingSize(files int) (w, h float64) {
 // reading as a building and starts reading as a vertical stripe with a roof on.
 func Floors(b Building) int {
 	if b.Generated {
-		return 1
+		// "Generated" is a claim about the bulk, not about everything in the
+		// directory. internal/web is generated because it holds the embedded UI
+		// bundle, and it also holds 28KB of hand-written Go; sizing it by that
+		// bundle hides the Go, which is the exact failure ContainerFloors exists
+		// to prevent one level up. So a generated directory is measured by its
+		// authored bytes, the same ruler a container gets.
+		//
+		// A directory with no authored bytes at all is a pure artefact — there is
+		// nothing else in it to draw, so it stays one storey rather than
+		// pretending to be tall on the strength of a compiler's output.
+		if b.AuthoredBytes == 0 {
+			return 1
+		}
+		return floorsForBytes(b.AuthoredBytes)
 	}
 	return floorsForBytes(b.TotalBytes)
 }

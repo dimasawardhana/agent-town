@@ -99,6 +99,11 @@ export interface BuildingState {
   problems: number;
   /** Whether the building is currently damaged. A condition, not a stage. */
   damaged: boolean;
+  /** Whether a test has passed here and nothing has failed since. A condition
+   *  beside `damaged`, never a stage: the two are mutually exclusive and
+   *  together exhaustive, so a building is known-good, known-broken, or
+   *  unknown. The daemon owns this; the renderer only draws it. */
+  verified: boolean;
   lastAgent: string;
   // The construction ladder, mirroring internal/town's Status values in order.
   // Kept as a union rather than a string so a stage the daemon can emit but the

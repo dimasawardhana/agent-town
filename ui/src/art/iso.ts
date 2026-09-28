@@ -435,7 +435,7 @@ export class IsoPix {
    *
    * The ridge axis is chosen by the same `ridgeRunsAlongX` test `gable` uses, so
    * the serration stays across the viewer's line of sight as the town turns, and
-   * both roof kinds turn with the world rather than with the camera.
+   * both roof shapes turn with the world rather than with the camera.
    */
   ridgeProfile(
     x: number,

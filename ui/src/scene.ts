@@ -26,7 +26,7 @@ import {
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
 import { type Stage, skinVariant } from "./art/building";
-import { roofFor, type RoofKind } from "./art/roof";
+import { archetypeFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
@@ -914,9 +914,11 @@ export class TownScene extends Phaser.Scene {
    * statusOf reads a building's reported status: the only input to which stage
    * is drawn.
    *
-   * A building the town has not reported yet draws as `planned`, which is
-   * correct rather than a fallback: it exists in the map the moment the project
-   * is analyzed, and a building nobody has worked on is a staked plot.
+   * The renderer does not adjust it. The daemon seeds every building from the
+   * tree on load, so a status arriving here is already the truth about the code
+   * rather than a count of what an agent did to it — and a browser that
+   * second-guessed that would be the two halves of the product disagreeing about
+   * what a stage means, which is the split ADR-0012 exists to keep.
    */
   private statusOf(path: string | undefined): Stage {
     if (!path) return "planned";
@@ -934,6 +936,16 @@ export class TownScene extends Phaser.Scene {
     return false;
   }
 
+
+  /** verifiedOf says whether a building's tests have passed and nothing has
+   *  failed since. Verification is a condition drawn over the building's stage
+   *  rather than a stage of its own, for the same reason damage is not. */
+  private verifiedOf(path: string | undefined): boolean {
+    if (!path) return false;
+    const { live } = useTown.getState();
+    for (const b of live.buildings) if (b.path === path) return b.verified;
+    return false;
+  }
   /** worldBounds is the picture-space box the town occupies, from the layout's
    *  own corners rather than from a guess, so the camera can always reach every
    *  building even on a project whose widest district exceeds the analyzer's
@@ -1224,24 +1236,23 @@ export class TownScene extends Phaser.Scene {
     const size = s.w;
     const keys = [baseFrame(size, "completed", v, false, this.atlasTurn)];
     for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v, this.atlasTurn));
-    keys.push(capFrame(size, this.roofKey(s), "completed", false, this.atlasTurn));
+    keys.push(capFrame(size, this.archetypeOf(s), "completed", false, this.verifiedOf(s.path), this.atlasTurn));
     return keys;
   }
 
   /**
-   * roofKey is which roof a site wears.
+   * archetypeOf is the archetype a site is drawn as.
    *
-   * Chosen here, in the browser, from the site's own path — the same place and the
-   * same way the skin variant is chosen. The daemon sends geometry (footprint,
-   * floors) and knows nothing about appearance, so there is no wire change and no
-   * daemon change behind the roof axis; the roof is a pure function of the path,
-   * which the browser already has.
+   * Chosen here rather than sent, because it is a pure function of the path the
+   * browser already has: the daemon change behind the archetype axis does not
+   * travel on the wire, and the roof shape is still the browser's to pick.
    *
-   * A site with no path hashes as the empty string, which yields one fixed kind
-   * rather than a random one — the same "no path, no variety" rule the skin uses.
+   * A site with no path hashes as the empty string, which yields one fixed
+   * archetype rather than a random one — the same "no path, no variety" rule
+   * the skin uses.
    */
-  private roofKey(s: Site): RoofKind {
-    return roofFor(s.path ?? "");
+  private archetypeOf(s: Site): Archetype {
+    return archetypeFor(s.path ?? "");
   }
 
   private baseKey(s: Site): string {
@@ -1253,7 +1264,7 @@ export class TownScene extends Phaser.Scene {
   }
 
   private capKey(s: Site): string {
-    return capFrame(s.w, this.roofKey(s), this.statusOf(s.path), this.damagedOf(s.path), this.atlasTurn);
+    return capFrame(s.w, this.archetypeOf(s), this.statusOf(s.path), this.damagedOf(s.path), this.verifiedOf(s.path), this.atlasTurn);
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the

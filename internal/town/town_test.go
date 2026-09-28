@@ -1,8 +1,10 @@
 package town
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dimasajiwardhana/agent-town/internal/agent"
@@ -214,9 +216,13 @@ func TestSiteWideWorkTouchesNoBuilding(t *testing.T) {
 	tw.Apply(ev("s1", "hub", "", "success"))
 
 	// Neither a shell command nor meta work is building-specific, so nothing
-	// should have been recorded as a building touch.
-	if got := len(tw.Snapshot().Buildings); got != 0 {
-		t.Errorf("got %d building states, want 0 — the Yard and Depot are not buildings", got)
+	// should have been recorded as a building touch. The building is present
+	// because the tree seeds every one of them — what is being asserted here is
+	// that no event landed on it, which the count of buildings never actually said.
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Touches != 0 {
+			t.Errorf("site-wide work recorded %d touch(es) on %q — the Yard and Depot are not buildings", b.Touches, b.Path)
+		}
 	}
 }
 
@@ -339,8 +345,12 @@ func TestCorruptStateIsDiscarded(t *testing.T) {
 	if err := tw.Load(path); err != nil {
 		t.Errorf("corrupt state returned %v, want nil — losing history beats rendering something untrue", err)
 	}
-	if len(tw.Snapshot().Buildings) != 0 {
-		t.Error("corrupt state produced buildings")
+	// The buildings the tree seeded are still there; what must be absent is the
+	// history a good file would have restored.
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Touches != 0 || b.Problems != 0 {
+			t.Errorf("corrupt state produced history on %q: touches=%d problems=%d", b.Path, b.Touches, b.Problems)
+		}
 	}
 }
 
@@ -470,6 +480,93 @@ func TestStatusLadderIsStrictlyIncreasing(t *testing.T) {
 	}
 }
 
+// Each band is pinned on both sides, so a threshold that drifts in either
+// direction fails rather than quietly reclassifying buildings.
+func TestSeedStatusBands(t *testing.T) {
+	cases := []struct {
+		bytes int
+		want  Status
+	}{
+		{0, StatusPlanned},
+		{7_999, StatusPlanned},
+		{8_000, StatusFoundation},
+		{31_999, StatusFoundation},
+		{32_000, StatusFramed},
+		{127_999, StatusFramed},
+		{128_000, StatusWalled},
+		{511_999, StatusWalled},
+		{512_000, StatusRoofed},
+		{50_000_000, StatusRoofed},
+	}
+	for _, c := range cases {
+		if got := SeedStatus(analyzer.Building{AuthoredBytes: c.bytes}); got != c.want {
+			t.Errorf("SeedStatus at %d authored bytes = %q, want %q", c.bytes, got, c.want)
+		}
+	}
+}
+
+// The seed reads authored bytes, never the total. A directory whose mass is a
+// build artefact is not a tower: sizing it from its total is the exact failure
+// `analyzer.Floors` already avoids for a container, and `internal/web` is the
+// live case — 1.7MB of embedded bundle beside 28KB of hand-written Go.
+func TestSeedStatusReadsAuthoredNotTotal(t *testing.T) {
+	b := analyzer.Building{
+		AuthoredBytes: 28_119,
+		TotalBytes:    1_724_316,
+		Generated:     true,
+	}
+	if got := SeedStatus(b); got != StatusFoundation {
+		t.Errorf("SeedStatus with 28119 authored bytes = %q, want %q", got, StatusFoundation)
+	}
+	// The fixture only means something if the two readings disagree: the total
+	// would carry this to the top of the structural half, the authored mass to
+	// its second rung. If they ever agree this test stops proving the rule.
+	if got := SeedStatus(analyzer.Building{AuthoredBytes: 0, TotalBytes: b.TotalBytes}); got != StatusPlanned {
+		t.Fatalf("the fixture no longer distinguishes authored from total: 1.7MB of total alone seeds to %q", got)
+	}
+}
+
+// A directory that is only a bundle has no authored mass at all, so it seeds to
+// the bottom whatever the compiler wrote into it. Measured on this repository,
+// `internal/web/static/assets` is exactly this: 1.7MB, none of it hand-written.
+func TestSeedStatusIgnoresAPureArtefact(t *testing.T) {
+	pure := analyzer.Building{AuthoredBytes: 0, TotalBytes: 1_696_197, Generated: true}
+	if got := SeedStatus(pure); got != StatusPlanned {
+		t.Errorf("SeedStatus on a pure artefact = %q, want %q", got, StatusPlanned)
+	}
+}
+
+// Seeding is structural, and structure is only half the ladder. No size may
+// claim a finishing trade, because no file size says the tests pass — that is
+// the one thing the seed must never assert on the repository's behalf.
+func TestSeedStatusNeverClaimsAFinishingTrade(t *testing.T) {
+	for _, b := range []int{0, 1, 1_000, 10_000, 100_000, 1_000_000, 1_000_000_000} {
+		got := SeedStatus(analyzer.Building{AuthoredBytes: b})
+		if rank(got) > rank(StatusRoofed) {
+			t.Errorf("SeedStatus at %d bytes = %q, which is a finishing trade", b, got)
+		}
+	}
+}
+
+// Seeding must not make an event worth two ranks. The seed sets where a
+// building starts; an event still moves it exactly one rung, from wherever it
+// started. If this fails, some future change has made a single edit both
+// establish and advance a rank, and the ladder climbs faster than the work
+// justifies.
+func TestSeedingDoesNotMakeAnEventAdvanceTwoRanks(t *testing.T) {
+	for _, start := range AllStatuses()[:5] { // the structural half
+		for _, a := range []Action{ActionBuild, ActionHammer, ActionTest} {
+			next, advanced := advanceBy(start, a)
+			if !advanced {
+				continue
+			}
+			if got := rank(next) - rank(start); got != 1 {
+				t.Errorf("advanceBy(%q, %q) moved %d ranks, want 1", start, a, got)
+			}
+		}
+	}
+}
+
 // A state file written by the previous vocabulary must be discarded, not
 // misread. The old `broken` is not a rank on the ladder, so loading one would
 // seat a value no stage matches and the building would draw as the fallback.
@@ -493,8 +590,185 @@ func TestLoadDiscardsAStateFileFromTheOldVocabulary(t *testing.T) {
 	if err := tw.Load(path); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := tw.Snapshot().Buildings; len(got) != 0 {
-		t.Errorf("loaded %d building(s) from a stale file, want none: %+v", len(got), got)
+	// The tree still seeds its buildings, but nothing from the stale file may be
+	// adopted. The old vocabulary's statuses are not on the ladder, so a
+	// building holding one would draw as whatever the fallback happened to be —
+	// which is the whole reason the version guard exists.
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Status != StatusPlanned {
+			t.Errorf("a stale file's status reached %q; only the tree's own seed should survive", b.Status)
+		}
+		if b.Touches != 0 || b.Problems != 0 {
+			t.Errorf("a stale file's history reached %q: touches=%d problems=%d", b.Path, b.Touches, b.Problems)
+		}
+	}
+}
+
+// A stored rank below the tree's seed is corrected upward on load. This is the
+// discontinuity the whole change exists for: every town built before seeding
+// re-renders taller on its next start, and nothing else in the file changes.
+func TestLoadRaisesAStoredStatusToTheSeed(t *testing.T) {
+	root := t.TempDir()
+	// The building is the directory `src`, not the file inside it — a stored
+	// path naming the file would simply not match and nothing would be restored.
+	writeBulk(t, root, "src/big.ts", 200_000)
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SeedStatus(at.Buildings[0]); got != StatusWalled {
+		t.Fatalf("fixture seeds at %q, not walled — the test would prove nothing", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"updated":0,"buildings":[
+		{"path":"src","touches":9,"problems":2,"damaged":true,"status":"foundation","updated":1}
+	]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	if err := tw.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	b := tw.Snapshot().Buildings[0]
+	if b.Status != StatusWalled {
+		t.Errorf("status = %q, want walled — the tree is the floor", b.Status)
+	}
+	// The rest of the record is history and must survive the correction intact.
+	if b.Touches != 9 || b.Problems != 2 || !b.Damaged {
+		t.Errorf("history lost in the correction: touches=%d problems=%d damaged=%v", b.Touches, b.Problems, b.Damaged)
+	}
+}
+
+// writeBulk puts a realistically-sized source file in a throwaway repo, so a
+// fixture can reach a band the seed reads. Real text rather than a run of zero
+// bytes: a file of NULs reads as binary, and a single long line reads as
+// minified output. The analyzer is entitled to exclude both, and does — which
+// is how a 200KB fixture once measured as an empty building.
+func writeBulk(t *testing.T, root, rel string, size int) {
+	t.Helper()
+	writeSource(t, root, rel)
+	body := strings.Repeat("package main\n", size/13+1)
+	if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A finishing rank is history and outranks any seed, so loading never demotes
+// a building that has already been finished off.
+func TestLoadKeepsAStoredFinishingRank(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "src/a.ts")
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"updated":0,"buildings":[
+		{"path":"src","touches":40,"problems":0,"damaged":false,"status":"completed","updated":1}
+	]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	if err := tw.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusCompleted {
+		t.Errorf("status = %q, want completed — the seed must never demote finished work", got)
+	}
+}
+
+// Loading is idempotent. A state file saved from a town that has already been
+// corrected must reload to the same thing, or the second restart would undo the
+// first one's correction and the town would flicker between two readings.
+func TestLoadIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	writeBulk(t, root, "src/big.ts", 200_000)
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := New(at)
+	first.Apply(ev("s1", "edit", "src/big.ts", "success"))
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := first.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	var statuses []Status
+	for range 3 {
+		tw := New(at)
+		if err := tw.Load(path); err != nil {
+			t.Fatal(err)
+		}
+		statuses = append(statuses, tw.Snapshot().Buildings[0].Status)
+		if err := tw.Save(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i < len(statuses); i++ {
+		if statuses[i] != statuses[0] {
+			t.Fatalf("load is not idempotent: %v then %v", statuses[0], statuses[i])
+		}
+	}
+}
+
+// A stored path that is no longer in the tree must not conjure a building. The
+// snapshot describes what the map can paint, and a deleted directory has none.
+func TestLoadDropsAStoredPathThatNoLongerExists(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "src/a.ts")
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"updated":0,"buildings":[
+		{"path":"src/a.ts","status":"completed"},
+		{"path":"src/deleted.ts","touches":7,"status":"completed"}
+	]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	if err := tw.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Path == "src/deleted.ts" {
+			t.Error("a path that is no longer in the tree was resurrected from the state file")
+		}
+	}
+}
+
+// Every building is present from the moment the town is built, whether or not
+// anything has ever happened to it. A building the town has not heard about
+// still has a size, and the ladder is supposed to describe the code.
+func TestEveryBuildingIsSeededWithoutAnyEvent(t *testing.T) {
+	root := t.TempDir()
+	writeBulk(t, root, "src/big.ts", 200_000)
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	got := tw.Snapshot().Buildings
+	if len(got) != len(at.Buildings) {
+		t.Fatalf("a fresh town holds %d buildings, want one per building in the tree (%d)", len(got), len(at.Buildings))
+	}
+	for _, b := range got {
+		if b.Touches != 0 {
+			t.Errorf("%q has %d touches before any event", b.Path, b.Touches)
+		}
+		if b.Status != SeedStatus(at.Buildings[0]) {
+			t.Errorf("%q seeded at %q, want %q", b.Path, b.Status, SeedStatus(at.Buildings[0]))
+		}
 	}
 }
 
@@ -581,5 +855,170 @@ func TestRepairWorksAtTheTopOfTheLadder(t *testing.T) {
 	}
 	if b.Problems != 1 {
 		t.Errorf("problems = %d, want the historical count 1", b.Problems)
+	}
+}
+
+// A passing test verifies, and nothing else does. An edit changes the code
+// without saying whether that code works, so a building edited a hundred times
+// and never tested is still unverified — which is precisely the gap that sent
+// `ui` to `foundation` with a hundred touches and no failures.
+func TestOnlyATestCanVerify(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+
+	for range 5 {
+		tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	}
+	if tw.Snapshot().Buildings[0].Verified {
+		t.Error("five successful edits verified the building; an edit is not a test")
+	}
+
+	tw.Apply(testEvent("s1", "go test ./src", "success"))
+	if !tw.Snapshot().Buildings[0].Verified {
+		t.Error("a passing test did not verify the building")
+	}
+}
+
+// A failure withdraws verification, and not only a failed test: an edit that
+// errors leaves the code just as unverified as a red suite does.
+func TestAFailureWithdrawsVerification(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	tw.Apply(testEvent("s1", "go test ./src", "success"))
+	if !tw.Snapshot().Buildings[0].Verified {
+		t.Fatal("fixture did not verify")
+	}
+
+	tw.Apply(ev("s1", "edit", "src/a.ts", "error"))
+	b := tw.Snapshot().Buildings[0]
+	if b.Verified {
+		t.Error("a failed edit left the building advertising a passing suite that has not run since")
+	}
+	if !b.Damaged {
+		t.Error("a failure must still damage the building")
+	}
+}
+
+// Verified and Damaged are the three-state condition: good, broken, unknown.
+// They are never both true, because a building cannot be known-good and
+// known-broken at once, and the renderer has no way to draw that.
+func TestVerifiedAndDamagedAreNeverBothTrue(t *testing.T) {
+	steps := []struct {
+		name string
+		ev   agent.UnifiedAgentEvent
+	}{
+		{"passing test", testEvent("s1", "go test ./src", "success")},
+		{"failing test", testEvent("s1", "go test ./src", "error")},
+		{"passing edit", ev("s1", "edit", "src/a.ts", "success")},
+		{"failing edit", ev("s1", "edit", "src/a.ts", "error")},
+		{"passing build", ev("s1", "write", "src/a.ts", "success")},
+		{"failing build", ev("s1", "write", "src/a.ts", "error")},
+		{"read", ev("s1", "read", "src/a.ts", "success")},
+	}
+	// Every reachable pair of conditions, reached by replaying every ordered
+	// pair of steps. Six steps is 42 sequences — small enough to be exhaustive
+	// and large enough that a rule which set only one flag would be caught.
+	for i := range steps {
+		for j := range steps {
+			tw := liveTown(t, "src/a.ts")
+			for _, s := range []struct {
+				name string
+				ev   agent.UnifiedAgentEvent
+			}{steps[i], steps[j]} {
+				tw.Apply(s.ev)
+				b := tw.Snapshot().Buildings[0]
+				if b.Verified && b.Damaged {
+					t.Fatalf("%s then %s left a building both verified and damaged", s.name, steps[j].name)
+				}
+			}
+		}
+	}
+}
+
+// Verification is a condition like damage, so it survives a restart. A town
+// that forgets which buildings were verified on every start would draw a
+// building as unverified between sessions and flip it back on the next test.
+func TestVerifiedSurvivesARestart(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "src/a.ts")
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := New(at)
+	first.Apply(testEvent("s1", "go test ./src", "success"))
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := first.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	restored := New(at)
+	if err := restored.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.Snapshot().Buildings[0].Verified {
+		t.Error("verification did not survive a restart; it is a condition, not a stage")
+	}
+}
+
+// A state file written before `Verified` existed reads as unverified, which is
+// the honest default: nothing had established that those buildings' tests
+// passed. This is why persistenceVersion stays at 2 — a missing boolean is not
+// a stale vocabulary, and bumping the guard would throw away every recorded
+// touch to preserve a distinction that means nothing.
+func TestAnOlderStateFileReadsAsUnverified(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "src/a.ts")
+	at, err := analyzer.Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	// No `verified` key anywhere: this is the shape a version-2 file had
+	// before the field was added.
+	if err := os.WriteFile(path, []byte(`{"version":2,"updated":0,"buildings":[
+		{"path":"src","touches":12,"problems":1,"damaged":false,"status":"walled","updated":1}
+	]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tw := New(at)
+	if err := tw.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b := tw.Snapshot().Buildings[0]
+	if b.Verified {
+		t.Error("a file with no verification recorded claims the building is verified")
+	}
+	// The rest of the history must be intact, or the default cost more than it
+	// bought.
+	if b.Touches != 12 || b.Problems != 1 {
+		t.Errorf("history lost: touches=%d problems=%d", b.Touches, b.Problems)
+	}
+}
+
+// The field is on the wire under a name that says what it is, so the renderer
+// is reading a fact rather than inferring one from a stage.
+func TestVerifiedIsOnTheWire(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	tw.Apply(testEvent("s1", "go test ./src", "success"))
+
+	raw, err := json.Marshal(tw.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Buildings []struct {
+			Verified *bool `json:"verified"`
+		} `json:"buildings"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Buildings) != 1 || got.Buildings[0].Verified == nil {
+		t.Fatalf("the snapshot carries no `verified` field: %s", raw)
+	}
+	if !*got.Buildings[0].Verified {
+		t.Error("verified is on the wire but false for a building that just passed")
 	}
 }
