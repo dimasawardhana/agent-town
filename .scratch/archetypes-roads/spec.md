@@ -15,17 +15,16 @@ Both are blocked by one thing, and it is not a design problem.
 
 ## The constraint: the atlas is the budget
 
-The sprite sheet is `nextPow2(16 × cellW) × nextPow2(ceil(cels/16) × cellH)`. At
-the present 93px cell height, 8192 is reached at 88 rows — a hard ceiling of
-**1408 cels**, currently holding 1140.
+The sprite sheet is `nextPow2(16 × cellW) × nextPow2(ceil(cels/16) × cellH)`, and
+the ceiling is `floor(8192 / cellH) × 16`. **The Chapel moved that ceiling** from
+1408 to **1296**, and the atlas now holds **1239**.
 
-Fixed families, measured from the real bake, take 500 and do not scale with this
-work: band 64, base 128, ground 120, props 108, workers 76, shadow 4. That leaves
-the cap family, and the cap is where an archetype has to live, because the cap
-*is* a building's silhouette.
+That number is asserted beside the cel count rather than written here, because
+the ceiling moves whenever a taller archetype does and this document was
+already wrong twice for assuming otherwise.
 
-Priced naively — one archetype per roof kind, both conditions baked — twelve
-archetypes is **920 over**.
+The cap is where an archetype has to live, because the cap *is* a building's
+silhouette.
 
 ## Phase 0: half the cap family is blank
 
@@ -51,10 +50,13 @@ its own.
 
 | archetypes | total | spare |
 |---|---|---|
-| 5 (shipped) | 744 | 664 |
-| **12 (this spec)** | **936** | **472** |
-| 20 | 1256 | 152 |
-| 26 (the ceiling) | 1384 | 24 |
+| 4 (at Phase 0) | 1144 | 152 |
+| **11 (what shipped)** | **1239** | **57** |
+| 12 (a further archetype) | ~1269 | ~27 |
+| 13 (the ceiling) | ~1299 | over |
+
+Five widths and three overlays on every roof — damage, verification, and the base
+rubble — are what the last tickets bought.
 
 Every row is the *end state*: it includes the damage overlay and the road ground
 kind, not only the archetypes. The figure straight after Phase 0, with five roof
@@ -71,9 +73,10 @@ Each archetype carries its own height, so its cel box differs and every archetyp
 is genuinely distinct. That is also how a Stadium and a Library are told apart
 without a second axis: the Stadium is wide and low, the Library tall and formal.
 
-**Twelve, not fourteen.** At 91px only silhouette carries a name. Fourteen forced
-two pairs that read alike — three pitched roofs and two arched. Twelve gives
-twelve distinct silhouettes and returns 64 cels.
+**Eleven, not twelve.** Twelve was the plan; the Restaurant was cut in ticket 05
+after four attempts, because a gable's ridge is a *line* and nothing can be
+placed on one. At 91px only silhouette carries a name, and eleven is what the
+atlas could hold and the hole invariant would pass.
 
 | # | archetype | silhouette |
 |---|---|---|
@@ -81,17 +84,16 @@ twelve distinct silhouettes and returns 64 cels.
 | 2 | **Tower** | tall flat glass |
 | 3 | **Works** | sawtooth and chimney |
 | 4 | **Cottage** | low pitched, chimney |
-| 5 | **Restaurant** | pitched, wide awning |
-| 6 | **Hospital** | wide low flat, cross-marked |
-| 7 | **Stadium** | wide low dome |
-| 8 | **Library** | tall dome, pediment |
-| 9 | **Chapel** | narrow spire |
-| 10 | **Hall** | long arched |
-| 11 | **Market** | stall row, awnings |
-| 12 | **School** | tall pitched, bell |
+| 5 | **Hospital** | wide low flat, cross-marked |
+| 6 | **Stadium** | wide low dome |
+| 7 | **Library** | tall dome, pediment |
+| 8 | **Chapel** | narrow spire |
+| 9 | **Hall** | long arched |
+| 10 | **Market** | stall row, awnings |
+| 11 | **School** | tall pitched, bell |
 
-The five shipped roof shapes become entries 1, 3, 4, 8 and 10, so the town keeps
-rendering through the transition and the art that exists is not thrown away.
+The five shipped roof shapes become entries 1, 3, 4, 7 and 9, so the town kept
+rendering through the transition and the art that existed was not thrown away.
 
 ### What picks an archetype
 
@@ -125,7 +127,7 @@ it is why it lands before any archetype is drawn.
 
 Archetypes are **not** labelled on the map. A placard would let a bad drawing
 hide behind a good word — if "School" can be read off a label, the drawing never
-has to be legible, and the archetypes become twelve placards rather than twelve
+has to be legible, and the archetypes become eleven placards rather than eleven
 silhouettes.
 
 They **are** named in the selection panel, which already exists and already
@@ -175,7 +177,7 @@ dependency graph the daemon does not build. It gets its own spec.
 **The whole atlas is re-rendered**, twice over: Phase 0 changes every blank cap's
 frame, and the archetype cutover changes every building's silhouette. The seeded
 ladder already re-rendered every building once, so this is not a new class of
-cost — but it is worth saying before twelve cap families are drawn.
+cost — but it is worth saying before eleven cap families are drawn.
 
 **The roof axis stops existing as a name.** Roof shapes remain; five abstract
 shapes a path can hash to do not. Roof variety is spent to buy place variety.

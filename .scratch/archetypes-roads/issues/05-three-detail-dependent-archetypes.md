@@ -36,7 +36,8 @@ cutting one after the vocabulary was presented as twelve would cost a
 conversation.
 
 If all three survive, the axis reaches twelve and the atlas holds 936 cels of
-1408. If one is cut, it holds 904 and the spare grows.
+1296 (1408 when this was written, before the Chapel moved `cellH`).
+If one is cut, it holds 904 and the spare grows.
 
 ### Measured: two shipped, one cut
 

@@ -21,8 +21,9 @@ of two materials chosen by its file count.
 ### Five families, not eleven
 
 The obvious version is eleven bases and eleven bands, which does not fit: base
-and band together would be 704 cels and the atlas would reach 1632 against a
-1408 ceiling.
+and band together would be 704 cels against a ceiling of 1296 (this was written
+as 1408, before the Chapel moved `cellH`; the reasoning is unchanged and the
+number was not).
 
 Five families *does* fit, and reads better than eleven would have. Eleven
 bodies that differ only at the ground floor, under a shared band, look like one
