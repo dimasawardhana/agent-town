@@ -22,10 +22,10 @@ import {
   capFrame,
   baseDamageFrame,
   noBaseDamageFrame,
-  noVerifiedFrame,
+  NO_VERIFIED_FRAME,
   verifiedFrame,
   damageFrame,
-  noDamageFrame,
+  NO_DAMAGE_FRAME,
   groundFrame,
   groundEdgeFrame,
   propFrame,
@@ -1409,9 +1409,8 @@ export class TownScene extends Phaser.Scene {
    * the same box the roofline was.
    */
   private damageKey(s: Site): string {
-    const a = this.archetypeOf(s);
-    if (!this.damagedOf(s.path)) return noDamageFrame(s.w, a);
-    return damageFrame(s.w, a, this.atlasTurn);
+    if (!this.damagedOf(s.path)) return NO_DAMAGE_FRAME;
+    return damageFrame(s.w, this.archetypeOf(s), this.atlasTurn);
   }
 
   /**
@@ -1430,9 +1429,8 @@ export class TownScene extends Phaser.Scene {
 
   /** verifiedKey is the pennant on this building's roof, or the shared blank. */
   private verifiedKey(s: Site): string {
-    const a = this.archetypeOf(s);
-    if (!this.verifiedOf(s.path)) return noVerifiedFrame(s.w, a);
-    return verifiedFrame(s.w, a, this.atlasTurn);
+    if (!this.verifiedOf(s.path)) return NO_VERIFIED_FRAME;
+    return verifiedFrame(s.w, this.archetypeOf(s), this.atlasTurn);
   }
 
   private capKey(s: Site): string {

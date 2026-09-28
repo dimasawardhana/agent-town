@@ -12,7 +12,7 @@ import { test } from "node:test";
 
 import { ARCHETYPES } from "../src/art/roof";
 import { STAGE_ORDER, stageRank } from "../src/art/building";
-import { bakedCels, capFrame, damageFrame, verifiedFrame, layoutAtlas, noDamageFrame, SIZES } from "../src/art/bake";
+import { bakedCels, capFrame, damageFrame, verifiedFrame, layoutAtlas, NO_DAMAGE_FRAME, NO_VERIFIED_FRAME, SIZES } from "../src/art/bake";
 
 const DRAWING = STAGE_ORDER.filter((s) => stageRank(s) >= stageRank("roofed"));
 
@@ -65,8 +65,8 @@ test("the undamaged frame exists and is empty", () => {
   // the child count must not change when the condition does — restaging swaps
   // frames by index. So the "no damage" case needs a real, resolvable, blank
   // frame rather than an absent child.
-  const found = bakedCels().find((c) => c.key === noDamageFrame(100, "stadium"));
-  assert.ok(found, `no cel answers to ${noDamageFrame(100, "stadium")}`);
+  const found = bakedCels().find((c) => c.key === NO_DAMAGE_FRAME);
+  assert.ok(found, `no cel answers to ${NO_DAMAGE_FRAME}`);
   assert.ok(found!.pix.empty(), "the undamaged frame is not empty");
 });
 

@@ -52,8 +52,8 @@ its own.
 |---|---|---|
 | 4 (at Phase 0) | 1144 | 152 |
 | **11 archetypes** | **1239** | **57** |
-| **12 (what shipped)** | **1279** | **17** |
-| 13 (the ceiling) | ~1309 | over |
+| **12 (what shipped)** | **1161** | **135** |
+| 13 | ~1191 | ~105 |
 
 Five widths and three overlays on every roof — damage, verification, and the base
 rubble — are what the last tickets bought.

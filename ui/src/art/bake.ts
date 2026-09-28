@@ -214,9 +214,10 @@ export function verifiedFrame(side: number, roof: Archetype, turn = 0): string {
  * texture without moving the sprite and a flag that jumps on restaging reads as
  * the building changing shape.
  */
-export function noVerifiedFrame(side: number, roof: Archetype): string {
-  return `vf:none:${side}:${roof}`;
-}
+export const NO_VERIFIED_FRAME = "vf:blank";
+
+/** The blank a building carries in place of a damage mark. See the note at the bake. */
+export const NO_DAMAGE_FRAME = "dmg:blank";
 
 /**
  * The frame a building carries when it is **not** damaged.
@@ -437,15 +438,9 @@ export function bakedCels(turn = 0): BakedCel[] {
         ox: vBox.ox,
         oy: vBox.oy,
       });
-      cels.push({
-        key: noVerifiedFrame(side, roof),
-        pix: emptyVerifiedCel(side, roof, turn),
-        ox: vBox.ox,
-        oy: vBox.oy,
-      });
     }
 
-      // The damage marks, once per footprint and archetype rather than per
+    // The damage marks, once per footprint and archetype rather than per
       // stage. A hole in a roof is the same hole whether the building is roofed
       // or completed, and baking it into every stage said so four times over for
       // no picture anyone could tell apart. Each is cut from the cap's own box,
@@ -460,14 +455,6 @@ export function bakedCels(turn = 0): BakedCel[] {
           ox: dmgBox.ox,
           oy: dmgBox.oy,
         });
-        // The blank, cut from the *same* box so the two share an origin. This
-        // is the one thing that makes `setFrame` safe here.
-        cels.push({
-          key: noDamageFrame(side, roof),
-          pix: emptyDamageCel(side, roof, turn),
-          ox: dmgBox.ox,
-          oy: dmgBox.oy,
-        });
       }
 
     // The ground shadow, baked once per footprint. A building without a contact
@@ -475,6 +462,18 @@ export function bakedCels(turn = 0): BakedCel[] {
     // visible precisely because the workers do have one.
     const footShadowBox = shadowBox(side);
     cels.push({ key: shadowFrame(side, turn), pix: buildShadow(side, files, "b", turn), ox: footShadowBox.ox, oy: footShadowBox.oy });
+  }
+
+  // The two shared blanks — what a building carries in place of a damage mark
+  // and a pennant. **One each, for the whole town**, and that is the third time
+  // this trick has paid: a blank is a blank, and `setFrame` does not move a
+  // sprite, so the blank a mark swaps *from* does not need the mark's box. The
+  // per-archetype, per-footprint blanks were 120 cels drawing nothing.
+  for (const [key, make] of [
+    [NO_DAMAGE_FRAME, () => new Pix(1, 1)],
+    [NO_VERIFIED_FRAME, () => new Pix(1, 1)],
+  ] as const) {
+    cels.push({ key, pix: make(), ox: 0, oy: 0 });
   }
 
   // --- Ground ------------------------------------------------------------

@@ -109,13 +109,14 @@ test("the atlas still fits after the cutover", () => {
     MATERIALS.length * 2 /* base rubble and its blank */ +
     preRoof /* the shared blank cap */ +
     (stages - preRoof) * ARCHETYPES.length /* cap, per archetype */ +
-    ARCHETYPES.length * 2 /* a damage mark and its blank, per archetype */ +
-    ARCHETYPES.length * 2 /* the pennant and its blank, per archetype */ +
+    ARCHETYPES.length /* a damage mark, per archetype */ +
+    ARCHETYPES.length /* the pennant, per archetype */ +
     1 /* one contact shadow per footprint */;
   const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
   const props = ALL_PROP_KINDS.length * 2;
   const workers = 2 * Object.values(FRAME_MS).reduce((n, f) => n + f.length, 0);
-  assert.equal(cels.length, workers + SIZES.length * perFootprint + ground + props);
+  // The two shared condition blanks are once for the whole town, not per footprint.
+  assert.equal(cels.length, workers + SIZES.length * perFootprint + 2 + ground + props);
   // Cell height is 101, not 93: the Chapel is 30 units tall at the largest
   // footprint, and a spire that is not the tallest thing on the skyline is not
   // a spire. That costs 112 cels of ceiling (1408 -> 1296) and is worth it — the

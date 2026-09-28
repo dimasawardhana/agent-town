@@ -36,7 +36,7 @@ import { hex, sprite, Pix } from "../src/art/surface";
 import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
-import { bakedCels, layoutAtlas, SIZES } from "../src/art/bake";
+import { bakedCels, layoutAtlas, SIZES, NO_DAMAGE_FRAME, NO_VERIFIED_FRAME } from "../src/art/bake";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, MATERIALS } from "../src/art/roof";
 import {
   STAGE_ORDER,
@@ -139,10 +139,15 @@ test("the bake and its invariants enumerate the same cels", () => {
     MATERIALS.length * 2 /* base rubble and its blank, per material */ +
     preRoof /* cap below roofed: one shared blank */ +
     (stages - preRoof) * ARCHETYPES.length /* cap from roofed up, per archetype */ +
-    ARCHETYPES.length * 2 /* a damage mark and its blank, per archetype */ +
-    ARCHETYPES.length * 2 /* the pennant and its blank, per archetype */ +
+    ARCHETYPES.length /* a damage mark, per archetype */ +
+    ARCHETYPES.length /* the pennant, per archetype */ +
     1 /* one contact shadow per footprint */;
-  const buildings = SIZES.length * perFootprint;
+  // The two shared condition blanks are once for the *whole town*, not per
+  // footprint, which is the third time that trick has paid: a blank is a blank,
+  // and `setFrame` does not move a sprite, so the blank a mark swaps from does
+  // not need the mark's box.
+  const sharedBlanks = 2;
+  const buildings = SIZES.length * perFootprint + sharedBlanks;
   const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
   const props = ALL_PROP_KINDS.length * 2;
   assert.equal(
@@ -167,13 +172,17 @@ test("the bake and its invariants enumerate the same cels", () => {
     // saving: as a cap variant it had one per stage and condition.
     const d = cels.filter((c) => c.key.startsWith(`dmg:`) && c.key.split(":")[2] === roof).length;
     assert.equal(d, SIZES.length, `archetype "${roof}" has ${d} damage marks, want one per footprint`);
+    // And exactly one blank for the whole town, not one per archetype.
+    const shared = cels.filter((c) => c.key === NO_DAMAGE_FRAME || c.key === NO_VERIFIED_FRAME);
+    assert.equal(shared.length, 2, `${shared.length} shared blanks, want one per condition`);
+    assert.ok(shared.every((c) => c.pix.empty()), "a shared blank is not empty");
     // And one pennant, for the same reason: a condition costs one cel per
     // footprint, not one per stage.
     // Both the pennant (`vf:<side>:<roof>`) and the blank it swaps with
     // (`vf:none:<side>:<roof>`), which is why this matches on the name anywhere
     // in the key rather than on a fixed field.
     const v = cels.filter((c) => c.key.startsWith("vf:") && c.key.endsWith(roof)).length;
-    assert.equal(v, SIZES.length * 2, `archetype "${roof}" has ${v} pennant cels, want one and its blank per footprint`);
+    assert.equal(v, SIZES.length, `archetype "${roof}" has ${v} pennant cels, want one per footprint`);
   }
   // Every cel carries a distinct frame key, or two cels would fight over one
   // atlas frame and the later would win silently.
