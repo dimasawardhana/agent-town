@@ -29,8 +29,9 @@ import {
   propFrame,
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { Chimneys, SMOKES } from "./smoke";
 import { type Stage, skinVariant } from "./art/building";
-import { ARCHETYPES, archetypeFor, materialFor, type Archetype } from "./art/roof";
+import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
@@ -82,6 +83,9 @@ interface GroundRegion {
  */
 const DEPTH = {
   ground: -100000,
+  /** Above every building, so a puff is never half-hidden behind a roof, and
+   *  below the labels, so a puff is never half-hidden behind a name. */
+  smoke: 80000,
   label: 90000,
 } as const;
 
@@ -118,6 +122,14 @@ export class TownScene extends Phaser.Scene {
    */
   private sourceLayout: Layout | null = null;
   private workers: WorkerLayer | null = null;
+  /**
+   * The emitters off the roofs that have chimneys, rebuilt with the map.
+   *
+   * Held rather than left to Phaser's scene lifetime because a redraw happens
+   * on every event, and an emitter that outlives its draw is how a session
+   * ends up with four hundred chimneys.
+   */
+  private chimneys: Chimneys | null = null;
   // Each building's sprite stack, by site id. A tower is a Container holding one
   // base, N identical bands and a cap, so a status change swaps frames inside
   // the container rather than rebuilding the map — rebuilding would flicker the
@@ -278,6 +290,11 @@ export class TownScene extends Phaser.Scene {
     // depth change, so the reader who clicked a building and then moved the
     // detail control would watch the name they pinned open disappear.
     this.refreshLabels();
+
+    // Smoke, over the buildings and under the labels. Recreated with the rest of
+    // the draw, so a redraw cannot leave two emitters on the same chimney.
+    this.chimneys?.destroy();
+    this.chimneys = new Chimneys(this, this.chimneyRooftops(layout), DEPTH.smoke);
 
     this.workers?.destroy();
     this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
@@ -667,6 +684,25 @@ export class TownScene extends Phaser.Scene {
     );
   }
 
+
+  /**
+   * chimneyRooftops is where the smoke comes off, in picture pixels.
+   *
+   * A building's own plot rather than the position its chimney art happens to
+   * use: the art places a chimney to suit the roof, and reaching into that to
+   * find it would tie the effect to a drawing decision that is free to change.
+   * At this zoom smoke off the middle of a roof is smoke off that building.
+   */
+  private chimneyRooftops(l: Layout): { x: number; y: number }[] {
+    return l.sites
+      .filter((s) => s.kind === "building" && SMOKES.has(this.archetypeOf(s)))
+      .map((s) => {
+        // The roof's top, in world units, lifted by the cap's own rise so the
+        // puff starts above the roof rather than inside it.
+        const rise = archetypeHeight(this.archetypeOf(s), s.w);
+        return this.project(s.x + s.w / 2, s.y - rise);
+      });
+  }
 
   private drawSite(s: Site): void {
     // The grounded corner nearest the camera, which is what depth and hit zones
