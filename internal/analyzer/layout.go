@@ -323,7 +323,7 @@ func LayoutTown(t *Town) Layout {
 	// Import dependency would say far more — "this calls that" rather than
 	// "this sits inside that" — and is out of scope: it is a real analysis the
 	// daemon does not perform. See the spec.
-	containmentRoads(&l)
+	linkRoads(t.Root, &l)
 
 	// --- Bounds ---
 	//
@@ -556,6 +556,69 @@ func buildingsIn(t *Town, district string) []Building {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// linkRoads draws the bands that connect one building to another: containment
+// from a nested building to the one holding it, and import from a building to the
+// ones whose source it names.
+//
+// Both are emitted here rather than in the browser because the layout is the
+// single source of truth for geometry (ADR-0012), and a road the renderer worked
+// out for itself is a road the renderer can get wrong.
+func linkRoads(root string, l *Layout) {
+	containmentRoads(l)
+	importRoads(root, l)
+}
+
+// importRoads draws a band from a building to each building it imports.
+//
+// Only edges whose *both* ends are buildings this analyzer found are drawn. A
+// specifier that names a package, a module or the standard library names
+// something outside the town, and a road to it would be a confident line drawn
+// to a place the map does not contain. No road is the correct answer there, and
+// it is why a repository this scanner cannot read simply has no import roads.
+func importRoads(root string, l *Layout) {
+	buildings := map[string]bool{}
+	for _, s := range l.Sites {
+		if s.Kind == PlaceBuilding && s.Path != "" {
+			buildings[s.Path] = true
+		}
+	}
+	edges := importEdges(root, buildings)
+
+	byPath := map[string]Site{}
+	for _, s := range l.Sites {
+		if buildings[s.Path] {
+			byPath[s.Path] = s
+		}
+	}
+
+	// Sorted so the band's order is the same on every machine, for the same
+	// reason the site list is.
+	pairs := make([][2]string, 0, len(edges))
+	for e := range edges {
+		pairs = append(pairs, e)
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i][0] != pairs[j][0] {
+			return pairs[i][0] < pairs[j][0]
+		}
+		return pairs[i][1] < pairs[j][1]
+	})
+
+	const band = 8.0
+	for _, e := range pairs {
+		c, p := byPath[e[0]], byPath[e[1]]
+		cx, cy := c.X+c.W/2, c.Y+c.H/2
+		px, py := p.X+p.W/2, p.Y+p.H/2
+		l.Roads = append(l.Roads, Road{
+			X:    math.Min(cx, px) - band/2,
+			Y:    math.Min(cy, py) - band/2,
+			W:    math.Abs(px-cx) + band,
+			H:    math.Abs(py-cy) + band,
+			Kind: "import",
+		})
+	}
 }
 
 // containmentRoads adds a band from every nested building to the building that

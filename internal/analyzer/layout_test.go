@@ -868,3 +868,90 @@ func TestContainmentRoadsUseTheNearestAncestor(t *testing.T) {
 	}
 	_ = byPath
 }
+
+// An import road is a claim, so the test is about what the scanner refuses to
+// claim as much as what it draws.
+func TestImportRoadsOnlyBetweenRealBuildings(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A relative import that names a file inside a sibling building: a road.
+	mk("web/main.go", "package web\n\nimport \"../store\"\n\nfunc main() {}\n")
+	mk("store/s.go", "package store\n")
+	// A relative import that escapes the repository: no road, because the
+	// target is not in this town.
+	mk("web/other.go", "package web\n\nimport \"../../elsewhere/thing\"\n")
+	// A bare specifier: a package outside the town, so no road.
+	mk("web/dep.go", "package web\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n)\n")
+	// JavaScript forms, including one that resolves.
+	mk("ui/src/a.ts", "import { x } from \"../shared\";\n")
+	mk("ui/shared/x.ts", "export const x = 1;\n")
+	// A string that merely looks like an import, inside a function body.
+	mk("web/fake.go", "package web\n\nfunc f() { s := \"../store\"; _ = s }\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(town)
+	known := map[string]bool{}
+	for _, s := range l.Sites {
+		known[s.Path] = s.Kind == PlaceBuilding
+	}
+
+	var imports [][2]bool
+	for _, r := range l.Roads {
+		if r.Kind == "import" {
+			imports = append(imports, [2]bool{r.W > 0, r.H > 0})
+		}
+	}
+	// web -> store and ui/src -> ui/shared are the only two that resolve.
+	if len(imports) != 2 {
+		var kinds []string
+		for _, r := range l.Roads {
+			kinds = append(kinds, r.Kind)
+		}
+		t.Errorf("import roads = %d, want 2; every road was %v", len(imports), kinds)
+	}
+	// And every one must be a real, positive band.
+	for _, i := range imports {
+		if !i[0] || !i[1] {
+			t.Errorf("an import road has no extent: %+v", i)
+		}
+	}
+	_ = known
+}
+
+// The repository this is written in imports across buildings, so the rule has to
+// hold on a real tree and not only on a fixture.
+func TestImportRoadsOnThisRepository(t *testing.T) {
+	town, err := Analyze("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(town)
+	byPath := map[string]bool{}
+	for _, s := range l.Sites {
+		byPath[s.Path] = s.Kind == PlaceBuilding
+	}
+	n := 0
+	for _, r := range l.Roads {
+		if r.Kind == "import" {
+			n++
+			if r.W <= 0 || r.H <= 0 {
+				t.Errorf("an import road has no extent: %+v", r)
+			}
+		}
+	}
+	if n == 0 {
+		t.Error("this repository imports across buildings and drew no import roads")
+	}
+	t.Logf("IMPORT roads on this repo: %d (of %d total)", n, len(l.Roads))
+}
