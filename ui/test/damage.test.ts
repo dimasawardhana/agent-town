@@ -5,29 +5,33 @@
 // family. These tests are a budget claim as much as a drawing one.
 
 import { strict as assert } from "node:assert";
+
+/** The footprints the bake actually draws, rather than a list that drifts from it. */
+const SIDES = SIZES.map((s) => s.side);
 import { test } from "node:test";
 
 import { ARCHETYPES } from "../src/art/roof";
 import { STAGE_ORDER, stageRank } from "../src/art/building";
-import { bakedCels, capFrame, damageFrame, layoutAtlas, noDamageFrame } from "../src/art/bake";
+import { bakedCels, capFrame, damageFrame, verifiedFrame, layoutAtlas, noDamageFrame, SIZES } from "../src/art/bake";
 
 const DRAWING = STAGE_ORDER.filter((s) => stageRank(s) >= stageRank("roofed"));
 
 test("damage is no longer a variant of the cap", () => {
-  // The whole point. `capFrame` has no damage parameter at all, so a damaged
-  // roof and an undamaged one cannot be told apart by the cap key.
-  assert.equal(capFrame(78, "stadium", "roofed", false, 0), "cap:78:stadium:roofed");
-  assert.ok(
-    !capFrame(78, "stadium", "roofed", false, 0).includes("dmg"),
-    "the cap key still carries a damage marker",
-  );
-  // And the key is unchanged for an undamaged, unverified cap — every town that
-  // renders today finds the frames it found today.
-  assert.equal(capFrame(78, "hall", "completed", true, 0), "cap:78:hall:completed:v");
+  // The whole point. `capFrame` has neither a damage nor a verification
+  // parameter, so a roof cannot be told from an undamaged, unverified one by
+  // the cap key: both are one frame, and the conditions are marks over it.
+  const key = capFrame(78, "stadium", "roofed", 0);
+  assert.equal(key, "cap:78:stadium:roofed");
+  assert.ok(!key.includes("dmg") && !key.includes("v"), `the cap key still carries a condition marker: ${key}`);
+  assert.equal(capFrame(78, "hall", "completed", 0), "cap:78:hall:completed");
+  // The conditions have their own keys, which is what lets each cost one cel
+  // rather than one per stage.
+  assert.equal(damageFrame(78, "stadium", 0), "dmg:78:stadium");
+  assert.equal(verifiedFrame(78, "stadium", 0), "vf:78:stadium");
 });
 
 test("every archetype has a damage frame, and it is not a cap", () => {
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of SIDES) {
     for (const a of ARCHETYPES) {
       const key = damageFrame(side, a, 0);
       assert.ok(key.startsWith("dmg:"), `${key} is not a damage frame`);
@@ -44,7 +48,7 @@ test("a damage mark is per-archetype, not one shared blob", () => {
   const damageKeys = new Set(keys.filter((k) => k.startsWith("dmg:") && !k.includes("blank")));
   assert.equal(
     damageKeys.size,
-    4 * ARCHETYPES.length,
+    SIZES.length * ARCHETYPES.length,
     `${damageKeys.size} damage marks, want one per footprint and archetype`,
   );
 });

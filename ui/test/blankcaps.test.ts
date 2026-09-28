@@ -6,9 +6,12 @@
 // looks right; this proves the town is smaller.
 
 import { strict as assert } from "node:assert";
+
+/** The footprints the bake actually draws, rather than a list that drifts from it. */
+const SIDES = SIZES.map((s) => s.side);
 import { test } from "node:test";
 
-import { bakedCels, capFrame, baseFrame, bandFrame, layoutAtlas } from "../src/art/bake";
+import { bakedCels, capFrame, baseFrame, bandFrame, layoutAtlas, SIZES } from "../src/art/bake";
 import { STAGE_ORDER, stageRank } from "../src/art/building";
 import { ARCHETYPES } from "../src/art/roof";
 
@@ -20,15 +23,11 @@ test("the stages that draw no roof share one blank frame per footprint", () => {
   // frame for a pre-roof stage. This is the whole change: the *key* still has to
   // be produced per combination so the stack's child count is stable, but the
   // *frame* it resolves to need not differ.
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of SIDES) {
     for (const stage of PRE_ROOF) {
       const frames = new Set<string>();
       for (const roof of ARCHETYPES) {
-        for (const damaged of [false, true]) {
-          for (const verified of [false, true]) {
-            frames.add(capFrame(side, roof, stage, verified));
-          }
-        }
+        frames.add(capFrame(side, roof, stage));
       }
       assert.equal(
         frames.size,
@@ -48,9 +47,9 @@ test("the stages that draw no roof share one blank frame per footprint", () => {
 test("the shared pre-roof frame is baked for every turn", () => {
   for (const turn of [0, 1, 2, 3]) {
     const keys = new Set(bakedCels(turn).map((c) => c.key));
-    for (const side of [44, 60, 78, 100]) {
+    for (const side of SIDES) {
       for (const stage of PRE_ROOF) {
-        const key = capFrame(side, ARCHETYPES[0], stage, false, turn);
+        const key = capFrame(side, ARCHETYPES[0], stage, turn);
         assert.ok(keys.has(key), `turn ${turn}: no baked cel answers to ${key}`);
       }
     }
@@ -67,7 +66,7 @@ test("the shared pre-roof frame is baked for every turn", () => {
 // stopped resolving at some stage, the renderer would drop that child and the
 // count would fall.
 test("every storey and cap resolves at every stage, so the child count cannot drift", () => {
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of SIDES) {
     for (const a of ARCHETYPES) {
       const keys = new Set(bakedCels().map((c) => c.key));
       for (const stage of STAGE_ORDER) {
@@ -79,7 +78,7 @@ test("every storey and cap resolves at every stage, so the child count cannot dr
           );
           // And the cap, whether it draws a roof or shares the blank.
           assert.ok(
-            keys.has(capFrame(side, a, stage, false, 0)),
+            keys.has(capFrame(side, a, stage, 0)),
             `side ${side} ${a} ${stage}: the cap has no frame, so this stage would have one fewer child`,
           );
         }
@@ -103,18 +102,16 @@ test("the post-roof stages still resolve per archetype and verification", () => 
   // Damage is not an axis any more — it is a mark laid over the cap — so the
   // count is per archetype and verification, not four.
   const POST_ROOF = STAGE_ORDER.filter((s) => stageRank(s) >= stageRank("roofed"));
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of SIDES) {
     for (const stage of POST_ROOF) {
       const seen = new Set<string>();
       for (const roof of ARCHETYPES) {
-        for (const verified of [false, true]) {
-          seen.add(capFrame(side, roof, stage, verified));
-        }
+        seen.add(capFrame(side, roof, stage));
       }
       assert.equal(
         seen.size,
-        ARCHETYPES.length * 2,
-        `side ${side} at ${stage}: ${seen.size} frames, want one per archetype and verification`,
+        ARCHETYPES.length,
+        `side ${side} at ${stage}: ${seen.size} frames, want one per archetype`,
       );
     }
   }
@@ -126,16 +123,16 @@ test("the shared blank caps are the saving the budget assumes", () => {
   // after the atlas had changed underneath it.
   const caps = bakedCels().filter((c) => c.key.startsWith("cap:"));
   const blank = caps.filter((c) => c.pix.empty());
-  const expectedBlank = 4 /* sides */ * PRE_ROOF.length;
+  const expectedBlank = SIZES.length * PRE_ROOF.length;
   assert.equal(
     blank.length,
     expectedBlank,
-    `${blank.length} blank caps, want ${expectedBlank} — one per side per pre-roof stage`,
+    `${blank.length} blank caps, want ${expectedBlank} — one per footprint per pre-roof stage`,
   );
 
   // What the same atlas would have cost without sharing: every combination of
   // side, archetype, damage, verification and pre-roof stage.
-  const unshared = 4 * ARCHETYPES.length * PRE_ROOF.length * 4;
+  const unshared = SIZES.length * ARCHETYPES.length * PRE_ROOF.length * 4;
   const saved = unshared - blank.length;
   assert.ok(
     saved > 0,

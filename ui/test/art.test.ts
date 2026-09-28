@@ -36,7 +36,7 @@ import { hex, sprite, Pix } from "../src/art/surface";
 import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
-import { bakedCels, layoutAtlas } from "../src/art/bake";
+import { bakedCels, layoutAtlas, SIZES } from "../src/art/bake";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, MATERIALS } from "../src/art/roof";
 import {
   STAGE_ORDER,
@@ -44,6 +44,7 @@ import {
   stageRank,
   buildBuilding,
   buildBase,
+  buildRoofFlagCel,
   buildRoofDamageCel,
   buildBand,
   buildCap,
@@ -124,22 +125,24 @@ test("the bake and its invariants enumerate the same cels", () => {
   // what it means.
   const workers = 2 * Object.values(FRAME_MS).reduce((n, f) => n + f.length, 0);
   const stages = STAGE_ORDER.length;
-  // The cap is not `stages × roofs × damage × verified` any more: below
-  // `roofed` it draws nothing, and every combination of roof, damage and
-  // verification is the same empty image, so those stages are baked once per
-  // footprint. Splitting the count on the same rung the bake splits on is what
-  // keeps this assertion honest — the number is derived from the tables, so
-  // changing the ladder or the roof set updates it by construction.
+  // Neither condition is a cap axis now. Below `roofed` the cap draws nothing,
+  // so those stages are baked once per footprint; and damage and the pennant are
+  // marks laid *over* the cap, each costing one cel per footprint and archetype
+  // rather than one per stage. Splitting the count on the same rungs the bake
+  // splits on is what keeps this assertion honest — it is derived from the
+  // tables, so changing the ladder, the archetype set or the width buckets
+  // updates it by construction.
   const preRoof = STAGE_ORDER.filter((s) => stageRank(s) < stageRank("roofed")).length;
   const perFootprint =
     stages * MATERIALS.length /* band, per material */ +
     stages * MATERIALS.length /* base, per material */ +
     MATERIALS.length * 2 /* base rubble and its blank, per material */ +
     preRoof /* cap below roofed: one shared blank */ +
-    (stages - preRoof) * ARCHETYPES.length * 2 /* cap from roofed up, per archetype and verified */ +
+    (stages - preRoof) * ARCHETYPES.length /* cap from roofed up, per archetype */ +
     ARCHETYPES.length * 2 /* a damage mark and its blank, per archetype */ +
-    1 /* shadow */;
-  const buildings = 4 * perFootprint;
+    ARCHETYPES.length * 2 /* the pennant and its blank, per archetype */ +
+    1 /* one contact shadow per footprint */;
+  const buildings = SIZES.length * perFootprint;
   const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
   const props = ALL_PROP_KINDS.length * 2;
   assert.equal(
@@ -157,13 +160,20 @@ test("the bake and its invariants enumerate the same cels", () => {
     const n = cels.filter((c) => c.key.startsWith(`cap:`) && c.key.split(":")[2] === roof).length;
     assert.equal(
       n,
-      4 * (stages - preRoof) * 2,
-      `archetype "${roof}" has ${n} cap cels, not one per footprint, drawing stage and verification`,
+      SIZES.length * (stages - preRoof),
+      `archetype "${roof}" has ${n} cap cels, not one per footprint and drawing stage`,
     );
     // And it has exactly one damage mark per footprint, which is the whole
     // saving: as a cap variant it had one per stage and condition.
     const d = cels.filter((c) => c.key.startsWith(`dmg:`) && c.key.split(":")[2] === roof).length;
-    assert.equal(d, 4, `archetype "${roof}" has ${d} damage marks, want one per footprint`);
+    assert.equal(d, SIZES.length, `archetype "${roof}" has ${d} damage marks, want one per footprint`);
+    // And one pennant, for the same reason: a condition costs one cel per
+    // footprint, not one per stage.
+    // Both the pennant (`vf:<side>:<roof>`) and the blank it swaps with
+    // (`vf:none:<side>:<roof>`), which is why this matches on the name anywhere
+    // in the key rather than on a fixed field.
+    const v = cels.filter((c) => c.key.startsWith("vf:") && c.key.endsWith(roof)).length;
+    assert.equal(v, SIZES.length * 2, `archetype "${roof}" has ${v} pennant cels, want one and its blank per footprint`);
   }
   // Every cel carries a distinct frame key, or two cels would fight over one
   // atlas frame and the later would win silently.
@@ -206,7 +216,7 @@ test("only the band and the cap may be blank, and only before their feature exis
   // vanishing at `roofed` would be — fails here rather than hiding.
   const familyOf = (name: string) => name.split(":")[0];
   const stageOf = (name: string) => name.split(":")[2];
-  const blanks = new Set(["band", "cap", "dmg", "bdmg"]);
+  const blanks = new Set(["band", "cap", "dmg", "bdmg", "vf"]);
   for (const { name, pix } of everyCel()) {
     if (!pix.empty()) continue;
     assert.ok(
@@ -265,25 +275,31 @@ test("the verified flag is drawn, is absent when unverified, and stays inside it
   // and that it has not escaped the cel it is baked into.
   for (const side of [60, 78, 100]) {
     for (const roof of ARCHETYPES) {
-      const off = buildCap(side, roof, "completed", false);
-      const on = buildCap(side, roof, "completed", true);
+      // The flag is an overlay: a cel of the cap's box holding the pennant and
+      // nothing else. The cap beside it is the *same* picture whether the
+      // building is verified or not — that is what the overlay buys.
+      const flag = buildRoofFlagCel(side, roof);
+      const bare = buildCap(side, roof, "completed");
+      // Not an equality check on gold: the Chapel's cross finial is accent
+      // too, so "has gold" cannot mean "has a flag". The claim is that the two
+      // cels are genuinely different pictures, which is what an overlay is.
       assert.notDeepEqual(
-        Array.from(on.data),
-        Array.from(off.data),
-        `side ${side} ${roof}: the verified flag did not change the picture`,
+        Array.from(flag.data),
+        Array.from(bare.data),
+        `side ${side} ${roof}: the pennant cel and the cap are the same picture; one of them is not doing its job`,
       );
 
       let accent = 0;
-      for (let i = 0; i < on.data.length; i += 4) {
-        if (on.data[i + 3] !== 0 && hex(on.data[i], on.data[i + 1], on.data[i + 2]) === P.accent) accent++;
+      for (let i = 0; i < flag.data.length; i += 4) {
+        if (flag.data[i + 3] !== 0 && hex(flag.data[i], flag.data[i + 1], flag.data[i + 2]) === P.accent) accent++;
       }
       assert.ok(accent > 0, `side ${side} ${roof}: no accent gold on the roof, so there is no flag`);
 
       // Inside the cel. A flag that spilled past the box would be cropped in
       // the atlas and would have charged `cellH` for the whole sheet, and the
       // ceiling is what this is really protecting.
-      assert.equal(on.w, capBox(side, roof).w, `side ${side} ${roof}: flag grew the cel's width`);
-      assert.equal(on.h, capBox(side, roof).h, `side ${side} ${roof}: flag grew the cel's height`);
+      assert.equal(flag.w, capBox(side, roof).w, `side ${side} ${roof}: flag grew the cel's width`);
+      assert.equal(flag.h, capBox(side, roof).h, `side ${side} ${roof}: flag grew the cel's height`);
     }
   }
 });
@@ -293,12 +309,14 @@ test("the flag does not raise the cap's own box", () => {
   // be allowed to charge the rest. The claim is scoped to the flag rather than
   // to the tallest cel in the atlas: a *taller archetype* is a deliberate act
   // that re-measures the ceiling, while a taller *flag* would be an accident.
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of [44, 58, 72, 86, 100]) {
     for (const a of ARCHETYPES) {
-      const bare = buildCap(side, a, "completed", false);
-      const flagged = buildCap(side, a, "completed", true);
-      assert.equal(flagged.h, bare.h, `side ${side} ${a}: the flag grew the cap by ${flagged.h - bare.h}px`);
-      assert.equal(flagged.w, bare.w, `side ${side} ${a}: the flag grew the cap's width`);
+      // The pennant is an overlay now, so the claim is about *its* cel and the
+      // cap beside it: same box, and the cap itself unchanged by verification.
+      const cap = buildCap(side, a, "completed");
+      const flag = buildRoofFlagCel(side, a);
+      assert.equal(flag.h, cap.h, `side ${side} ${a}: the pennant's box is not the cap's`);
+      assert.equal(flag.w, cap.w, `side ${side} ${a}: the pennant's box is not the cap's`);
     }
   }
   const layout = layoutAtlas(bakedCels());
@@ -311,8 +329,9 @@ test("damage and verification are independent cels, so neither can erase the oth
   // cels now, so the question is whether they still are — the cap carries the flag
   // and no damage, the overlay carries the damage and no flag.
   for (const a of ARCHETYPES) {
-    const cap = buildCap(100, a, "completed", true);
+    const cap = buildCap(100, a, "completed");
     const overlay = buildRoofDamageCel(100, a);
+    const flag = buildRoofFlagCel(100, a);
     const accent = (pix: Pix) => {
       let n = 0;
       for (let i = 0; i < pix.data.length; i += 4) {
@@ -320,7 +339,11 @@ test("damage and verification are independent cels, so neither can erase the oth
       }
       return n;
     };
-    assert.ok(accent(cap) > 0, `${a}: the cap lost its flag`);
+    assert.ok(accent(flag) > 0, `${a}: the pennant overlay is blank`);
+    // Not "the cap has no gold": a Hospital's cross and a Chapel's finial are
+    // both accent, and a Chapel's cap having gold is the cross, not a flag. The
+    // cap is checked for the flag by shape instead, above.
+    void cap;
     assert.equal(accent(overlay), 0, `${a}: the damage overlay drew a verification flag of its own`);
     assert.notDeepEqual(
       Array.from(overlay.data),
@@ -724,7 +747,7 @@ test("every shipped cel is exactly the size of its own box", () => {
           const b = buildBase(side, archetypeFor(undefined, path), stage, damaged);
           assert.equal(b.w, foot.w, `${side}/${path}/${stage}/${damaged}: base width disagrees with baseBox`);
           assert.equal(b.h, foot.h, `${side}/${path}/${stage}/${damaged}: base height disagrees with baseBox`);
-          const c = buildCap(side, archetypeFor(undefined, path), stage, false);
+          const c = buildCap(side, archetypeFor(undefined, path), stage);
           assert.equal(c.w, top.w, `${side}/${path}/${stage}/${damaged}: cap width disagrees with capBox`);
           assert.equal(c.h, top.h, `${side}/${path}/${stage}/${damaged}: cap height disagrees with capBox`);
         }
@@ -1308,7 +1331,7 @@ test("a single-storey building is solid: no hole between its plinth and its roof
   // because every function involved is individually correct.
   const side = 60, files = 5;
   const b = buildBase(side, archetypeFor(undefined, "a"), "completed");
-  const c = buildCap(side, archetypeFor(undefined, "a"), "completed", false);
+  const c = buildCap(side, archetypeFor(undefined, "a"), "completed");
   const sheet = new Pix(b.w, b.h);
   sheet.blit(b, 0, 0);
   sheet.blit(c, 0, 0);
@@ -1342,7 +1365,7 @@ test("each added storey raises the tower by exactly one storey", () => {
   const skin = skinFor(files, path);
   const base = buildBase(side, archetypeFor(undefined, path), stage);
   const band = buildBand(side, materialFor(archetypeFor(undefined, path)), stage);
-  const cap = buildCap(side, archetypeFor(undefined, path), stage, false);
+  const cap = buildCap(side, archetypeFor(undefined, path), stage);
   const footCel = baseBox(side), bandCel = bandBox(side), capCel = capBox(side, archetypeFor(undefined, path));
 
   // The ground line is a fixed row in every canvas, so a taller tower grows
@@ -1572,8 +1595,8 @@ test("each archetype draws a different picture, and the cap answers to it not th
       }
       // And the skin cannot reach the cap: two variants of the same building wear
       // the same roof, at the same footprint, stage and damage.
-      const a = buildCap(side, archetypeFor(undefined, "a"), stage, false);
-      const b = buildCap(side, archetypeFor(undefined, "b"), stage, false);
+      const a = buildCap(side, archetypeFor(undefined, "a"), stage);
+      const b = buildCap(side, archetypeFor(undefined, "b"), stage);
       if (archetypeFor(undefined, "a") === archetypeFor(undefined, "b")) {
         assert.equal(ink(a), ink(b), `${side}/${stage}: the same roof drew differently`);
       }

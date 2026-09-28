@@ -22,6 +22,8 @@ import {
   capFrame,
   baseDamageFrame,
   noBaseDamageFrame,
+  noVerifiedFrame,
+  verifiedFrame,
   damageFrame,
   noDamageFrame,
   groundFrame,
@@ -1249,6 +1251,10 @@ export class TownScene extends Phaser.Scene {
     // building is damaged, because the child count must not move when a
     // condition does.
     keys.push(this.baseDamageKey(s));
+    // The pennant, on the same terms as the two damage marks: a child whether
+    // or not the building is verified, because the child count must not move
+    // when a condition does.
+    keys.push(this.verifiedKey(s));
     return keys;
   }
 
@@ -1346,7 +1352,7 @@ export class TownScene extends Phaser.Scene {
     const m = materialFor(this.archetypeOf(s));
     const keys = [baseFrame(size, m, "completed", false, this.atlasTurn)];
     for (let i = 1; i < floors; i++) keys.push(bandFrame(size, m, "completed", this.atlasTurn));
-    keys.push(capFrame(size, this.archetypeOf(s), "completed", this.verifiedOf(s.path), this.atlasTurn));
+    keys.push(capFrame(size, this.archetypeOf(s), "completed", this.atlasTurn));
     return keys;
   }
 
@@ -1420,8 +1426,15 @@ export class TownScene extends Phaser.Scene {
     return baseDamageFrame(s.w, m, this.atlasTurn);
   }
 
+  /** verifiedKey is the pennant on this building's roof, or the shared blank. */
+  private verifiedKey(s: Site): string {
+    const a = this.archetypeOf(s);
+    if (!this.verifiedOf(s.path)) return noVerifiedFrame(s.w, a);
+    return verifiedFrame(s.w, a, this.atlasTurn);
+  }
+
   private capKey(s: Site): string {
-    return capFrame(s.w, this.archetypeOf(s), this.statusOf(s.path), this.verifiedOf(s.path), this.atlasTurn);
+    return capFrame(s.w, this.archetypeOf(s), this.statusOf(s.path), this.atlasTurn);
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the

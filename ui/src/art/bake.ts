@@ -25,7 +25,8 @@ import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
 import {
   STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
-  buildBaseDamageCel, buildRoofDamageCel, emptyDamageCel, stageRank, type Stage,
+  buildBaseDamageCel, buildRoofDamageCel, buildRoofFlagCel, emptyDamageCel, emptyVerifiedCel,
+  stageRank, type Stage,
 } from "./building";
 import {
   ARCHETYPES, archetypeFor, MATERIALS, type Archetype, type MaterialName,
@@ -72,10 +73,26 @@ export type Atlas = Record<string, FrameInfo>;
 
 /** The four building footprints the analyzer emits, and the file count each
  *  step corresponds to (internal/analyzer/layout.go). */
-const SIZES: readonly { side: number; files: number }[] = [
+/**
+ * The footprints a building can be drawn at.
+ *
+ * Five, and the number is a budget rather than a preference. Four left eight of
+ * this repository's fourteen buildings on the same footprint, which is what made
+ * a town of eleven archetypes read as one building repeated — the roofs differed
+ * and the mass did not.
+ *
+ * The fifth was only affordable once the verification pennant became an overlay
+ * rather than a cap axis. The sheet holds `floor(8192 / cellH) x 16` cels, and at
+ * the cell height the Chapel set (101) that is **1296** — not the 1408 an earlier
+ * budget was written against, which is the number that made five buckets look
+ * like they fitted. It is recorded here because the arithmetic is easy to redo
+ * from a stale ceiling and get wrong twice.
+ */
+export const SIZES: readonly { side: number; files: number }[] = [
   { side: 44, files: 2 },
-  { side: 60, files: 5 },
-  { side: 78, files: 9 },
+  { side: 58, files: 5 },
+  { side: 72, files: 9 },
+  { side: 86, files: 12 },
   { side: 100, files: 30 },
 ];
 
@@ -164,23 +181,42 @@ export function baseFrame(
  * restaging swaps frames by index, so the *number* of keys must not change with
  * the stage even though the frame they resolve to can.
  */
-export function capFrame(
-  side: number,
-  roof: Archetype,
-  stage: Stage,
-  verified = false,
-  turn = 0,
-): string {
-  // `:v` rather than a spelled-out word, so a reader scanning the atlas can
-  // tell the two cap families apart without counting colons. Verified comes
-  // last so the ordinary cap keeps exactly the key it has always had — every
-  // existing town renders from the same frame names it did before this.
+export function capFrame(side: number, roof: Archetype, stage: Stage, turn = 0): string {
   if (stageRank(stage) < stageRank("roofed")) {
     const blank = `cap:${side}:${stage}`;
     return turn === 0 ? blank : `${blank}:t${turn}`;
   }
-  const base = `cap:${side}:${roof}:${stage}${verified ? ":v" : ""}`;
+  const base = `cap:${side}:${roof}:${stage}`;
   return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/**
+ * Frame name for a roof's verification pennant, laid over the cap.
+ *
+ * The same move the roof damage made. Verification used to be a cap axis,
+ * which doubled the whole cap family to carry one flag, and the doubling is
+ * what stopped a fifth width bucket fitting: the sheet holds
+ * `floor(8192 / cellH) × 16` cels, and at the cell height the Chapel set that
+ * is 1296. A flag as an overlay costs 11 × sides rather than 11 × sides ×
+ * stages, and it is what buys the width.
+ *
+ * The pennant needs a roof to fly from, so it only appears from `roofed` — a
+ * building being verified is not a finished building.
+ */
+export function verifiedFrame(side: number, roof: Archetype, turn = 0): string {
+  const base = `vf:${side}:${roof}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/**
+ * The blank an unverified building carries in place of the pennant.
+ *
+ * Cut from the same box as the pennant it replaces, because `setFrame` swaps a
+ * texture without moving the sprite and a flag that jumps on restaging reads as
+ * the building changing shape.
+ */
+export function noVerifiedFrame(side: number, roof: Archetype): string {
+  return `vf:none:${side}:${roof}`;
 }
 
 /**
@@ -372,8 +408,8 @@ export function bakedCels(turn = 0): BakedCel[] {
       if (stageRank(stage) < stageRank("roofed")) {
         const box = capBox(side, ARCHETYPES[0]);
         cels.push({
-          key: capFrame(side, ARCHETYPES[0], stage, false, turn),
-          pix: buildCap(side, ARCHETYPES[0], stage, false, turn),
+          key: capFrame(side, ARCHETYPES[0], stage, turn),
+          pix: buildCap(side, ARCHETYPES[0], stage, turn),
           ox: box.ox,
           oy: box.oy,
         });
@@ -381,21 +417,33 @@ export function bakedCels(turn = 0): BakedCel[] {
       }
       for (const roof of ARCHETYPES) {
         const topBox = capBox(side, roof);
-        // Verification is the cap's only condition axis. It is affordable
-        // because the flag is drawn inside the box the chimney already fills —
-        // a taller one would raise `cellH` and charge the ceiling for every cel
-        // on the sheet to make a single building taller.
-        for (const verified of [false, true]) {
-          cels.push({
-            key: capFrame(side, roof, stage, verified, turn),
-            pix: buildCap(side, roof, stage, verified, turn),
-            ox: topBox.ox,
-            oy: topBox.oy,
-          });
-        }
-
+        cels.push({
+          key: capFrame(side, roof, stage, turn),
+          pix: buildCap(side, roof, stage, turn),
+          ox: topBox.ox,
+          oy: topBox.oy,
+        });
       }
+    }
 
+    // The pennant, and the blank it swaps with, baked once per footprint and
+    // archetype. It is an overlay rather than a cap axis because an axis costs
+    // one cel per *stage* and a flag looks the same on a roofed building and a
+    // finished one — the ladder already says which is which.
+    for (const roof of ARCHETYPES) {
+      const vBox = capBox(side, roof, turn);
+      cels.push({
+        key: verifiedFrame(side, roof, turn),
+        pix: buildRoofFlagCel(side, roof, turn),
+        ox: vBox.ox,
+        oy: vBox.oy,
+      });
+      cels.push({
+        key: noVerifiedFrame(side, roof),
+        pix: emptyVerifiedCel(side, roof, turn),
+        ox: vBox.ox,
+        oy: vBox.oy,
+      });
     }
 
       // The damage marks, once per footprint and archetype rather than per

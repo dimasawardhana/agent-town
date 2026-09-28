@@ -141,9 +141,11 @@ func buildingSize(files int) (w, h float64) {
 	case files <= 2:
 		return 44, 44
 	case files <= 5:
-		return 60, 60
+		return 58, 58
+	case files <= 9:
+		return 72, 72
 	case files <= 12:
-		return 78, 78
+		return 86, 86
 	default:
 		return 100, 100
 	}

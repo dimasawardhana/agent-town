@@ -527,7 +527,6 @@ export function buildCap(
   side: number,
   roof: Archetype,
   stage: Stage,
-  verified = false,
   turn = 0,
 ): Pix {
   const box = capBox(side, roof, turn);
@@ -544,7 +543,6 @@ export function buildCap(
   // roofed or still being dressed, and a pennant that waited for `completed`
   // would report the opposite of what it means — that the work is unfinished
   // *and* unverified, when the tests do not care how finished it is.
-  if (verified && want >= stageRank("roofed")) buildRoofFlag(iso, roof, side, 0);
 
   return iso.outline(P.ink);
 }
@@ -846,6 +844,28 @@ export function buildRoofDamageCel(side: number, roof: Archetype, turn = 0): Pix
  * with a different origin would leave every mark forty pixels right and thirty
  * down of its roof the moment a building was damaged.
  */
+/**
+ * buildRoofFlagCel is a roof's verification pennant on its own.
+ *
+ * Cut from the cap's own box, for the reason every overlay in this project is:
+ * `setFrame` moves textures without moving sprites, so a mark and the blank
+ * that replaces it must agree about where they sit. The flag rises out of the
+ * roof, so it is drawn from `roofed` — verification is a fact about the tests,
+ * not a statement that the building is finished.
+ */
+export function buildRoofFlagCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  buildRoofFlag(iso, roof, side, 0);
+  return iso.outline(P.ink);
+}
+
+/** The blank an unverified roof carries in place of its pennant. */
+export function emptyVerifiedCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  return new Pix(box.w, box.h);
+}
+
 export function emptyDamageCel(side: number, roof: Archetype, turn = 0): Pix {
   const box = capBox(side, roof, turn);
   return new Pix(box.w, box.h);
@@ -905,7 +925,7 @@ export function buildBuilding(
   // origin is already the top of the wall rather than the ground (`capBox` uses the
   // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes
   // out as `box.oy - STOREY - topBox.oy` rather than a whole storey more.
-  iso.pix.blit(buildCap(side, roof, stage, false, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
+  iso.pix.blit(buildCap(side, roof, stage, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
 
   return iso.pix;
 }

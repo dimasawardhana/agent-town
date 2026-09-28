@@ -119,9 +119,13 @@ tallest cel costs about 110 cels however innocent it sounds.
 With **eleven** archetypes the atlas holds **956 cels** against that 1296
 ceiling — damage became a mark laid over the cap rather than a variant of it,
 and the body became keyed on **five material families** rather than two skins, so
-a Chapel is stone and a Tower is glass. The atlas holds **1144 cels** against the
-1296 ceiling, 152 spare, and each further archetype costs 40 rather than 40 plus
-a new body. One archetype was cut on the way: a Restaurant whose identity
+a Chapel is stone and a Tower is glass. Verification then became a third overlay
+on the roof, which paid for a fifth width bucket. The atlas holds **1239 cels**
+against the **1296** ceiling, 57 spare, at cell height 101.
+
+The ceiling is `floor(8192 / cellH) × 16` and moves whenever a taller archetype
+does. It was 1408 at cellH 93 and is 1296 at 101, and two budgets in this
+project were costed against the older number before anyone noticed. One archetype was cut on the way: a Restaurant whose identity
 was an awning could not be drawn, because a gable's ridge is a *line* and
 anything placed on or across it either straddles the two slopes or floats above
 them. The enclosed-hole invariant caught four attempts. Every other archetype

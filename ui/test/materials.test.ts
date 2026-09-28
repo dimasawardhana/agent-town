@@ -6,10 +6,13 @@
 // archetype must land on one.
 
 import { strict as assert } from "node:assert";
+
+/** The footprints the bake actually draws, rather than a list that drifts from it. */
+const SIDES = SIZES.map((s) => s.side);
 import { test } from "node:test";
 
 import { ARCHETYPES, archetypeFor, materialFor, MATERIALS, type MaterialName } from "../src/art/roof";
-import { bakedCels, baseFrame, bandFrame, baseDamageFrame, noBaseDamageFrame } from "../src/art/bake";
+import { bakedCels, baseFrame, bandFrame, baseDamageFrame, noBaseDamageFrame, SIZES } from "../src/art/bake";
 import { buildBase, buildBand } from "../src/art/building";
 
 test("every archetype has a material, and the mapping is total", () => {
@@ -49,7 +52,7 @@ test("every family is visually distinct from the others", () => {
 
 test("a base damage overlay exists for every family, and a blank beside it", () => {
   const keys = new Set(bakedCels().map((c) => c.key));
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of SIDES) {
     for (const m of MATERIALS) {
       const k = baseDamageFrame(side, m, 0);
       assert.ok(keys.has(k), `no baked base damage for ${m} at side ${side}`);

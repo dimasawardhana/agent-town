@@ -277,10 +277,10 @@ func TestSourceDistrictKeepsFullSpacing(t *testing.T) {
 	root := tree(t, map[string][2]int{"src": {4, 7}})
 	l := layoutOf(t, root)
 
-	// 4 buildings of 7 files -> buildingSize(7) = 78
+	// 4 buildings of 7 files -> buildingSize(7) = 72
 	// cols = ceil(sqrt(4)) = 2, rows = 2
 	// blockW = 2*(78+14) - 14 + 2*20 = 210
-	const wantW = 2*(78+cellGap) - cellGap + 2*cellPad
+	const wantW = 2*(72+cellGap) - cellGap + 2*cellPad
 	if d := l.Districts[0]; d.W != wantW {
 		t.Errorf("source district width = %.0f, want %.0f (full pitch)", d.W, wantW)
 	}
@@ -659,7 +659,7 @@ func TestContainerFootprintIsABakedSizeAndSitsInsideItsPlate(t *testing.T) {
 	}
 	l := LayoutTown(town)
 
-	baked := map[float64]bool{44: true, 60: true, 78: true, 100: true}
+	baked := map[float64]bool{44: true, 58: true, 72: true, 86: true, 100: true}
 	var checked int
 	for _, s := range l.Sites {
 		if s.Kind != PlaceContainer {

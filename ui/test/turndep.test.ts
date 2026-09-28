@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { SIZES } from "../src/art/bake";
+const SIDES = SIZES.map((s) => s.side);
 import { buildBase, buildBand, buildCap, buildShadow, skinFor, STAGE_ORDER } from "../src/art/building";
 import { ARCHETYPES, archetypeFor, materialFor } from "../src/art/roof";
 import { Pix } from "../src/art/surface";
@@ -21,7 +23,7 @@ test("measure turn dependence", () => {
     if (sameUnder2) counts[fam].sameUnder2++;
   };
 
-  for (const side of [44, 60, 78, 100]) {
+  for (const side of SIDES) {
     for (const stage of STAGE_ORDER) {
       for (const v of [0, 1] as const) {
         const path = v === 0 ? "b" : "a";
@@ -38,8 +40,8 @@ test("measure turn dependence", () => {
         // compared each roof against itself and reported a cap that never turns.
         for (const roof of ARCHETYPES) {
           for (const dmg of [false, true]) {
-            const ca = buildCap(side, roof, stage, false, 0 as 0);
-            const cb = buildCap(side, roof, stage, false, 1 as 1);
+            const ca = buildCap(side, roof, stage, 0 as 0);
+            const cb = buildCap(side, roof, stage, 1 as 1);
             bump("cap", differs(ca, cb), !differs(ca, cb));
           }
         }
