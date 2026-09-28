@@ -37,7 +37,7 @@ import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { buildWorker, FRAME_MS, WORKER_ORIGIN, WORKER_CEL, WALK_CYCLE_MS, type WorkerState } from "../src/art/worker";
 import { bakedCels, layoutAtlas } from "../src/art/bake";
-import { ARCHETYPES, archetypeFor, archetypeHeight } from "../src/art/roof";
+import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, MATERIALS } from "../src/art/roof";
 import {
   STAGE_ORDER,
   STAGE_ADDS,
@@ -132,8 +132,9 @@ test("the bake and its invariants enumerate the same cels", () => {
   // changing the ladder or the roof set updates it by construction.
   const preRoof = STAGE_ORDER.filter((s) => stageRank(s) < stageRank("roofed")).length;
   const perFootprint =
-    stages * 2 /* band, per skin */ +
-    stages * 2 * 2 /* base, per skin and damage */ +
+    stages * MATERIALS.length /* band, per material */ +
+    stages * MATERIALS.length /* base, per material */ +
+    MATERIALS.length * 2 /* base rubble and its blank, per material */ +
     preRoof /* cap below roofed: one shared blank */ +
     (stages - preRoof) * ARCHETYPES.length * 2 /* cap from roofed up, per archetype and verified */ +
     ARCHETYPES.length * 2 /* a damage mark and its blank, per archetype */ +
@@ -205,7 +206,7 @@ test("only the band and the cap may be blank, and only before their feature exis
   // vanishing at `roofed` would be — fails here rather than hiding.
   const familyOf = (name: string) => name.split(":")[0];
   const stageOf = (name: string) => name.split(":")[2];
-  const blanks = new Set(["band", "cap", "dmg"]);
+  const blanks = new Set(["band", "cap", "dmg", "bdmg"]);
   for (const { name, pix } of everyCel()) {
     if (!pix.empty()) continue;
     assert.ok(
@@ -720,14 +721,14 @@ test("every shipped cel is exactly the size of its own box", () => {
       assert.equal(foot.h, storey.h, `${side}: a base cel and a band cel are both one storey and must match`);
       for (const stage of STAGE_ORDER) {
         for (const damaged of [false, true]) {
-          const b = buildBase(side, files, path, stage, damaged);
+          const b = buildBase(side, archetypeFor(undefined, path), stage, damaged);
           assert.equal(b.w, foot.w, `${side}/${path}/${stage}/${damaged}: base width disagrees with baseBox`);
           assert.equal(b.h, foot.h, `${side}/${path}/${stage}/${damaged}: base height disagrees with baseBox`);
-          const c = buildCap(side, archetypeFor(undefined, path), stage, damaged);
+          const c = buildCap(side, archetypeFor(undefined, path), stage, false);
           assert.equal(c.w, top.w, `${side}/${path}/${stage}/${damaged}: cap width disagrees with capBox`);
           assert.equal(c.h, top.h, `${side}/${path}/${stage}/${damaged}: cap height disagrees with capBox`);
         }
-        const band = buildBand(side, skin, stage);
+        const band = buildBand(side, materialFor(archetypeFor(undefined, path)), stage);
         assert.equal(band.w, storey.w, `${side}/${path}/${stage}: band width disagrees with bandBox`);
         assert.equal(band.h, storey.h, `${side}/${path}/${stage}: band height disagrees with bandBox`);
       }
@@ -774,9 +775,9 @@ test("the base, band and shadow cels fill their own height", () => {
       let band = Infinity;
       for (const stage of STAGE_ORDER) {
         for (const damaged of [false, true]) {
-          base = Math.min(base, topGap(buildBase(side, files, path, stage, damaged)));
+          base = Math.min(base, topGap(buildBase(side, archetypeFor(undefined, path), stage, damaged)));
         }
-        band = Math.min(band, topGap(buildBand(side, skin, stage)));
+        band = Math.min(band, topGap(buildBand(side, materialFor(archetypeFor(undefined, path)), stage)));
       }
       assert.ok(base <= SLACK, `${side}/${path}: the base cel leaves ${base} blank rows above its fullest art`);
       assert.ok(band <= SLACK, `${side}/${path}: the band cel leaves ${band} blank rows above its fullest art`);
@@ -1306,7 +1307,7 @@ test("a single-storey building is solid: no hole between its plinth and its roof
   // a single file, so this is the common case, and it is invisible in the code
   // because every function involved is individually correct.
   const side = 60, files = 5;
-  const b = buildBase(side, files, "a", "completed");
+  const b = buildBase(side, archetypeFor(undefined, "a"), "completed");
   const c = buildCap(side, archetypeFor(undefined, "a"), "completed", false);
   const sheet = new Pix(b.w, b.h);
   sheet.blit(b, 0, 0);
@@ -1339,8 +1340,8 @@ test("each added storey raises the tower by exactly one storey", () => {
   // does not appear at one floor — it only appears once there are two.
   const side = 78, files = 9, path = "a", stage = "completed";
   const skin = skinFor(files, path);
-  const base = buildBase(side, files, path, stage);
-  const band = buildBand(side, skin, stage);
+  const base = buildBase(side, archetypeFor(undefined, path), stage);
+  const band = buildBand(side, materialFor(archetypeFor(undefined, path)), stage);
   const cap = buildCap(side, archetypeFor(undefined, path), stage, false);
   const footCel = baseBox(side), bandCel = bandBox(side), capCel = capBox(side, archetypeFor(undefined, path));
 

@@ -20,6 +20,8 @@ import {
   baseFrame,
   bandFrame,
   capFrame,
+  baseDamageFrame,
+  noBaseDamageFrame,
   damageFrame,
   noDamageFrame,
   groundFrame,
@@ -28,7 +30,7 @@ import {
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
 import { type Stage, skinVariant } from "./art/building";
-import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
+import { ARCHETYPES, archetypeFor, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { type Ground, tileVariant } from "./art/terrain";
@@ -1203,6 +1205,10 @@ export class TownScene extends Phaser.Scene {
     // above the cap would slide onto the wrong frame. A blank frame is the only
     // way to have no damage without having no child.
     keys.push(this.damageKey(s));
+    // The ground storey's rubble, on the same terms: a child whether or not the
+    // building is damaged, because the child count must not move when a
+    // condition does.
+    keys.push(this.baseDamageKey(s));
     return keys;
   }
 
@@ -1297,8 +1303,9 @@ export class TownScene extends Phaser.Scene {
     // sizes and centres the site itself, so the renderer never has to guess
     // which art a site wants.
     const size = s.w;
-    const keys = [baseFrame(size, "completed", v, false, this.atlasTurn)];
-    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v, this.atlasTurn));
+    const m = materialFor(this.archetypeOf(s));
+    const keys = [baseFrame(size, m, "completed", false, this.atlasTurn)];
+    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, m, "completed", this.atlasTurn));
     keys.push(capFrame(size, this.archetypeOf(s), "completed", this.verifiedOf(s.path), this.atlasTurn));
     return keys;
   }
@@ -1331,11 +1338,17 @@ export class TownScene extends Phaser.Scene {
   }
 
   private baseKey(s: Site): string {
-    return baseFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path), this.atlasTurn);
+    return baseFrame(
+      s.w,
+      materialFor(this.archetypeOf(s)),
+      this.statusOf(s.path),
+      this.damagedOf(s.path),
+      this.atlasTurn,
+    );
   }
 
   private bandKey(s: Site): string {
-    return bandFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.atlasTurn);
+    return bandFrame(s.w, materialFor(this.archetypeOf(s)), this.statusOf(s.path), this.atlasTurn);
   }
 
   /**
@@ -1351,6 +1364,20 @@ export class TownScene extends Phaser.Scene {
     const a = this.archetypeOf(s);
     if (!this.damagedOf(s.path)) return noDamageFrame(s.w, a);
     return damageFrame(s.w, a, this.atlasTurn);
+  }
+
+  /**
+   * baseDamageKey is the rubble on this building's ground storey, or the shared
+   * blank when it is sound.
+   *
+   * Cut from the base's own box for the reason the roof's is: `setFrame` swaps a
+   * texture without moving the sprite, so a mark and the blank that replaces it
+   * have to agree about where they sit.
+   */
+  private baseDamageKey(s: Site): string {
+    const m = materialFor(this.archetypeOf(s));
+    if (!this.damagedOf(s.path)) return noBaseDamageFrame(s.w, m);
+    return baseDamageFrame(s.w, m, this.atlasTurn);
   }
 
   private capKey(s: Site): string {

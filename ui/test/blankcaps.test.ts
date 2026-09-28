@@ -74,7 +74,7 @@ test("every storey and cap resolves at every stage, so the child count cannot dr
         for (const variant of [0, 1] as const) {
           // The ground storey, which is drawn whatever the stage.
           assert.ok(
-            keys.has(baseFrame(side, stage, variant, false, 0)),
+            keys.has(baseFrame(side, "stone", stage, false, 0)),
             `side ${side} ${a} ${stage}: the base has no frame, so this stage would have one fewer child`,
           );
           // And the cap, whether it draws a roof or shares the blank.
@@ -87,7 +87,7 @@ test("every storey and cap resolves at every stage, so the child count cannot dr
         // stage, whatever the stage is.
         for (let i = 1; i < 5; i++) {
           assert.ok(
-            keys.has(bandFrame(side, stage, 0, 0)),
+            keys.has(bandFrame(side, "stone", stage, 0)),
             `side ${side} ${a} ${stage}: a band has no frame, so this stage would have one fewer child`,
           );
         }

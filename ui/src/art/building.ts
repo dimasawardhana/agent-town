@@ -31,7 +31,8 @@ import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight, towerTop } from "./stack";
 import { Pix } from "./surface";
 import {
-  ARCHETYPES, buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath, archetypeFor, archetypeHeight, type Archetype,
+  ARCHETYPES, buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath,
+  archetypeFor, archetypeHeight, material, materialByName, type Archetype, type MaterialName,
 } from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
@@ -428,15 +429,24 @@ function cornerBoards(iso: IsoPix, side: number, skin: BuildingSkin): void {
  * course of the wall's footing; drawing it per storey would put a step at the
  * base of every floor and a tower would gain a ring at each.
  */
+/**
+ * buildBase is a building's ground storey, in the material its archetype is
+ * made of.
+ *
+ * The material comes from the archetype and not from the file count, which is
+ * what changed: a directory's size says how *big* a building is, and the
+ * archetype says what *kind* of thing it is. Sizing the wall off the file
+ * count made every large building stone and every small one plaster whatever
+ * either was called.
+ */
 export function buildBase(
   side: number,
-  files: number,
-  path: string,
+  archetype: Archetype,
   stage: Stage,
   damaged = false,
   turn = 0,
 ): Pix {
-  const skin = skinFor(files, path);
+  const skin = material(archetype);
   // The base's own box, not the whole building's: `buildBase` draws one storey and
   // no roof, so a cel carrying roof headroom would be taller than its contents —
   // and this cel is the tallest on the sheet, which makes its height the sheet's
@@ -478,7 +488,13 @@ export function buildBase(
  * Its height is exactly `STOREY`, and `art/stack.ts` proves a storey is an exact
  * vertical repeat, so stamping this cel up a tower leaves no seam.
  */
-export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn = 0): Pix {
+export function buildBand(
+  side: number,
+  materialName: MaterialName,
+  stage: Stage,
+  turn = 0,
+): Pix {
+  const skin = materialByName(materialName);
   const box = bandBox(side, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   storeyShell(iso, side, skin, stage);
@@ -884,7 +900,7 @@ export function buildBuilding(
 
   // The base is the ground storey: its world origin is z = 0, which is the
   // composite's own origin row, `box.oy`.
-  iso.pix.blit(buildBase(side, files, path, stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
+  iso.pix.blit(buildBase(side, archetypeFor(undefined, path), stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
   // The cap sits on top of one storey, so its base is at z = STOREY. Its cel's
   // origin is already the top of the wall rather than the ground (`capBox` uses the
   // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes
@@ -906,4 +922,22 @@ export function buildShadow(side: number, files: number, path: string, turn = 0)
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   iso.footprint(2, 3, side + 3, side + 3, 0, P.grass[0]);
   return iso.pix;
+}
+
+/**
+ * buildBaseDamageCel is a ground storey's rubble on its own, in a cel of the
+ * base's size and origin.
+ *
+ * Cut from the same box as the base it lands on, for the reason the roof damage
+ * is: `setFrame` moves textures without moving sprites, so a mark and the blank
+ * that replaces it have to agree on where they sit.
+ */
+export function buildBaseDamageCel(side: number, materialName: MaterialName, turn = 0): Pix {
+  const box = baseBox(side, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  // Rubble is a condition, so it is drawn whatever the stage. A plot that is
+  // staked out has nothing to pile against, so the mark waits for the base to
+  // exist — the same reason the roof's hole waits for `roofed`.
+  iso.footprint(Math.round(side * 0.18), Math.round(side * 0.62), Math.max(5, Math.round(side / 6)), Math.max(4, Math.round(side / 8)), 1, P.earth[0]);
+  return iso.outline(P.ink);
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { buildBase, buildBand, buildCap, buildShadow, skinFor, STAGE_ORDER } from "../src/art/building";
-import { ARCHETYPES } from "../src/art/roof";
+import { ARCHETYPES, archetypeFor, materialFor } from "../src/art/roof";
 import { Pix } from "../src/art/surface";
 
 const differs = (a: Pix, b: Pix): boolean => {
@@ -26,12 +26,12 @@ test("measure turn dependence", () => {
       for (const v of [0, 1] as const) {
         const path = v === 0 ? "b" : "a";
         for (const dmg of [false, true]) {
-          const a = buildBase(side, side, path, stage, dmg, 0 as 0);
-          const b = buildBase(side, side, path, stage, dmg, 1 as 1);
+          const a = buildBase(side, archetypeFor(undefined, path), stage, dmg, 0 as 0);
+          const b = buildBase(side, archetypeFor(undefined, path), stage, dmg, 1 as 1);
           bump("base", differs(a, b), !differs(a, b));
         }
-        const ba = buildBand(side, skinFor(side, path), stage, 0 as 0);
-        const bb = buildBand(side, skinFor(side, path), stage, 1 as 1);
+        const ba = buildBand(side, materialFor(archetypeFor(undefined, path)), stage, 0 as 0);
+        const bb = buildBand(side, materialFor(archetypeFor(undefined, path)), stage, 1 as 1);
         bump("band", differs(ba, bb), !differs(ba, bb));
         // The cap answers to the **archetype** now, not the skin variant, so the
         // turn dependence is measured per roof. Measuring it per variant would have

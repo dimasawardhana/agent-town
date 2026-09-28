@@ -117,9 +117,11 @@ remain, and the lesson generalises — the next thing taller than the current
 tallest cel costs about 110 cels however innocent it sounds.
 
 With **eleven** archetypes the atlas holds **956 cels** against that 1296
-ceiling, 340 spare — damage became a mark laid over the cap rather than a variant
-of it, which took the cap family from 704 to 368 and the atlas from 1220. Roads
-add 20 more, leaving 320: **976 cels**. One archetype was cut on the way: a Restaurant whose identity
+ceiling — damage became a mark laid over the cap rather than a variant of it,
+and the body became keyed on **five material families** rather than two skins, so
+a Chapel is stone and a Tower is glass. The atlas holds **1144 cels** against the
+1296 ceiling, 152 spare, and each further archetype costs 40 rather than 40 plus
+a new body. One archetype was cut on the way: a Restaurant whose identity
 was an awning could not be drawn, because a gable's ridge is a *line* and
 anything placed on or across it either straddles the two slopes or floats above
 them. The enclosed-hole invariant caught four attempts. Every other archetype

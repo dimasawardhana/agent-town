@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { ARCHETYPES, archetypeFor, archetypeHeight, type Archetype } from "../src/art/roof";
+import { ARCHETYPES, archetypeFor, archetypeHeight, MATERIALS, type Archetype } from "../src/art/roof";
 import { capBox, buildCap, STAGE_ORDER, stageRank } from "../src/art/building";
 import { capFrame, damageFrame, bakedCels, layoutAtlas } from "../src/art/bake";
 import { ALL_PROP_KINDS } from "../src/art/props";
@@ -101,8 +101,9 @@ test("the atlas still fits after the cutover", () => {
   const stages = STAGE_ORDER.length;
   const preRoof = STAGE_ORDER.filter((s) => stageRank(s) < stageRank("roofed")).length;
   const perFootprint =
-    stages * 2 /* band, per skin */ +
-    stages * 2 * 2 /* base, per skin and damage */ +
+    stages * MATERIALS.length /* band, per material */ +
+    stages * MATERIALS.length /* base, per material */ +
+    MATERIALS.length * 2 /* base rubble and its blank */ +
     preRoof /* the shared blank cap */ +
     (stages - preRoof) * ARCHETYPES.length * 2 /* cap, per archetype and verified */ +
     ARCHETYPES.length * 2 /* a damage mark and its blank, per archetype */ +

@@ -25,9 +25,11 @@ import { Pix } from "./surface";
 import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
 import {
   STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
-  buildRoofDamageCel, emptyDamageCel, skinFor, stageRank, type Stage,
+  buildBaseDamageCel, buildRoofDamageCel, emptyDamageCel, stageRank, type Stage,
 } from "./building";
-import { ARCHETYPES, archetypeFor, type Archetype } from "./roof";
+import {
+  ARCHETYPES, archetypeFor, MATERIALS, type Archetype, type MaterialName,
+} from "./roof";
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, type Edge, type Ground } from "./terrain";
 
@@ -105,14 +107,40 @@ export function groundEdgeFrame(kind: Ground, edge: Edge, variant: number): stri
  * every stage from `framed` upward, so a tower cannot grow new windows as it is
  * finished.
  */
-export function bandFrame(side: number, stage: Stage, variant: 0 | 1, turn = 0): string {
-  return turn === 0 ? `band:${side}:${stage}:${variant}` : `band:${side}:${stage}:${variant}:t${turn}`;
+export function bandFrame(side: number, material: MaterialName, stage: Stage, turn = 0): string {
+  return turn === 0
+    ? `band:${side}:${stage}:${material}`
+    : `band:${side}:${stage}:${material}:t${turn}`;
+}
+
+/**
+ * Frame name for a ground storey's rubble, laid over the base.
+ *
+ * The same move the roof damage made: a condition is a mark, not a variant of
+ * the picture it lands on. A damaged base is the base plus rubble, and the
+ * rubble is one thing per material per footprint rather than one per stage.
+ */
+export function baseDamageFrame(side: number, material: MaterialName, turn = 0): string {
+  const base = `bdmg:${side}:${material}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/** The blank an undamaged ground storey carries in place of rubble, cut from
+ *  the same box so `setFrame` cannot move the rubble when it swaps. */
+export function noBaseDamageFrame(side: number, material: MaterialName): string {
+  return `bdmg:none:${side}:${material}`;
 }
 
 /** Frame name for a building's base: the ground works, the ground storey's
  *  shell, the door and plinth, and the damage visible from the ground. */
-export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean, turn = 0): string {
-  const base = `base:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+export function baseFrame(
+  side: number,
+  material: MaterialName,
+  stage: Stage,
+  damaged: boolean,
+  turn = 0,
+): string {
+  const base = `base:${side}:${stage}:${material}${damaged ? ":dmg" : ""}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
@@ -284,33 +312,44 @@ export function bakedCels(turn = 0): BakedCel[] {
     const footBox = baseBox(side);
     const storeyBox = bandBox(side);
 
-    for (const variant of [0, 1] as const) {
-      // A path whose hash lands on `variant`. `skinFor` reads only the parity,
-      // so any such path yields the same skin; these two are the shortest that
-      // do, which keeps the bake free of made-up filenames that look real.
-      const path = variant === 0 ? "b" : "a";
-      const skin = skinFor(files, path);
+    // Over the five material families rather than the two skins this used to
+    // carry. A band is one storey of wall, so a whole tower is one cel per
+    // material — the axis is priced by the families, not by the archetypes,
+    // which is what makes eleven archetypes' worth of roofs affordable on top.
+    for (const m of MATERIALS) {
       for (const stage of STAGE_ORDER) {
         cels.push({
-          key: bandFrame(side, stage, variant, turn),
-          pix: buildBand(side, skin, stage, turn),
+          key: bandFrame(side, m, stage, turn),
+          pix: buildBand(side, m, stage, turn),
           ox: storeyBox.ox,
           oy: storeyBox.oy,
         });
-        // Damage is baked for the base and the cap but NOT the band, and that
-        // falls out of where damage is drawn rather than being a saving: rubble
-        // and the crack belong to the ground storey, the hole to the roof, and
-        // both of those are single cels. A tower of twenty storeys therefore
-        // carries no extra frames for being damaged.
-        for (const damaged of [false, true]) {
-          cels.push({
-            key: baseFrame(side, stage, variant, damaged, turn),
-            pix: buildBase(side, files, path, stage, damaged, turn),
-            ox: footBox.ox,
-            oy: footBox.oy,
-          });
-        }
+        cels.push({
+          key: baseFrame(side, m, stage, false, turn),
+          pix: buildBase(side, archetypeFor(m, `mat/${m}`), stage, false, turn),
+          ox: footBox.ox,
+          oy: footBox.oy,
+        });
       }
+    }
+
+    // The base's rubble, as an overlay for the same reason the roof's is: a
+    // condition is a mark, not a variant of the picture it lands on. Cut from
+    // the base's own box so `setFrame` cannot move the rubble when it swaps.
+    for (const m of MATERIALS) {
+      const rubble = buildBaseDamageCel(side, m, turn);
+      cels.push({
+        key: baseDamageFrame(side, m, turn),
+        pix: rubble,
+        ox: footBox.ox,
+        oy: footBox.oy,
+      });
+      cels.push({
+        key: noBaseDamageFrame(side, m),
+        pix: new Pix(footBox.w, footBox.h),
+        ox: footBox.ox,
+        oy: footBox.oy,
+      });
     }
 
     // The caps. Outside the skin loop because a cap no longer depends on the

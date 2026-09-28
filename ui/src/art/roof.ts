@@ -1133,3 +1133,82 @@ export function buildRoofFlag(iso: IsoPix, kind: Archetype, side: number, eave: 
 export function buildRoofDamage(iso: IsoPix, kind: Archetype, side: number, eave: number): void {
   KITS[kind].damage(iso, side, eave + archetypeHeight(kind, side));
 }
+
+/**
+ * A material family: what a building is *made of*, below the roof.
+ *
+ * Five, not eleven, and the reason is the atlas rather than taste. A body per
+ * archetype would be eleven bases and eleven bands — 704 cels, and a total of
+ * 1632 against a ceiling of 1408. Five families fit with room to spare, and they
+ * read better than eleven would have: eleven bodies differing only at the ground
+ * floor, under a shared band, look like one building wearing different hats.
+ * Five coherent materials give the whole building a single read, and the eleven
+ * roofs still tell the archetypes apart on top of that.
+ *
+ * Base and band draw from the *same* family, deliberately. A concrete base under
+ * plaster upper floors is two buildings sharing a plot, and it is the failure
+ * this axis exists to prevent.
+ */
+export interface Material {
+  wall: Ramp;
+  /** Whether the walls are exposed framed timber rather than rendered. */
+  framed: boolean;
+  /** The ground storey's own treatment, distinct from the walls above it. */
+  base: Ramp;
+}
+
+export const MATERIALS = ["stone", "render", "glass", "timber", "concrete"] as const;
+export type MaterialName = (typeof MATERIALS)[number];
+
+/**
+ * The material each archetype is built of.
+ *
+ * A total mapping, deliberately, and that is the point: an archetype with no
+ * material would fall back to a hash and become indistinguishable from a
+ * different archetype that happened to land on the same fallback. Every name
+ * here is a claim about what that kind of place is made of.
+ */
+const MATERIAL_OF: Record<Archetype, MaterialName> = {
+  tenement: "render",
+  works: "concrete",
+  cottage: "timber",
+  hall: "concrete",
+  library: "stone",
+  stadium: "concrete",
+  hospital: "render",
+  chapel: "stone",
+  tower: "glass",
+  market: "timber",
+  school: "stone",
+};
+
+/** What each family is made of, in one place. */
+const MATERIALS_BY_NAME: Record<MaterialName, Material> = {
+  // Five distinct ramps, and that is load-bearing rather than tidiness: two
+  // families sharing a ramp draw identical walls, and a test that catches it
+  // is the only reason this table did not ship with stone and concrete both on
+  // `P.stone`, which is what it started as.
+  stone: { wall: P.stone, framed: false, base: P.stone },
+  render: { wall: P.plaster, framed: false, base: P.plaster },
+  glass: { wall: P.glass, framed: false, base: P.metal },
+  timber: { wall: P.wood, framed: true, base: P.wood },
+  // Metal rather than stone: concrete and stone are both grey, and `metal` is
+  // the ramp that separates them at a glance — flat and industrial where stone
+  // reads as cut blocks.
+  concrete: { wall: P.metal, framed: false, base: P.metal },
+};
+
+/** materialFor is the family an archetype is built of. */
+export function materialFor(archetype: Archetype): MaterialName {
+  return MATERIAL_OF[archetype];
+}
+
+/** material is the family a building draws its body from. */
+export function material(archetype: Archetype): Material {
+  return MATERIALS_BY_NAME[MATERIAL_OF[archetype]];
+}
+
+/** materialByName is one family by name, for the bake's loops. */
+export function materialByName(name: MaterialName): Material {
+  return MATERIALS_BY_NAME[name];
+}
