@@ -23,6 +23,7 @@
 import Phaser from "phaser";
 import { CREW_COLOURS } from "./art/palette";
 import { ATLAS, type Atlas, workerFrame } from "./art/bake";
+import { routeAlongRoads, type RoadLine } from "./view";
 import { FRAME_MS, type Tier, type WorkerState } from "./art/worker";
 import { PLACARD, placard } from "./art/placard";
 import { actionInfo, targetOf } from "./actions";
@@ -98,10 +99,36 @@ const WALK_CYCLE_MS = FRAME_MS.walk.reduce((a, b) => a + b, 0);
  * skate.
  */
 interface Journey {
+  /** The polyline walked, in picture pixels. One straight leg when there is
+   *  nowhere to detour. */
+  path: { x: number; y: number }[];
   x1: number;
   y1: number;
   ms: number;
   startedAt: number;
+}
+
+/** The total length of a polyline, which is what a walk cycle is timed from. */
+function pathLength(path: { x: number; y: number }[]): number {
+  let d = 0;
+  for (let i = 1; i < path.length; i++) d += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  return d;
+}
+
+/** The point a fraction of the way along a polyline. */
+function pointAlong(path: { x: number; y: number }[], t: number): { x: number; y: number } {
+  const total = pathLength(path);
+  if (total <= 0 || path.length < 2) return path[path.length - 1];
+  let want = total * Math.max(0, Math.min(1, t));
+  for (let i = 1; i < path.length; i++) {
+    const leg = Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+    if (want <= leg || i === path.length - 1) {
+      const f = leg <= 0 ? 1 : want / leg;
+      return { x: path[i - 1].x + (path[i].x - path[i - 1].x) * f, y: path[i - 1].y + (path[i].y - path[i - 1].y) * f };
+    }
+    want -= leg;
+  }
+  return path[path.length - 1];
 }
 
 /** Where a figure is in its current animation. */
@@ -170,8 +197,23 @@ export class WorkerLayer {
   private captions = new Map<string, { text: Phaser.GameObjects.Image; label: string }>();
   /** One transparent target per figure, so it can be pointed at over a building. */
   private hitZones = new Map<string, Phaser.GameObjects.Zone>();
+  /**
+   * The road network, in picture pixels, so a figure can be routed along it.
+   *
+   * Kept here rather than asked of the scene per journey because a live town
+   * re-routes on every event, and reaching into the scene for the same static
+   * geometry each time would be a lookup per event for a thing that never
+   * changes until the layout does.
+   */
+  private roads: RoadLine[] = [];
   private travel = new Map<string, Journey>();
   private disposed = false;
+
+  /** setRoads gives the layer the network to route along. Called when the map
+   *  is (re)drawn, so a turn re-routes figures against the turned roads. */
+  setRoads(roads: RoadLine[]): void {
+    this.roads = roads;
+  }
 
   constructor(scene: Phaser.Scene, _atlasKey: string, atlas: Atlas, dragged: () => boolean) {
     this.scene = scene;
@@ -392,32 +434,52 @@ export class WorkerLayer {
     }
 
     // The journey's duration and its walk-cycle count are decided together, so
+    // Walk the roads rather than the line between two points. A figure that
+    // crosses the grass ignores the ground the map says is there, and a road
+    // nobody travels is a road that is only decoration.
+    const path = routeAlongRoads({ x: sprite.x, y: sprite.y }, to, this.roads);
+    const walked = pathLength(path);
+
     // the feet plant at a plausible rate for the distance travelled.
-    const cycles = Math.min(MAX_CYCLES, Math.max(1, Math.round(distance / STRIDE_PX)));
-    this.travel.set(w.id, {
-      x1: to.x,
-      y1: to.y,
-      ms: Math.max(MIN_TRAVEL_MS, cycles * WALK_CYCLE_MS),
-      startedAt: sprite.scene.time.now,
-    });
+    const cycles = Math.min(MAX_CYCLES, Math.max(1, Math.round(walked / STRIDE_PX)));
+    const ms = Math.max(MIN_TRAVEL_MS, cycles * WALK_CYCLE_MS);
+    this.travel.set(w.id, { path, x1: to.x, y1: to.y, ms, startedAt: sprite.scene.time.now });
 
     // Face the direction of travel. A mirrored cel is how a 16-bit figure turns
     // around: at this size an authored left-facing set would be
     // indistinguishable and would double the art for nothing.
     sprite.setFlipX(to.x < sprite.x);
 
-    this.scene.tweens.add({
-      targets: sprite,
-      x: to.x,
-      y: to.y,
-      duration: this.travel.get(w.id)!.ms,
-      ease: "Linear",
-      onUpdate: () => this.syncVisual(w.id),
-      onComplete: () => {
-        this.travel.delete(w.id);
-        this.syncVisual(w.id);
-      },
-    });
+    // The position is advanced by hand rather than by a tween on x and y,
+    // because a tween walks a straight line and this walks a polyline. The
+    // walk cycle is driven off the same progress, so feet plant at the same
+    // rate on a long road as on a short one.
+    const started = sprite.scene.time.now;
+    this.scene.events.on(`update`, this.stepper(w.id, started, ms));
+  }
+
+  /**
+   * stepper advances one figure along its route.
+   *
+   * Bound per journey rather than a single sweep, so a figure whose route
+   * changes mid-walk is not advanced by a stale closure: the journey is read
+   * back from the map on every tick, and a figure with no journey is left
+   * alone.
+   */
+  private stepper(id: string, startedAt: number, ms: number): () => void {
+    return () => {
+      const j = this.travel.get(id);
+      const sprite = this.sprites.get(id);
+      if (!j || !sprite) return;
+      const t = Math.min(1, (sprite.scene.time.now - startedAt) / ms);
+      const p = pointAlong(j.path, t);
+      sprite.setPosition(p.x, p.y);
+      this.syncVisual(id);
+      if (t >= 1) {
+        this.travel.delete(id);
+        this.syncVisual(id);
+      }
+    };
   }
 
   /** syncVisual keeps a figure's depth, shadow, tag and caption together while
@@ -606,3 +668,4 @@ function crewTint(agent: string): number {
   // rather than being a second colour scheme for the same fact.
   return Number.parseInt(hex.slice(1), 16);
 }
+

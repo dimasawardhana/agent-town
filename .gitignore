@@ -25,3 +25,4 @@ ui-damage.test.mjs
 ui-roads.test.mjs
 ui-turnroads.test.mjs
 ui-materials.test.mjs
+ui-routing.test.mjs

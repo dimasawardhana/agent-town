@@ -256,3 +256,186 @@ export function turnLayout<S extends WorldRect, D extends WorldRect, R extends W
     height: whole.h,
   };
 }
+
+/**
+ * routeAlongRoads is the way a figure walks from one point to another: along
+ * the roads where there are roads, and in a straight line where there are not.
+ *
+ * A straight line between two buildings cuts diagonally across whatever lies
+ * between them, and in a town whose roads had only just been given geometry
+ * that makes the roads scenery. Routing through them is what makes a road a
+ * road — and it is honest, because a figure taking the road is a figure
+ * behaving the way the map says the ground is laid out.
+ *
+ * The route is a short polyline rather than a solved path. Three points — the
+ * figure, the point where it joins the road, the point where it leaves — is what
+ * this geometry actually needs: the row roads span the town's width, so any two
+ * of them are already connected by walking along one of them, and a containment
+ * link joins exactly the two buildings it was emitted for.
+ *
+ * Returns `[from, to]` unchanged when no road is anywhere near either end,
+ * which is the common case for a figure working inside one plot, and is the
+ * reason an empty network must not bend anything.
+ */
+export function routeAlongRoads(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  roads: readonly RoadLine[],
+): { x: number; y: number }[] {
+  if (roads.length === 0) return [from, to];
+
+  const enter = nearestOnRoad(from, roads);
+  const leave = nearestOnRoad(to, roads);
+  if (!enter || !leave) return [from, to];
+
+  // Same road at both ends: meet it, follow it, step off. The two entry points
+  // are ordered along the road's long axis so the figure walks the road rather
+  // than doubling back over it.
+  const road = enter.road;
+  const points = [from, enter.point, leave.point, to];
+
+  if (enter.road === leave.road) {
+    if (alongRoad(enter.point, leave.point, road) > 0) {
+      points[1] = leave.point;
+      points[2] = enter.point;
+    }
+  } else {
+    // Different roads. The gap between them is bridged by the pair of points
+    // that already come closest together, which for this geometry is the point
+    // on each road nearest the other road's centre line.
+    const bridge = closestPair(enter.road, leave.road);
+    if (bridge) points.splice(2, 1, bridge.a, bridge.b);
+  }
+
+  return dedupe(points);
+}
+
+/** Where `p` sits relative to a road's own extent, used to order two points. */
+function alongRoad(a: { x: number; y: number }, b: { x: number; y: number }, r: RoadLine): number {
+  // Signed position along the line's own direction, so two points can be
+  // ordered by which the figure reaches first.
+  const len = Math.hypot(r.bx - r.ax, r.by - r.ay) || 1;
+  const ux = (r.bx - r.ax) / len;
+  const uy = (r.by - r.ay) / len;
+  return (a.x - b.x) * ux + (a.y - b.y) * uy;
+}
+
+/** The point on whichever road is nearest to `p`, and which road that was. */
+function nearestOnRoad(
+  p: { x: number; y: number },
+  roads: readonly RoadLine[],
+): { point: { x: number; y: number }; road: RoadLine } | null {
+  let best: { point: { x: number; y: number }; road: RoadLine } | null = null;
+  let bestD = Infinity;
+  for (const r of roads) {
+    const q = nearestOnSegment(p, r);
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    if (d < bestD) {
+      bestD = d;
+      best = { point: q, road: r };
+    }
+  }
+  return best;
+}
+
+/** The middle of a road's centre line. */
+function centre(r: RoadLine): { x: number; y: number } {
+  return { x: (r.ax + r.bx) / 2, y: (r.ay + r.by) / 2 };
+}
+
+/** The point on a road's centre line nearest to `p`, by projection onto it. */
+function nearestOnSegment(p: { x: number; y: number }, r: RoadLine): { x: number; y: number } {
+  const dx = r.bx - r.ax;
+  const dy = r.by - r.ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 0) return { x: r.ax, y: r.ay };
+  const t = clamp(((p.x - r.ax) * dx + (p.y - r.ay) * dy) / len2, 0, 1);
+  return { x: r.ax + dx * t, y: r.ay + dy * t };
+}
+
+/** The closest pair of points, one on each road, for bridging a gap. */
+function closestPair(
+  a: RoadLine,
+  b: RoadLine,
+): { a: { x: number; y: number }; b: { x: number; y: number } } {
+  // Each road's point nearest the other's middle, which for this geometry is
+  // where a figure stepping off one would step onto the other.
+  const pa = nearestOnSegment(centre(b), a);
+  const pb = nearestOnSegment(centre(a), b);
+  return { a: pa, b: pb };
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Drops repeated and zero-length points, which a figure cannot walk. */
+function dedupe(points: { x: number; y: number }[]): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.5) out.push(p);
+  }
+  return out.length >= 2 ? out : [points[0], points[points.length - 1]];
+}
+
+/**
+ * A road as a line you can walk, in picture pixels.
+ *
+ * A road arrives from the layout as an axis-aligned rectangle in *world* space,
+ * and the projection is isometric, so a rectangle does not project to a
+ * rectangle. Taking the bounding box of its four projected corners would give a
+ * parallelogram's box — which is larger than the road, and a figure routed onto
+ * its corner would be standing on the grass beside the tarmac.
+ *
+ * So a road is reduced to what it is for: the line down its middle, with a width
+ * so "am I on the road" can still be asked. The four corners are still projected
+ * and averaged to find the centre, so the line lands where the road actually is
+ * rather than where the un-projected rectangle was.
+ */
+export interface RoadLine {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  /** Half the road's width in picture pixels. */
+  halfWidth: number;
+}
+
+/**
+ * roadsAsLines projects a layout's roads into the picture.
+ *
+ * `project` is the same function the scene uses for everything else, supplied
+ * rather than imported so this module stays free of the scene and the test
+ * stays free of Phaser.
+ */
+export function roadsAsLines(
+  roads: readonly { x: number; y: number; w: number; h: number }[],
+  project: (x: number, y: number) => { x: number; y: number },
+): RoadLine[] {
+  const out: RoadLine[] = [];
+  for (const r of roads) {
+    const x0 = r.x;
+    const y0 = r.y;
+    const x1 = r.x + r.w;
+    const y1 = r.y + r.h;
+    // The centre, found from the four projected corners rather than by
+    // projecting the centre directly — the projection is linear, so those agree,
+    // but averaging is the form that stays right if it ever stops being.
+    const c = [
+      project(x0, y0),
+      project(x1, y0),
+      project(x0, y1),
+      project(x1, y1),
+    ];
+    const cx = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
+    const cy = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
+    // Along the long axis, which is the direction the road runs.
+    const horizontal = r.w >= r.h;
+    const end = horizontal
+      ? project(x0 + r.w / 2, y0)
+      : project(x0, y0 + r.h / 2);
+    out.push({ ax: cx, ay: cy, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.w : r.h) / 2) });
+  }
+  return out;
+}

@@ -28,7 +28,7 @@ import {
   groundEdgeFrame,
   propFrame,
 } from "./art/bake";
-import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
+import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { type Stage, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
@@ -281,6 +281,10 @@ export class TownScene extends Phaser.Scene {
 
     this.workers?.destroy();
     this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
+    // After the layer is built, because the draw rebuilds it: set beforehand and
+    // it is wiped before a single figure has moved, which is exactly the symptom
+    // of a figure crossing grass with a road network already on screen.
+    this.workers.setRoads(roadsAsLines(layout.roads ?? [], (x, y) => this.project(x, y)));
     this.syncLive();
 
     const b = this.worldBounds(layout);
