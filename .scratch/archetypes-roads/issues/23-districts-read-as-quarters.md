@@ -53,3 +53,39 @@ narrower than the narrowest cel no matter how large it is drawn.
 The crane's raised mast drew 3px onto its own cel border in the `done` pose —
 the box was sized to a static height and the raised pose is taller. `TALL` is now
 sized for the tallest pose rather than the typical one.
+
+## Comments
+
+### The bug in the first version of this ticket
+
+The roads were emitted at *placement*, sized by the block just laid. That is
+right only when the two blocks are the same height, **and districts are not the
+same height**. On this repository `ui` is 284 tall and `internal` is 356, so the
+road between them stopped 72 units short and left the bottom of `internal`
+standing beside bare grass — a stub, not a road.
+
+A road is a street: it crosses the row, so it is as long as the row is deep.
+Emission is now deferred to the end of the row, where the height is final.
+
+Two smaller things the same change exposed:
+
+- **`rowTop` was never seeded.** The first row never wraps, so its top was 0 and
+  every road on it began 238 units above the districts it separated — off the map
+  entirely. Seeded from `y`.
+- **A trailing road past the last district**, leading to nothing. It read as a
+  road *to somewhere* rather than as the end of the town, which is the same
+  claim an unresolvable import refuses to make.
+
+And one regression: routing the wrap band through the district flush had made the
+`row` kind **dead**, and a test that expected a row road on a wrapping tree
+caught it. The two kinds are genuinely different — one runs between rows across
+the full width of the map, the other runs between districts down the depth of one
+row — so both are emitted again.
+
+### The tests
+
+- `TestDistrictRoadsSpanTheWholeRow` — a road reaches its row's floor. Reverting
+  to the old sizing fails it.
+- `TestNoRoadLeadsOffTheEndOfTheTown` — nothing past the last district.
+- Reintroducing the old height fails the first; seeding `rowTop` back to 0 fails
+  it on the row check. Both verified by mutation, not by inspection.

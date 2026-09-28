@@ -1126,3 +1126,85 @@ func TestCommentedImportIsNotARoad(t *testing.T) {
 		t.Errorf("import roads = %d, want 1 (the real TypeScript import only); a commented-out import was read as a dependency", n)
 	}
 }
+
+// A road between two districts runs the full height of the row it crosses.
+//
+// The first version emitted a road at *placement*, sized by the block just laid.
+// That is right only when the two blocks are the same height, and districts are
+// not — a 284-tall district beside a 356-tall one left 72 units of the taller
+// block standing beside bare grass, which is a stub rather than a road. A road is
+// a street: it crosses the row, so it is as long as the row is deep.
+func TestDistrictRoadsSpanTheWholeRow(t *testing.T) {
+	// Deliberately unequal: one district with few buildings, one with many, so
+	// the blocks cannot come out the same size by accident.
+	root := t.TempDir()
+	for name, spec := range map[string][2]int{
+		"src/a": {1, 1}, "src/b": {1, 2}, "src/c": {1, 1}, "src/d": {1, 1},
+		"web/a": {1, 1}, "web/b": {1, 2}, "web/c": {1, 3}, "web/d": {1, 1}, "web/e": {1, 1},
+	} {
+		nb, files := spec[0], spec[1]
+		for i := 0; i < nb; i++ {
+			dir := filepath.Join(root, name, "b"+itoa(i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for f := 0; f < files; f++ {
+				if err := os.WriteFile(filepath.Join(dir, "f"+itoa(f)+".ts"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	l := layoutOf(t, root)
+
+	var deepest, shallowest float64
+	for _, d := range l.Districts {
+		if b := d.Y + d.H; b > deepest {
+			deepest = b
+		}
+		if d.Y+d.H < shallowest || shallowest == 0 {
+			shallowest = d.Y + d.H
+		}
+	}
+	if deepest == shallowest {
+		t.Skip("the two districts came out the same height; nothing to prove here")
+	}
+
+	rows := map[float64]bool{}
+	for _, d := range l.Districts {
+		rows[d.Y] = true
+	}
+	for _, r := range l.Roads {
+		if r.Kind != "district" {
+			continue
+		}
+		// Every road shares a row with districts and reaches that row's floor.
+		if !rows[r.Y] {
+			t.Errorf("road at y=%.0f starts on no district's row", r.Y)
+		}
+		if r.Y+r.H < deepest-rowGap {
+			t.Errorf("road x=%.0f stops at y=%.0f, short of the row's deepest block at %.0f", r.X, r.Y+r.H, deepest-rowGap)
+		}
+	}
+}
+
+// A road past the last district runs off the map to nothing.
+//
+// It read as a road *to somewhere* rather than as the end of the town, which is a
+// claim the layout cannot support — the same reason an unresolvable import draws
+// nothing.
+func TestNoRoadLeadsOffTheEndOfTheTown(t *testing.T) {
+	root := tree(t, map[string][2]int{"src": {2, 3}, "web": {2, 3}, "docs": {1, 2}})
+	l := layoutOf(t, root)
+	rightmost := 0.0
+	for _, d := range l.Districts {
+		if r := d.X + d.W; r > rightmost {
+			rightmost = r
+		}
+	}
+	for _, r := range l.Roads {
+		if r.Kind == "district" && r.X >= rightmost {
+			t.Errorf("road at x=%.0f lies past the last district's edge at %.0f", r.X, rightmost)
+		}
+	}
+}
