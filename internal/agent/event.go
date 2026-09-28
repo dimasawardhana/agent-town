@@ -25,5 +25,8 @@ type UnifiedAgentEvent struct {
 	Tool      string        `json:"tool"`
 	Target    UnifiedTarget `json:"target"`
 	Result    string        `json:"result"`
-	Timestamp int64         `json:"timestamp"`
+	// Output is what the tool printed. Sent by newer agents and empty by older
+	// ones, which is why nothing may depend on it being present.
+	Output    string `json:"output,omitempty"`
+	Timestamp int64  `json:"timestamp"`
 }

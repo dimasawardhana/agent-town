@@ -556,12 +556,12 @@ func TestSeedStatusNeverClaimsAFinishingTrade(t *testing.T) {
 func TestSeedingDoesNotMakeAnEventAdvanceTwoRanks(t *testing.T) {
 	for _, start := range AllStatuses()[:5] { // the structural half
 		for _, a := range []Action{ActionBuild, ActionHammer, ActionTest} {
-			next, advanced := advanceBy(start, a)
+			next, advanced := advanceBy(start, a, false)
 			if !advanced {
 				continue
 			}
 			if got := rank(next) - rank(start); got != 1 {
-				t.Errorf("advanceBy(%q, %q) moved %d ranks, want 1", start, a, got)
+				t.Errorf("advanceByB(%q, %q) moved %d ranks, want 1", start, a, got)
 			}
 		}
 	}
@@ -1020,5 +1020,125 @@ func TestVerifiedIsOnTheWire(t *testing.T) {
 	}
 	if !*got.Buildings[0].Verified {
 		t.Error("verified is on the wire but false for a building that just passed")
+	}
+}
+
+// A whole-repo run names no building of its own, so the building that broke has
+// to come out of the output. This is the case that motivated the whole feature:
+// before it, the damage landed in the Yard and no building was ever marked.
+func TestAWholeRepoRunDamagesTheBuildingThatFailed(t *testing.T) {
+	tw := liveTown(t, "internal/town/a.go", "internal/analyzer/b.go")
+
+	// `go test ./...` targets the repository, so the event names no directory.
+	tw.Apply(agent.UnifiedAgentEvent{
+		ID: "e1", SessionID: "s1", Agent: "omp", Type: "COMMAND_COMPLETED",
+		Tool:   "bash",
+		Target: agent.UnifiedTarget{Command: "go test ./..."},
+		Result: "error",
+		Output: "ok  \t…/internal/town\t0.358s\n--- FAIL: T (0.00s)\nFAIL\n" +
+			"FAIL\tgithub.com/dimasajiwardhana/agent-town/internal/analyzer\t0.336s\n" +
+			"ok  \t…/internal/registry\t0.015s\n",
+	})
+
+	damaged := map[string]bool{}
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Damaged {
+			damaged[b.Path] = true
+		}
+	}
+	if !damaged["internal/analyzer"] {
+		t.Errorf("the building that failed was not marked; damaged = %v", damaged)
+	}
+	if damaged["internal/town"] {
+		t.Error("a building that passed was marked damaged; the output named one package and it was not this one")
+	}
+}
+
+// Output the parser cannot read damages nobody, and falls back to the command's
+// own building. A whole-repo run landing in the Yard is the old behaviour and
+// is survivable; damaging a building nobody said had failed is not.
+func TestUnreadableTestOutputDamagesNobodyElse(t *testing.T) {
+	tw := liveTown(t, "src/a.go")
+	tw.Apply(agent.UnifiedAgentEvent{
+		ID: "e1", SessionID: "s1", Agent: "omp", Type: "COMMAND_COMPLETED",
+		Tool:   "bash",
+		Target: agent.UnifiedTarget{Path: "src/a.go", Command: "go test ./..."},
+		Result: "error",
+		Output: "X deliberate (1.4ms)\nX failing tests:\n", // a runner we do not read
+	})
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Path == "src" && b.Damaged {
+			t.Error("a command that named no building and printed unreadable output damaged one anyway")
+		}
+	}
+}
+
+// A package that is not a building in this town is dropped rather than filed
+// somewhere convenient.
+func TestAFailingPackageOutsideTheTownIsDropped(t *testing.T) {
+	tw := liveTown(t, "src/a.go")
+	tw.Apply(agent.UnifiedAgentEvent{
+		ID: "e1", SessionID: "s1", Agent: "omp", Type: "COMMAND_COMPLETED",
+		Tool:   "bash",
+		Target: agent.UnifiedTarget{Command: "go test ./..."},
+		Result: "error",
+		Output: "FAIL\tgithub.com/other/repo/elsewhere\t0.336s\n",
+	})
+	// The event named no building, so the fallback damages nothing either.
+	for _, b := range tw.Snapshot().Buildings {
+		if b.Damaged {
+			t.Errorf("%s was damaged by a failure in another repository", b.Path)
+		}
+	}
+}
+
+// `go test -run TestNoSuchTest` exits 0 and prints `[no tests to run]`. Before
+// this, three of those in a row carried a building from `roofed` to `completed`
+// while running no test at all — the ladder claiming a finish that never
+// happened, which is the one thing this project is not allowed to do.
+func TestAVacuousTestRunDoesNotFinishABuilding(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+
+	// Climb to `roofed` with edits, which is where the finishing ranks start.
+	for range 4 {
+		tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	}
+	before := tw.Snapshot().Buildings[0].Status
+	if before != StatusRoofed {
+		t.Fatalf("fixture is at %q, want roofed", before)
+	}
+
+	for range 3 {
+		tw.Apply(agent.UnifiedAgentEvent{
+			ID: "t", SessionID: "s1", Agent: "omp", Type: "COMMAND_COMPLETED",
+			Tool:   "bash",
+			Target: agent.UnifiedTarget{Path: "src", Command: "go test -run TestNoSuchTest ./src"},
+			Result: "success",
+			Output: "ok  \t…/src\t0.002s [no tests to run]\n",
+		})
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusRoofed {
+		t.Errorf("three runs that tested nothing moved the building to %q", got)
+	}
+}
+
+// A real pass still finishes, because the guard is about *evidence* and not
+// about test runs in general.
+func TestAGenuineTestRunStillFinishesABuilding(t *testing.T) {
+	tw := liveTown(t, "src/a.ts")
+	for range 4 {
+		tw.Apply(ev("s1", "edit", "src/a.ts", "success"))
+	}
+	for range 3 {
+		tw.Apply(agent.UnifiedAgentEvent{
+			ID: "t", SessionID: "s1", Agent: "omp", Type: "COMMAND_COMPLETED",
+			Tool:   "bash",
+			Target: agent.UnifiedTarget{Path: "src", Command: "go test ./src"},
+			Result: "success",
+			Output: "ok  \t…/src\t0.031s\n",
+		})
+	}
+	if got := tw.Snapshot().Buildings[0].Status; got != StatusCompleted {
+		t.Errorf("a building with three real passing runs is at %q, want completed", got)
 	}
 }

@@ -1,6 +1,7 @@
 package town
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -146,7 +147,7 @@ func nextAfter(s Status) Status {
 // shape that broke before: it meant a single edit jumped a building to a fully
 // framed one, and a later test could never apply because tests ranked lower
 // than construction.
-func advanceBy(s Status, a Action) (Status, bool) {
+func advanceBy(s Status, a Action, vacuousRun bool) (Status, bool) {
 	switch a {
 	case ActionBuild, ActionHammer:
 		// Structure: four ranks, raised one at a time by making changes.
@@ -159,6 +160,14 @@ func advanceBy(s Status, a Action) (Status, bool) {
 		// a time. A test on an unfinished building therefore does not glaze a
 		// roofless one; it simply cannot advance it.
 		if rank(s) < rank(StatusRoofed) {
+			return s, false
+		}
+		// A run that matched no tests is not a pass. `go test -run
+		// TestNoSuchTest` exits 0 and prints `[no tests to run]`, and three of
+		// those in a row would carry a building from `roofed` to `completed`
+		// while running nothing at all — the map claiming a finish that never
+		// happened.
+		if vacuousRun {
 			return s, false
 		}
 		return nextAfter(s), true
@@ -282,6 +291,16 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 	w.Label = ev.Tool
 	w.Since = ev.Timestamp
 
+	// A test run that named no building can still name the buildings it broke,
+	// and this runs *before* the building guard below — a whole-repo run targets
+	// the Yard, so the code that damages "the building the command named" is
+	// exactly the code a whole-repo run never reaches. That is the bug this
+	// feature exists to fix, and putting the call here rather than inside that
+	// block is the fix.
+	if ev.Result == "error" {
+		t.damageFromTestOutput(ev)
+	}
+
 	// Work on a building moves it up the ladder, or damages it. It is never
 	// moved back down: a building keeps the progress it earned (ADR-0004).
 	if c.Place == analyzer.PlaceBuilding && c.Path != "" {
@@ -298,6 +317,15 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 		b.Updated = ev.Timestamp
 
 		if ev.Result == "error" {
+			// A whole-repo test run names no building of its own, so the
+			// building that actually broke has to come out of the output. The
+			// parser is the honest one: it reads only what `go test` prints
+			// as an attribution, and anything it cannot read names nobody.
+			//
+			// When it *can* read it, the damage lands there instead of on
+			// whatever the command happened to name, and the command's own
+			// building — the Yard for a whole-repo run — is left alone rather
+			// than being marked for a failure it did not have.
 			// A failure is damage, never a stage. Problems is the running count
 			// of them, which is history and is never cleared; Damaged is the
 			// current condition, which a later success repairs. Keeping one
@@ -337,7 +365,13 @@ func (t *Town) Apply(ev agent.UnifiedAgentEvent) *Worker {
 			// At most one rank per event, so the ladder is climbed part by part
 			// and never skipped. Reads, shell commands and planning events
 			// cannot advance it at all.
-			if next, advanced := advanceBy(b.Status, c.Action); advanced {
+			// A test run that matched nothing is not evidence, and neither is a
+			// failure that named no building we can read.
+			vacuous := false
+			if c.Action == ActionTest && ev.Output != "" {
+				vacuous = agent.ParseGoTest(ev.Output).Vacuous
+			}
+			if next, advanced := advanceBy(b.Status, c.Action, vacuous); advanced {
 				b.Status = next
 			}
 		}
@@ -414,4 +448,57 @@ func (t *Town) Snapshot() Snapshot {
 	copy(events, t.events)
 
 	return Snapshot{Workers: workers, Buildings: buildings, Events: events}
+}
+
+// damageFromTestOutput marks the buildings a test run actually broke, and
+// reports whether it managed to.
+//
+// It returns false when the run named nobody — a pass, a runner the parser does
+// not read, or a package that is not a building in this town. The caller then
+// falls back to damaging whatever the command named, which is the old
+// behaviour and is right for a scoped run.
+//
+// The refusals are the feature. A whole-repo run that prints output this cannot
+// read damages nobody, because the alternative is damaging the Yard or, worse,
+// some building a guess picked. A missing attribution is an absence; a wrong one
+// is a lie.
+func (t *Town) damageFromTestOutput(ev agent.UnifiedAgentEvent) bool {
+	if ev.Output == "" {
+		return false
+	}
+	run := agent.ParseGoTest(ev.Output)
+	if len(run.Packages) == 0 {
+		return false
+	}
+	marked := false
+	for _, pkg := range run.Packages {
+		if b := t.buildingForPackage(pkg); b != nil {
+			b.Problems++
+			b.Damaged = true
+			// A test that fails is exactly the evidence that withdraws a
+			// building's standing as verified.
+			b.Verified = false
+			b.Updated = ev.Timestamp
+			marked = true
+		}
+	}
+	return marked
+}
+
+// buildingForPackage maps a Go package path to the building that contains it.
+//
+// The package is a module path, and the town draws directories, so the module
+// prefix is stripped and what remains is looked up. A package that resolves to
+// nothing is dropped rather than filed somewhere convenient.
+func (t *Town) buildingForPackage(pkg string) *BuildingState {
+	// `internal/analyzer` and `github.com/x/internal/analyzer` both end at the
+	// same place, so the last two segments are tried before giving up.
+	parts := strings.Split(pkg, "/")
+	for n := 2; n <= len(parts) && n > 0; n-- {
+		cand := strings.Join(parts[len(parts)-n:], "/")
+		if b, ok := t.buildings[cand]; ok {
+			return b
+		}
+	}
+	return nil
 }

@@ -191,3 +191,32 @@ in the Yard with no building. This spec keeps that: only failures are attributed
 from output. Attributing *passes* from output would let `go test ./...` finish
 every building it covers, which is a larger behaviour change than the reported
 gap and deserves its own decision.
+
+## Implemented
+
+All four tickets are done. Verified against the **real** command, not a fixture:
+a deliberate failure in `internal/town`, run as `go test ./internal/town/...`,
+parses to `github.com/dimasajiwardhana/agent-town/internal/town` — which resolves
+to a real building.
+
+### The trap the spec did not name
+
+The spec caught one parser hazard — a `?` line means "no test files", not
+"failed", and matching it would damage `cmd/analyze`, `cmd/townd` and
+`internal/agent/extension`, three buildings that did not break.
+
+Writing the refusal tests found a second, in a runner the spec had not measured:
+
+```
+ FAIL  src/a.test.ts > suite > case
+```
+
+**Vitest prints a line that matches `FAIL <path>` exactly.** The parser as
+specified would have read `src/a.test.ts` as a Go package and damaged whichever
+building owns that file — a TypeScript failure filed as a Go claim, which is
+exactly the failure mode the spec was written to prevent.
+
+`go test` always ends an attribution with a duration (`FAIL\tpkg\t0.336s`) and
+vitest never does, so requiring one separates them. Same shape as the `?` trap,
+same consequence, and it is the second time in this project that the honest move
+was to check what the *other* tool actually prints.

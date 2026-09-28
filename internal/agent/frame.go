@@ -40,6 +40,15 @@ type Frame struct {
 	CallID  string         `json:"callID"`
 	Args    map[string]any `json:"args"`
 	IsError bool           `json:"isError"`
+	// Result is what the tool printed, as plain text, truncated by the sender.
+	//
+	// Optional and absent by default, so an extension that sends none behaves
+	// exactly as before and no daemon path changes. Carried because it is the
+	// only place a *whole-repo* test run can name the building that broke: a
+	// scoped run names its own directory, but `go test ./...` names nothing,
+	// and without the output the damage lands in the Yard instead of on a
+	// building. Measured: 1,637 real tool results, median 559 bytes, max 49 kB.
+	Result string `json:"result,omitempty"`
 
 	PID int `json:"pid"`
 }
