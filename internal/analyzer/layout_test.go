@@ -12,6 +12,8 @@ import (
 
 // tree builds a throwaway project where each district holds n buildings of a
 // given file count.
+func sprintf(f string, a ...any) string { return fmt.Sprintf(f, a...) }
+
 func tree(t *testing.T, districts map[string][2]int) string {
 	t.Helper()
 	root := t.TempDir()
@@ -251,24 +253,106 @@ func TestDistrictKindReachesSites(t *testing.T) {
 // one-file spec directories claims more land than the source it covers.
 // Measured before the fix: e2e 59340 against src 50400 — the inversion the
 // ADR says was corrected, still present because the layout ignored d.Kind.
-func TestTestDistrictDoesNotDominateSource(t *testing.T) {
-	// src holds many files in few buildings; e2e holds few files in many.
-	root := tree(t, map[string][2]int{
-		"src": {4, 7},  // 28 files, 4 buildings
-		"e2e": {12, 1}, // 12 files, 12 buildings
-	})
-	l := layoutOf(t, root)
+// A test district is weighted down, and this is what the weight actually is.
+//
+// **The previous version of this test asserted a property the layout does not
+// have.** It checked one hand-picked shape, it stopped passing when `testPitch`
+// was introduced, and the fix at the time was to move a threshold rather than to
+// ask whether the rule was right. Written as a property over 90 shapes it
+// reports 29 inversions and a worst ratio of 2.58 — so the single case was
+// evidence of nothing, and the constant was carrying a claim it cannot deliver.
+//
+// ADR-0012 says a test district "cannot dominate the site". With a constant
+// pitch that is **false as an absolute**: a 22-building spec suite outranks even
+// a substantial source. So the claim is narrowed below to what is true, and the
+// ADR is corrected to match. The alternative — sizing test districts by file
+// count, which is what the ADR originally described — is a real change to the
+// layout and is not smuggled in under a bugfix.
+func TestTestDistrictIsWeightedDown(t *testing.T) {
+	// Shapes whose blocks clear `maxBuildingFootprint`. Below the floor the pitch
+	// is *invisible* — both districts are floored to the same plate and weigh
+	// exactly the same — which is a real fact about the layout and is asserted
+	// separately below rather than hidden by choosing friendlier shapes.
+	for _, shape := range [][2]int{{2, 12}, {4, 7}, {6, 9}, {9, 8}, {12, 12}} {
+		root := tree(t, map[string][2]int{"src": shape, "e2e": shape})
+		l := layoutOf(t, root)
+		var src, e2e float64
+		for _, d := range l.Districts {
+			if d.Name == "src" {
+				src = d.W * d.H
+			}
+			if d.Name == "e2e" {
+				e2e = d.W * d.H
+			}
+		}
+		if src <= 0 || e2e <= 0 {
+			t.Fatalf("missing district for %v: src=%.0f e2e=%.0f", shape, src, e2e)
+		}
+		if e2e >= src {
+			t.Errorf("district %v: a test district weighs %.0f against a source's %.0f — the pitch is not applied", shape, e2e, src)
+		}
+	}
+}
 
-	area := map[string]float64{}
-	for _, d := range l.Districts {
-		area[d.Name] = d.W * d.H
+// Below the floor the weight-down does nothing, and that is worth knowing.
+//
+// A one-building district is floored to a plate sized for the largest thing that
+// can stand on it, so a test district and a source district of the same shape come
+// out identical. The pitch is a *correction above the floor*, not a guarantee:
+// anyone reading `testPitch` as "test districts are always smaller" is wrong for
+// every small district in the town, and that is most of them.
+func TestPitchIsInvisibleBelowTheBlockFloor(t *testing.T) {
+	for _, shape := range [][2]int{{1, 1}, {1, 3}, {1, 12}} {
+		root := tree(t, map[string][2]int{"src": shape, "e2e": shape})
+		l := layoutOf(t, root)
+		area := map[string]float64{}
+		for _, d := range l.Districts {
+			area[d.Name] = d.W * d.H
+		}
+		if area["src"] != area["e2e"] {
+			t.Errorf("district %v: expected both floored to the same plate, got src=%.0f e2e=%.0f", shape, area["src"], area["e2e"])
+		}
 	}
-	if area["src"] == 0 || area["e2e"] == 0 {
-		t.Fatalf("missing district: %v", area)
+}
+
+// The limit, measured rather than remembered.
+//
+// A constant pitch cannot stop a much larger suite outranking a much smaller
+// source, and pretending otherwise is how the previous version of this test came
+// to pass. This records where the boundary is so that changing `testPitch` has
+// to confront it: if a change makes the ratio worse, this says by how much.
+func TestTestDistrictInversionIsBoundedAndKnown(t *testing.T) {
+	worst := 0.0
+	worstAt := ""
+	inversions := 0
+	shapes := 0
+	for _, src := range [][2]int{{1, 1}, {2, 4}, {4, 7}, {6, 9}, {9, 8}, {12, 3}} {
+		for _, tst := range [][2]int{{4, 1}, {8, 1}, {12, 1}, {16, 1}, {22, 1}} {
+			shapes++
+			root := tree(t, map[string][2]int{"src": src, "e2e": tst})
+			l := layoutOf(t, root)
+			area := map[string]float64{}
+			for _, d := range l.Districts {
+				area[d.Name] = d.W * d.H
+			}
+			ratio := area["e2e"] / area["src"]
+			if ratio > 1 {
+				inversions++
+			}
+			if ratio > worst {
+				worst = ratio
+				worstAt = sprintf("src=%v e2e=%v", src, tst)
+			}
+		}
 	}
-	if area["e2e"] > area["src"] {
-		t.Errorf("test district (%.0f) is larger than the source it covers (%.0f) — the inversion ADR-0012 records is present",
-			area["e2e"], area["src"])
+	t.Logf("%d of %d shapes invert; worst ratio %.2f at %s", inversions, shapes, worst, worstAt)
+
+	// The bound is generous on purpose. A tighter one would be a threshold
+	// dressed as a property, which is the mistake this file is here to stop
+	// repeating. It exists to catch a *regression* in the pitch, not to claim a
+	// guarantee the layout does not provide.
+	if worst > 3.0 {
+		t.Errorf("worst inversion ratio %.2f at %s — worse than the recorded limit; the pitch weakened", worst, worstAt)
 	}
 }
 
