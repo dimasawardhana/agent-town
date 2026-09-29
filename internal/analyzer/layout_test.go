@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1638,5 +1639,113 @@ func TestImportRoadsCarryTheirDirection(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no import road was emitted at all")
+	}
+}
+
+// An import road crosses no building other than the two it connects.
+//
+// This is the invariant a bounding box cannot hold. The box between two
+// building centres is axis-aligned, so a diagonal import paints a square, and
+// the square lands on whatever is inside it — on this repository
+// `ui/src -> ui/src/art/props` drew road over `ui` and `ui/test`, which are
+// not part of that import at all. A map that draws a connection across
+// buildings it is not connected to is asserting something false about the
+// repository, which is the one thing this map is not allowed to do.
+func TestImportRoadsCrossNoOtherBuilding(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("ui/src/a.ts", "import { x } from \"../art\";\n")
+	mk("ui/src/art/b.ts", "import { y } from \"../props\";\n")
+	mk("ui/src/art/props/c.ts", "export const z = 1;\n")
+	mk("ui/test/d.ts", "import { x } from \"../src/a\";\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(town)
+
+	seen := 0
+	for _, r := range l.Roads {
+		if r.Kind != "import" {
+			continue
+		}
+		seen++
+		if r.Ax == 0 && r.Ay == 0 && r.Bx == 0 && r.By == 0 {
+			t.Fatalf("an import road carries no band: %+v", r)
+		}
+		for _, s := range l.Sites {
+			if s.Kind != PlaceBuilding || s.Path == r.From || s.Path == r.To {
+				continue
+			}
+			if bandCrosses(r, s, importBandHalf) {
+				t.Errorf("import %s -> %s runs across the %s plot at %v,%v %vx%v",
+					r.From, r.To, s.Path, s.X, s.Y, s.W, s.H)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no import road was emitted; the fixture does not exercise this")
+	}
+}
+
+// bandCrosses is whether a band of the given half-width touches a plot.
+//
+// The nearest of the plot's four corners is enough: the band is convex and the
+// plot is a rectangle, so if the band misses all four corners it cannot have
+// passed through the middle.
+func bandCrosses(r Road, s Site, half float64) bool {
+	dx, dy := r.Bx-r.Ax, r.By-r.Ay
+	len2 := dx*dx + dy*dy
+	for _, c := range [][2]float64{{s.X, s.Y}, {s.X + s.W, s.Y}, {s.X, s.Y + s.H}, {s.X + s.W, s.Y + s.H}} {
+		t := 0.0
+		if len2 > 0 {
+			t = ((c[0]-r.Ax)*dx + (c[1]-r.Ay)*dy) / len2
+			t = math.Max(0, math.Min(1, t))
+		}
+		if math.Hypot(c[0]-(r.Ax+dx*t), c[1]-(r.Ay+dy*t)) <= half {
+			return true
+		}
+	}
+	return false
+}
+
+// A road's rectangle is the band it actually carries, not a second opinion.
+//
+// They are two fields describing one thing, and the only defence against them
+// drifting is a test that says they agree. The renderer draws the band; the
+// extent is what the camera bounds and the turn read. If they disagree, the map
+// shows one road and measures another.
+func TestARoadsExtentIsItsBand(t *testing.T) {
+	town, err := Analyze("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, r := range LayoutTown(town).Roads {
+		if r.Kind != "import" {
+			continue
+		}
+		seen++
+		wantX := math.Min(r.Ax, r.Bx) - importBand/2
+		wantY := math.Min(r.Ay, r.By) - importBand/2
+		wantW := math.Abs(r.Bx-r.Ax) + importBand
+		wantH := math.Abs(r.By-r.Ay) + importBand
+		if math.Abs(r.X-wantX) > 0.01 || math.Abs(r.Y-wantY) > 0.01 ||
+			math.Abs(r.W-wantW) > 0.01 || math.Abs(r.H-wantH) > 0.01 {
+			t.Errorf("import %s -> %s: extent %.1f,%.1f %.1fx%.1f but band gives %.1f,%.1f %.1fx%.1f",
+				r.From, r.To, r.X, r.Y, r.W, r.H, wantX, wantY, wantW, wantH)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no import roads on this repository; the test proves nothing")
 	}
 }

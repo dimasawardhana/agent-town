@@ -169,6 +169,27 @@ type Road struct {
 	// implementation of the dependency graph.
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
+	// Ax, Ay, Bx, By are the two ends of a band's centre line, in the same
+	// world units as X/Y, for the road kinds that join two places.
+	//
+	// **Why a line and not just the rectangle.** A rectangle is axis-aligned, so
+	// it cannot express a diagonal: a diagonal import between two building
+	// centres has to be a square, and the square covers whatever else is inside
+	// it. On this repository `ui/src -> ui/src/art/props` drew road over `ui`
+	// and `ui/test`, neither of which is part of that import — a map asserting a
+	// connection across buildings it is not connected to.
+	//
+	// They are zero for "row" and "district", which are areas rather than joins
+	// between two places, and `omitempty` so a reader can tell a road with no
+	// band from a band at the origin.
+	//
+	// X/Y/W/H remain, and are the band's own bounding box — the extent is
+	// derived from the line, never the other way round, because two fields
+	// describing one road and no test holding them together is how they drift.
+	Ax float64 `json:"ax,omitempty"`
+	Ay float64 `json:"ay,omitempty"`
+	Bx float64 `json:"bx,omitempty"`
+	By float64 `json:"by,omitempty"`
 }
 
 // buildingSize scales a building's footprint by its source-file count.
@@ -649,11 +670,21 @@ func buildingsIn(t *Town, district string) []Building {
 //
 // Both are emitted here rather than in the browser because the layout is the
 // single source of truth for geometry (ADR-0012), and a road the renderer worked
-// out for itself is a road the renderer can get wrong.
 func linkRoads(root string, l *Layout) {
 	containmentRoads(l)
 	importRoads(root, l)
 }
+
+// importBand is the width of an import road, in world units, and
+// importBandHalf is the same number halved for the tests that ask how close
+// something may come to a band.
+//
+// One constant for both, because a band drawn 8 wide and a band the tests
+// measure as 6 wide are two different roads and no assertion would notice.
+const (
+	importBand     = 8.0
+	importBandHalf = importBand / 2
+)
 
 // importRoads draws a band from a building to each building it imports.
 //
@@ -691,23 +722,79 @@ func importRoads(root string, l *Layout) {
 		}
 		return pairs[i][1] < pairs[j][1]
 	})
-	const band = 8.0
 	for _, e := range pairs {
 		c, p := byPath[e[0]], byPath[e[1]]
-		cx, cy := c.X+c.W/2, c.Y+c.H/2
-		px, py := p.X+p.W/2, p.Y+p.H/2
+		ax, ay, bx, by := bandBetween(c, p)
 		l.Roads = append(l.Roads, Road{
-			X:    math.Min(cx, px) - band/2,
-			Y:    math.Min(cy, py) - band/2,
-			W:    math.Abs(px-cx) + band,
-			H:    math.Abs(py-cy) + band,
+			// The extent is the band's own box, derived from the line. Deriving
+			// it the other way round is how the two fields would come to
+			// disagree, and a road the renderer draws one way and the camera
+			// measures another is a road that is in two places.
+			X:    math.Min(ax, bx) - importBand/2,
+			Y:    math.Min(ay, by) - importBand/2,
+			W:    math.Abs(bx-ax) + importBand,
+			H:    math.Abs(by-ay) + importBand,
 			Kind: "import",
 			// e[0] imports e[1]. The ordering is already the direction, so this
 			// records a fact the layout had rather than computing a new one.
 			From: e[0],
 			To:   e[1],
+			Ax:   ax,
+			Ay:   ay,
+			Bx:   bx,
+			By:   by,
 		})
 	}
+}
+
+// bandBetween is the centre line from one plot to another, trimmed to where the
+// centre-to-centre line leaves the first plot and enters the second.
+//
+// **Why trimmed.** An untrimmed line runs from the middle of one building to the
+// middle of the other, so most of its length is under the two buildings it
+// connects — drawn as road, that is road painted over the building it belongs
+// to. Trimming leaves exactly the gap between the plots, which on this
+// repository is 14 units between neighbours on the same row.
+//
+// **Why a straight line and not a route.** A router would thread the band
+// between intervening buildings, and it would be a guess: the analyzer knows
+// which buildings import which, not how traffic would go. A straight band
+// between two plot edges is the one thing it can say without inventing.
+func bandBetween(from, to Site) (ax, ay, bx, by float64) {
+	fx, fy := from.X+from.W/2, from.Y+from.H/2
+	tx, ty := to.X+to.W/2, to.Y+to.H/2
+	dx, dy := tx-fx, ty-fy
+	d := math.Hypot(dx, dy)
+	if d < 1e-9 {
+		// Two plots at one centre cannot happen, and a zero-length band would
+		// make every downstream projection divide by its own length.
+		return fx, fy, fx, fy
+	}
+	ux, uy := dx/d, dy/d
+	// How far the ray leaves a plot's box in a given direction: the standard
+	// slab exit, rather than picking which face the ray is heading for.
+	// Picking a face means asking which way the ray is going, and getting that
+	// wrong returns the plot's *centre* — the bug this exists to remove,
+	// reintroduced one level down.
+	//
+	// dir is +1 for the plot the ray leaves and -1 for the plot it enters.
+	exit := func(s Site, dir float64) (float64, float64) {
+		cx, cy := s.X+s.W/2, s.Y+s.H/2
+		t := math.Inf(1)
+		if math.Abs(ux) > 1e-9 {
+			t = math.Min(t, (s.W/2)/math.Abs(ux))
+		}
+		if math.Abs(uy) > 1e-9 {
+			t = math.Min(t, (s.H/2)/math.Abs(uy))
+		}
+		if math.IsInf(t, 1) {
+			t = 0
+		}
+		return cx + ux*t*dir, cy + uy*t*dir
+	}
+	aX, aY := exit(from, 1)
+	bX, bY := exit(to, -1)
+	return aX, aY, bX, bY
 }
 
 // containmentRoads adds a band from every nested building to the building that
