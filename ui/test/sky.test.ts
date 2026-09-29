@@ -114,6 +114,13 @@ test("there is no horizon, because a horizon is the diorama", () => {
     !/HORIZON|horizon\s*=\s*[0-9.]/.test(sky),
     "a horizon is back in the backdrop; the town reads as a diorama on a table again",
   );
+  // The plain's colour, checked at the source because it is not checkable on the
+  // canvas. This is the fourth phrasing, and the first that is a *different
+  // instrument* rather than another way of asking the same question.
+  assert.ok(
+    /fillStyle\s*=\s*P\.skyGround/.test(sky),
+    "the backdrop is not painting P.skyGround as its plain; a substituted colour is uncaught by every canvas check",
+  );
   // And the composition it replaced is what is actually painted: a plain, a
   // seat, and a vignette last.
   const lastFill = sky.lastIndexOf("g.fillStyle = vig");
@@ -157,6 +164,13 @@ test("the vignette is on the canvas, not merely described", () => {
     corner < centre,
     `the corners are not darker than the centre (${corner} vs ${centre}); the vignette is not on the canvas`,
   );
+  // The plain's own colour cannot be checked on the canvas, and that is a fact
+  // about the drawing rather than a gap in the test: the seat's r0 is 0 and the
+  // vignette's r1 is the frame's own diagonal, so **every pixel is inside both**
+  // and no rendered pixel is the plain alone. A canvas check can therefore only
+  // ever ask whether the plain is *unlike* something, which a substitution
+  // satisfies. The colour itself is checked at the source, below.
+  assert.ok(centre > 0, "the centre has no colour at all");
   // And the plain is visible at all.
   //
   // Deliberately a *luminance* check and not a hue or an equality. Two earlier

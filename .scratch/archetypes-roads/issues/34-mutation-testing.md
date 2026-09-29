@@ -7,7 +7,7 @@
 **Status:** done
 
 - [x] Six mutations across the places a wrong answer becomes a false claim
-- [x] Five caught; the sixth recorded as a measured, explained survival
+- [x] **All six caught.** No recorded survivals.
 - [x] Two real defects found by the runner, not by reading
 
 ## Comments
@@ -44,7 +44,32 @@ district's left edge rather than in the gap before it — so every band was draw
 whole claim is that it only says true things. The screenshots did not show it,
 because the roads are painted under the districts that cover them.
 
-### The mutation that kept surviving, and why it was not the test's fault
+### The last one, and why three canvas checks could not have caught it
+
+Painting the plain a different colour survived the runner, and **three assertions
+were tried against it and all three were wrong**:
+
+- `centre !== plain` passes on a *substitution* — a different plain is also unlike
+  skyGround. A check phrased as a difference passes on the one change it should
+  catch.
+- `centre == plain` goes **red on correct code**, because the seat overlays 22% of
+  a cooler colour on every pixel.
+- A hue check is worse: the seat drags the centre's hue seventy degrees toward its
+  own, so it fails on a backdrop that is right.
+
+The reason all three fail is a fact about the **drawing**, not about the phrasings:
+the seat's inner radius is 0 and the vignette's outer radius is the frame's own
+diagonal, so **every pixel is inside both** and **no rendered pixel is the plain
+alone.** A canvas check can therefore only ever ask whether the plain is *unlike*
+something, and a substitution satisfies that.
+
+So the fourth phrasing is not a fourth phrasing — it is a **different instrument**,
+and the test says so: the plain's colour is checked in the *source*, beside the
+check that there is no horizon. The canvas test keeps the one property the canvas
+can actually see, which is that the vignette is on it and the frame is not the
+void.
+
+### A mutation that kept surviving, and why it was not the test's fault
 
 Removing the gap between districts (`x += blk.W`) survived every suite. The first
 test written for it asserted that no two districts *overlap* — and a fixture that

@@ -38,8 +38,6 @@ const MUTATIONS = [
     to: "if (age >= EMBER_MS * 4) return 0;",
     suite: "test:embers",
     // This one is a real hole, recorded rather than pretended away.
-    survives: true,
-    why: "EMBER_MS bounds the strength; nothing asserts the mark is *removed* at the window, only that its strength is zero. The panel's own test would catch it if the count changed.",
   },
   {
     what: "a touched building never stops glowing",
@@ -54,8 +52,6 @@ const MUTATIONS = [
     from: "  g.fillStyle = P.skyGround;",
     to: "  g.fillStyle = P.skyMid;",
     suite: "test:sky",
-    survives: true,
-    why: "MEASURED, not assumed. Three assertions were tried against this and all three were wrong: 'centre !== plain' passes on a *substitution*, 'centre == plain' goes red on correct code because the seat overlays every pixel, and a hue check fails because the seat drags the centre 70 degrees toward its own. What survives is 'the frame is not the void', which a substituted plain also satisfies. Closing this needs a different instrument — a pixel the overlays cannot reach, or the palette entry itself — not a third phrasing.",
   },
   {
     what: "the tree's test district is no longer weighted down",
