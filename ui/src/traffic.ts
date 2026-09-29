@@ -51,6 +51,24 @@ export const CAR_LENGTH = 14;
  *  kerb; taller and it stops being a car and becomes a block. */
 export const CAR_HEIGHT = 5;
 
+/** The lower, full-width part of the car: the body.
+ *
+ *  Three of the five pixels, and it spans the car's whole length. */
+const CAR_BODY_HEIGHT = 3;
+
+/** The upper part: the cabin, sitting on the body.
+ *
+ *  Two pixels, narrower than the body and pushed forward, so the silhouette
+ *  has a front and a back rather than being symmetric. */
+const CAR_CABIN_HEIGHT = 2;
+
+/** How far the cabin starts from the nose, and how far the tail runs past it.
+ *
+ *  The cabin is not centred: a centred cabin is a lozenge, which reads as a
+ *  pebble. Offset, it reads as a windscreen. */
+const CAR_NOSE = 4;
+const CAR_TAIL = 2;
+
 /** The car's colour as the number `Graphics.fillStyle` takes.
  *
  *  Hoisted so the parse is not repeated for every car on every frame, and flat
@@ -152,7 +170,25 @@ export class Traffic {
       const y = road.ay + (road.by - road.ay) * p;
       car.clear();
       car.fillStyle(CAR_TINT, 1);
-      car.fillRect(-CAR_LENGTH / 2, -CAR_HEIGHT / 2, CAR_LENGTH, CAR_HEIGHT);
+      // Two rectangles, not one, and both on integer pixels.
+      //
+      // One rectangle is a *bar* — it reads as a lane marking, and zoomed in it
+      // is a blank amber box with nothing in it. The narrower upper half is the
+      // cabin: two steps is all it takes for the shape to say "a thing with a
+      // roof on it" rather than "a stripe", and the car is small enough that
+      // anything more is mush.
+      //
+      // Integer bounds on purpose. A centred rectangle starts at -7 x -2.5, and
+      // the half pixel lands the far edge between two pixels — which the
+      // renderer antialiases into two half-lit rows, so the car came out looking
+      // like a pair of lines. The whole town is drawn on whole pixels for the
+      // same reason.
+      car.fillRect(-CAR_LENGTH / 2, 0, CAR_LENGTH, CAR_BODY_HEIGHT);
+      car.fillRect(-CAR_LENGTH / 2 + CAR_NOSE, -CAR_CABIN_HEIGHT, CAR_LENGTH - CAR_NOSE - CAR_TAIL, CAR_CABIN_HEIGHT);
+      // Facing the way it is going. A car that pointed the same way on every
+      // road in the town would be a small lie on the vertical ones, and the
+      // angle is already known — it is the road's own direction.
+      car.setRotation(Math.atan2(road.by - road.ay, road.bx - road.ax));
       car.setPosition(x, y);
       car.setDepth(y);
     }
