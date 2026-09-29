@@ -128,6 +128,19 @@ export const P = {
    *  session and for the panel's live-state marks. Never decoration. */
   accent: "#e6bb38",
   accentDim: "#8a6414",
+
+  /** Traffic. The one colour on the map that is not a material.
+   *
+   *  A car needs to be *seen*, and at this scale a material colour cannot do
+   *  it: `metal[2]` and `stone[3]` are both the value of a building's wall, so
+   *  a car drawn in one reads as part of the building it is passing rather than
+   *  as a thing on the road. This is the lightest warm value in the palette for
+   *  exactly that reason — it has to separate from grass, wood, terracotta and
+   *  plaster at a handful of pixels, and all four are darker than it.
+   *
+   *  It is deliberately not `accent`. That is the chief's flag and the panel's
+   *  live-state marks, and a car wearing it would read as a session badge. */
+  traffic: "#f2cd63",
 } as const;
 
 // Deliberately absent from this palette, each for a reason worth recording:

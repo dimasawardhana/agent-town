@@ -34,14 +34,29 @@ import type Phaser from "phaser";
 import { P } from "./art/palette";
 import type { RoadLine } from "./view";
 
-export const CAR_LENGTH = 6;
+/** How long a car is, in pixels.
+ *
+ *  Sized to be *seen*. The first version was 6×2 in the metal ramp, which was
+ *  the right size for a thing nobody was meant to notice: a 6-pixel body drawn
+ *  in the value of a building's own wall reads as a smudge on the wall, and
+ *  nine of them on nine roads produced a town that looked exactly as it did
+ *  with no traffic at all. A car has to clear the building behind it, so the
+ *  number here is about legibility and not about realism — see `CAR_HEIGHT`. */
+export const CAR_LENGTH = 14;
 
-/** The lit step of the metal ramp, as the number `Graphics.fillStyle` takes.
+/** How tall a car is, in pixels.
+ *
+ *  Two thirds of its length, which at this camera angle is what separates a
+ *  vehicle from a painted stripe. Thinner and it vanishes into the road's own
+ *  kerb; taller and it stops being a car and becomes a block. */
+export const CAR_HEIGHT = 5;
+
+/** The car's colour as the number `Graphics.fillStyle` takes.
  *
  *  Hoisted so the parse is not repeated for every car on every frame, and flat
- *  because a 6-pixel body has no room for a ramp: a gradient on a rectangle
- *  that size is a blob. */
-const CAR_TINT = Number.parseInt(P.metal[2].slice(1), 16);
+ *  because a body this size has no room for a ramp — a gradient across it is a
+ *  blob, not a car. */
+const CAR_TINT = Number.parseInt(P.traffic.slice(1), 16);
 
 /** How long one car takes to cross its road, in milliseconds.
  *
@@ -137,7 +152,7 @@ export class Traffic {
       const y = road.ay + (road.by - road.ay) * p;
       car.clear();
       car.fillStyle(CAR_TINT, 1);
-      car.fillRect(-CAR_LENGTH / 2, -1, CAR_LENGTH, 2);
+      car.fillRect(-CAR_LENGTH / 2, -CAR_HEIGHT / 2, CAR_LENGTH, CAR_HEIGHT);
       car.setPosition(x, y);
       car.setDepth(y);
     }

@@ -8,8 +8,9 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { bakedCels } from "../src/art/bake";
-import { carAt, CAR_LENGTH, drivenRoads } from "../src/traffic";
+import { carAt, CAR_HEIGHT, CAR_LENGTH, drivenRoads } from "../src/traffic";
 import type { RoadLine } from "../src/view";
+import { P } from "../src/art/palette";
 
 const road: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4, from: "a", to: "b" };
 
@@ -51,6 +52,30 @@ test("only import roads carry cars, and containment roads carry none", () => {
     drivenRoads(lines).map((r) => `${r.from ?? ""}->${r.to ?? ""}`),
     ["a->b"],
     "a road without both ends of a dependency is being given a car",
+  );
+});
+
+test("a car is big enough to be seen", () => {
+  // The regression this exists for: at 6×2 and in the value of a building's own
+  // wall, nine cars on nine roads looked identical to no cars at all. Both
+  // halves matter — the body has to be wide enough to clear the building behind
+  // it, and it has to be tall enough not to disappear into a kerb.
+  assert.ok(CAR_LENGTH >= 10, `a ${CAR_LENGTH}px car is a smudge on a wall, not traffic`);
+  assert.ok(CAR_HEIGHT >= 4, `a ${CAR_HEIGHT}px car is a painted stripe, not traffic`);
+});
+
+test("a car is not painted in a colour a building is painted in", () => {
+  // A car has to separate from the town, and every material ramp here is also
+  // what a building's wall, roof or window is drawn in. Taking one of those
+  // values is what made the first version invisible.
+  const materialValues = new Set(
+    [...P.metal, ...P.stone, ...P.plaster, ...P.wood, ...P.roof, ...P.glass].map(
+      (c) => c.toLowerCase(),
+    ),
+  );
+  assert.ok(
+    !materialValues.has(P.traffic.toLowerCase()),
+    "the car is painted in a material colour, so it reads as part of a building",
   );
 });
 

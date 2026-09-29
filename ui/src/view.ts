@@ -431,30 +431,27 @@ export function roadsAsLines(
     const y0 = r.y;
     const x1 = r.x + r.w;
     const y1 = r.y + r.h;
-    // The centre, found from the four projected corners rather than by
-    // projecting the centre directly — the projection is linear, so those agree,
-    // but averaging is the form that stays right if it ever stops being.
-    const c = [
-      project(x0, y0),
-      project(x1, y0),
-      project(x0, y1),
-      project(x1, y1),
-    ];
-    const cx = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
-    const cy = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
-    // The far end, along the long axis — which is the direction the road runs.
+    // The two ends of the road's long axis — which is the direction it runs.
     //
-    // The far *end*, not the midpoint of the long edge: `a` is the centre, so
-    // reaching the end means stepping the whole way along the axis. Taking the
-    // midpoint of the near edge instead makes the line's length a function of
-    // the road's *thickness*, which for a long thin band is a few pixels — a
+    // Both ends, not the centre and the far end. `a` has to be the road's
+    // *near* end: everything downstream asks "is this point on the road", and a
+    // segment covering only the second half of a road answers no about the
+    // first half. Routing bent a worker's path onto whichever half happened to
+    // be in the segment, which is not a road.
+    //
+    // The ends rather than the midpoints of the long edges, because the long
+    // edges run along the axis and a midpoint of one sits at the road's centre
+    // — which made the line's length a function of the road's *thickness*. A
     // hundred-unit street came out two pixels long, and a car placed on it
     // crawled rather than drove.
     const horizontal = r.w >= r.h;
-    const end = horizontal
-      ? project(x1, y0 + r.h / 2)
-      : project(x0 + r.w / 2, y1);
-    out.push({ ax: cx, ay: cy, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.w : r.h) / 2), from: r.from, to: r.to });
+    const start = horizontal ? project(x0, y0 + r.h / 2) : project(x0 + r.w / 2, y0);
+    const end = horizontal ? project(x1, y0 + r.h / 2) : project(x0 + r.w / 2, y1);
+    // Half the road's *thickness*, which is the short side. The long side is
+    // how far the road runs, and dividing that by two gave a 122-unit street a
+    // 61-pixel half-width: "am I on the road" was true almost everywhere, which
+    // is the same long/short confusion that made the line itself two pixels long.
+    out.push({ ax: start.x, ay: start.y, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.h : r.w) / 2), from: r.from, to: r.to });
   }
   return out;
 }

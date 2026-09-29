@@ -105,3 +105,14 @@ test("a road line spans the road, rather than being as long as the road is thick
     `a ${roadLen.toFixed(1)}px road produced a ${span.toFixed(1)}px line`,
   );
 });
+
+test("a road's width is its thickness, not how far it runs", () => {
+  const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
+  const [long] = roadsAsLines([{ x: 0, y: 0, w: 122, h: 8, kind: "import" }], project);
+  // Half of 8, floored at the 3px minimum. Taking the long side instead gave
+  // 61, at which point every point in the district counts as being on the road
+  // and the width stops carrying any information at all.
+  assert.equal(long.halfWidth, 4, "a thin long road was given its length as its width");
+  const [short] = roadsAsLines([{ x: 0, y: 0, w: 8, h: 122, kind: "import" }], project);
+  assert.equal(short.halfWidth, 4, "the vertical case took the wrong side");
+});
