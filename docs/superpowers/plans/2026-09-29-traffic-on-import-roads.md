@@ -21,7 +21,8 @@
 - Verification commands, from the repository root:
   - `go test ./... -count=1`
   - `cd ui && npm test`
-  - `cd ui && npm run test:mutate` — **must report 6 caught, 0 unaccounted for**
+  - `cd ui && npm run test:mutate` — **must report 8 caught, 0 unaccounted for**
+    (6 today, plus the 2 this plan adds in task 5)
   - `cd ui && ./node_modules/.bin/tsc --noEmit -p tsconfig.json`
   - `gofmt -l ./internal/` — must print nothing
 
@@ -32,8 +33,8 @@
 A car cannot be placed until the road says which end is the importer. Today `Road` is a rectangle plus a kind, and a rectangle has no direction, so the renderer would have to guess — and a guess here is a false claim about which building depends on which.
 
 **Files:**
-- Modify: `internal/analyzer/imports.go` (the function that emits import roads)
-- Modify: `internal/analyzer/layout.go:113-131` (the `Road` struct)
+- Modify: `internal/analyzer/layout.go:148-160` (the `Road` struct)
+- Modify: `internal/analyzer/layout.go:651-693` (`importRoads`, where the literal is built)
 - Test: `internal/analyzer/layout_test.go`
 
 **Interfaces:**
@@ -133,17 +134,31 @@ In `internal/analyzer/layout.go`, replace the `Roads` field's struct with the st
 
 - [ ] **Step 4: Emit the direction where import roads are built**
 
-In `internal/analyzer/imports.go`, inside the loop that currently does:
+The import road is built in **`internal/analyzer/layout.go`**, not in `imports.go`, inside the function `importRoads(root string, l *Layout)` (declared at `layout.go:651`). Its loop is already over ordered pairs, and the ordering is already the direction:
 
 ```go
-			} else if to != from {
-				out[[2]string{from, to}] = true
-			}
+	for _, e := range pairs {
+		c, p := byPath[e[0]], byPath[e[1]]   // c imports p
+		...
+		l.Roads = append(l.Roads, Road{
+			X:    math.Min(cx, px) - band/2,
+			Y:    math.Min(cy, py) - band/2,
+			W:    math.Abs(px-cx) + band,
+			H:    math.Abs(py-cy) + band,
+			Kind: "import",
+		})
+	}
 ```
 
-change the call site that builds roads (search for `importRoads`) so the ordered pair is carried through. The function that consumes `out` must set `From: pair[0], To: pair[1]`.
+`e[0]` is the importer and `e[1]` the imported — `c, p := byPath[e[0]], byPath[e[1]]` already says so. Add the two fields to the literal and nothing else:
 
-> **If you cannot find the call site**, run `grep -rn 'importRoads' internal/analyzer/` — it is a function, not a method, and it is the only place a `Kind: "import"` road is constructed. That is the only correct place to change; do not set `From`/`To` anywhere else.
+```go
+			Kind: "import",
+			From: e[0],
+			To:   e[1],
+```
+
+`pairs` is sorted before the loop (`sort.Slice` on `[0]` then `[1]`), so the direction is deterministic and adding these fields cannot reorder anything. **This is the only place a `Kind: "import"` road is constructed** — `grep -rn '"import"' internal/analyzer/` returns this literal and four test assertions, and no other production site.
 
 - [ ] **Step 5: Run the test to verify it passes**
 
@@ -158,7 +173,7 @@ Expected: all packages `ok`, gofmt prints nothing.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add internal/analyzer/imports.go internal/analyzer/layout.go internal/analyzer/layout_test.go
+git add internal/analyzer/layout.go internal/analyzer/layout_test.go
 git commit -m "An import road says which building imports which
 
 A car cannot be placed until the road says which end is the importer. Today
@@ -385,6 +400,7 @@ Expected: FAIL — `Cannot find module '../src/traffic'`.
 // they are spoken for.
 
 import Phaser from "phaser";
+
 import { P } from "./art/palette";
 import type { RoadLine } from "./view";
 
@@ -463,10 +479,12 @@ export class Traffic {
       const x = road.a.x + (road.b.x - road.a.x) * p;
       const y = road.a.y + (road.b.y - road.a.y) * p;
       car.clear();
-      car.fillStyle(0x000000, 0.35);
-      car.fillRect(-CAR_LENGTH / 2 + 1, 0, CAR_LENGTH, 2);
-      car.fillStyle(Number.parseInt(P.metal[3].slice(1, 3), 16), 1);
-      car.fillStyle(Number.parseInt(P.metal[2].slice(1, 3), 16), 1);
+      // `Graphics.fillStyle` takes a number, while every colour in `P` is a hex
+      // string, so the conversion is a real step and not a detail to skim.
+      // `HexStringToColor` is Phaser's own, and `metal[2]` is the lit step of the
+      // ramp: a 6-pixel body needs one flat value, because a gradient on a
+      // rectangle that size is a blob.
+      car.fillStyle(Phaser.Display.Color.HexStringToColor(P.metal[2]).color, 1);
       car.fillRect(-CAR_LENGTH / 2, -1, CAR_LENGTH, 2);
       car.setPosition(x, y);
     }
@@ -479,11 +497,11 @@ export class Traffic {
 }
 ```
 
-> **Note on the two `fillStyle` lines above.** They are a known wart, left in so
-> the diff stays reviewable: remove the first one before committing, and leave a
-> comment saying a car is a flat metal body with no shading because a 6-pixel
-> rectangle with a gradient is a blob. Removing it is a one-line change and is
-> part of task 4's review.
+> **`P.metal` is a `Ramp`** — four hex strings, dark to light — so `P.metal[2]`
+> is valid. It is indexable, but it is *not* a number, and `Graphics.fillStyle`
+> does not take a string: passing `P.metal[2]` directly compiles and renders
+> nothing, which is a silent failure and the reason the conversion is spelled out
+> rather than left to the reader.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -563,8 +581,8 @@ In `ui/src/scene.ts`:
    this.traffic = new Traffic(this, DEPTH.traffic);
    this.traffic.sync(roadsAsLines(layout.roads ?? [], (x, y) => this.project(x, y)));
    ```
-4. Add `traffic: 4000,` to the `DEPTH` object — **above** `DEPTH.smoke` and
-   `DEPTH.label`, so a car is over the ground and under every label.
+4. Add a `traffic` key to the `DEPTH` object in `ui/src/scene.ts:88`, **with the
+   value chosen by looking, not by reasoning** — see the note below.
 5. In `override update()`, beside the `this.embers.reconcile(...)` call:
    ```ts
    this.traffic?.update(this.time.now);
@@ -589,6 +607,19 @@ Open `http://127.0.0.1:7851`, wait for the town, and confirm: cars move along
 the **checkered import roads only**; they are not on the containment footpaths;
 they are not synchronised with each other; and the town still looks the same with
 every car removed.
+
+> **Choosing the depth.** `DEPTH` runs `ground: -100000`, `smoke: 80000`,
+> `ember: 85000`, `label: 90000` — so the gaps are wide, and the number that
+> matters is the depth the *buildings* are drawn at, which this plan has not
+> measured. A car must sit above the ground plane and **below the buildings**,
+> because a building passing over its own road is how a town reads as solid, and a
+> car floating over a roof says the map is a diagram.
+>
+> Find the real value with `grep -n "setDepth\|add.container" ui/src/scene.ts`
+> and put the car a little above `ground`. Then **look at a building that has an
+> import road crossing it** and confirm the building occludes the car. A depth
+> chosen by arithmetic rather than by that check is a guess, and this plan does
+> not ship guesses.
 
 > **If the cars are not on the roads you expected**, stop and check
 > `ui/src/traffic.ts` `sync()` — it filters on `r.from && r.to`, so a car appears
@@ -687,7 +718,19 @@ in task 3 by `Traffic.sync`. `carAt(road, now)` is introduced in task 3 and used
 in task 3's `update` and task 5's mutation. `DEPTH.traffic` is introduced in
 task 4 and used only there. No name is used before it is defined.
 
-**Placeholders.** None. Every code block is the content to write, and the one
-deliberate wart in task 3 — the duplicated `fillStyle` — is called out with the
-line to remove and the comment to leave, because shipping a known-ugly line
-unlabelled is the thing this repository keeps paying for.
+**Corrections made to this plan before execution.** Four, each found by checking
+a claim against the tree rather than by re-reading it:
+
+1. **`test:mutate` said 6 caught in Global Constraints and 8 in task 5.** Task 5
+   is right — 6 today plus the 2 this plan adds. Fixed.
+2. **Task 1 pointed at `imports.go`.** The literal is at `layout.go:691`, inside
+   `importRoads` declared at `layout.go:651`, and the pair ordering that makes
+   `From`/`To` meaningful is already there. Task 1 now names the file, the
+   function, the line, and the exact edit.
+3. **`P.metal[2]` was passed straight to `fillStyle`.** `P.metal` is a `Ramp` of
+   four hex strings, so the index is valid and the *type* is wrong;
+   `Graphics.fillStyle` takes a number. That compiles, renders nothing, and reads
+   as correct. Now converted with Phaser's own `HexStringToColor`.
+4. **A duplicated `fillStyle` line was documented as a wart to remove in task 4,
+   and task 4 had no such step.** Rather than leave a promise the plan does not
+   keep, the duplicate is gone and the reason the body is flat is a comment.
