@@ -73,16 +73,16 @@ function backdrop(w = 200, h = 200) {
     };
     return o;
   };
-  return {
-    px,
-    ctx: {
+  // Built to the interface, not cast into it. The cast is exactly what let a
+  // canvas that dropped every gradient pass as a canvas that modelled one.
+  const ctx: BackdropContext = {
       get fillStyle() { return fill; },
       set fillStyle(v: unknown) { fill = v && typeof v === "object" ? (v as { __grad?: unknown }).__grad ?? v : v; },
       fillRect: rect,
       createRadialGradient: (x0: number, y0: number, r0: number, _a: number, _b: number, r1: number) => grad(x0, y0, r0, r1),
       createLinearGradient: (x0: number, y0: number) => grad(x0, y0, 0, 1),
-    } as unknown as BackdropContext,
   };
+  return { px, ctx };
 }
 
 /** A 2D-context stand-in that records fills, so the backdrop can be drawn

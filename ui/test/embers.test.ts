@@ -69,10 +69,75 @@ test("the working mark is a different mark, not a brighter ember", () => {
 
 // A ring that outlived its session would say an agent is still there, and the
 // town must not be the thing that says an agent stopped.
-test("a session that leaves stops claiming it is there", () => {
-  const building = { id: "building:a" };
-  const marked = (working: Set<string>): string[] =>
-    working.has(building.id) ? [building.id] : [];
-  assert.deepEqual(marked(new Set(["building:a"])), ["building:a"]);
-  assert.deepEqual(marked(new Set()), []);
+//
+// **This drives the real layer.** The first version asserted on a local arrow
+// that reimplemented `working.has()`, so it passed while the ring never came off
+// — it could not have failed on the bug it was written for. The layer needs a
+// scene, so it is given the smallest one that will do: a record of what the layer
+// asked the engine to do, so the assertion is on *the layer's* decision.
+test("a session that leaves stops claiming it is there", async () => {
+  const { Embers, EMBER_TEX, WORK_TEX } = await import("../src/embers");
+  const engine = fakeEngine();
+  const layer = new Embers(engine.scene as never, -1);
+
+  const touched = [{ id: "b", x: 0, y: 0, updated: Date.now() }];
+  layer.reconcile(touched, new Set(["b"]));
+  assert.equal(engine.shown, WORK_TEX, "a building being worked at is not marked with the ring");
+
+  // The session leaves. The mark must go with it.
+  layer.reconcile(touched, new Set());
+  assert.equal(
+    engine.shown,
+    EMBER_TEX,
+    "the ring outlived the session that made it — the town is claiming an agent is still there",
+  );
+  assert.equal(engine.alive, 1, "the mark was destroyed with the session");
 });
+
+/**
+ * The smallest engine `Embers` will accept.
+ *
+ * Not a mock of Phaser and not a re-implementation of the layer: a record of
+ * what the layer *asked* for. The one question this test has is "which texture
+ * is the mark showing", and nothing in here decides that — the layer does, and
+ * the record answers.
+ */
+function fakeEngine() {
+  const e = {
+    shown: "none",
+    alive: 0,
+    scene: {} as Record<string, unknown>,
+  };
+  const noopCtx = {
+    get fillStyle() { return ""; },
+    set fillStyle(_v: unknown) { /* the canvas is not the subject */ },
+    fillRect() { /* not the subject */ },
+    createRadialGradient: () => ({ addColorStop() {} }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+  };
+  e.scene = {
+    textures: {
+      exists: () => true,
+      createCanvas: () => ({ getContext: () => noopCtx, refresh() {} }),
+      addCanvas: () => undefined,
+    },
+    add: {
+      image: (_x: number, _y: number, key: string) => {
+        e.alive++;
+        e.shown = key;
+        const self = {
+          texture: { key },
+          setOrigin: () => self,
+          setPosition: () => self,
+          setAlpha: () => self,
+          setDepth: () => self,
+          setTexture: (k: string) => { self.texture.key = k; e.shown = k; return self; },
+          destroy: () => { e.alive--; },
+        };
+        return self;
+      },
+    },
+    time: { now: 0 },
+  };
+  return e;
+}

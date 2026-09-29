@@ -35,7 +35,8 @@ import { P } from "./art/palette";
  */
 export const EMBER_MS = 120_000;
 
-const EMBER_TEX = "ember";
+/** The ember's texture key, exported so a test can assert which mark is showing. */
+export const EMBER_TEX = "ember";
 /** The ring's texture key, exported so a test can assert it is not the ember's. */
 export const WORK_TEX = "working";
 
