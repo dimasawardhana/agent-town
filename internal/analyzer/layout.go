@@ -684,6 +684,13 @@ func linkRoads(root string, l *Layout) {
 const (
 	importBand     = 8.0
 	importBandHalf = importBand / 2
+	// containmentBand is a footpath, and a footpath is wider than a street
+	// because nobody drives on it: 10 units against the import road's 8.
+	//
+	// Package-level, not local to `containmentRoads`, for the reason
+	// `importBand` is: the tests that ask how close something may come to a band
+	// have to measure against the same number the road was drawn with.
+	containmentBand = 10.0
 )
 
 // importRoads draws a band from a building to each building it imports.
@@ -824,7 +831,8 @@ func containmentRoads(l *Layout) {
 	}
 	sort.Strings(paths)
 
-	const band = 10.0
+	// The width is `containmentBand`, package-level, so the tests that measure
+	// how close something may come to a footpath use the same number.
 	for _, child := range paths {
 		best := ""
 		for _, cand := range paths {
@@ -839,16 +847,25 @@ func containmentRoads(l *Layout) {
 			continue
 		}
 		c, p := byPath[child], byPath[best]
-		// Centre to centre, so the band reaches whichever way round the two
-		// happen to sit on the map — a child is not always below its parent.
-		cx, cy := c.X+c.W/2, c.Y+c.H/2
-		px, py := p.X+p.W/2, p.Y+p.H/2
+		// The band between the two plots, trimmed to their edges — the same
+		// `bandBetween` the import roads use. A child is not always below its
+		// parent on the map, which is why the line is between the two plots
+		// rather than a vertical run between their rows.
+		//
+		// The centre-to-centre box this replaces measured 238x124 on this
+		// repository: a checkered plaza painted over three buildings, for a
+		// claim about two.
+		ax, ay, bx, by := bandBetween(c, p)
 		l.Roads = append(l.Roads, Road{
-			X:    math.Min(cx, px) - band/2,
-			Y:    math.Min(cy, py) - band/2,
-			W:    math.Abs(px-cx) + band,
-			H:    math.Abs(py-cy) + band,
+			X:    math.Min(ax, bx) - containmentBand/2,
+			Y:    math.Min(ay, by) - containmentBand/2,
+			W:    math.Abs(bx-ax) + containmentBand,
+			H:    math.Abs(by-ay) + containmentBand,
 			Kind: "containment",
+			Ax:   ax,
+			Ay:   ay,
+			Bx:   bx,
+			By:   by,
 		})
 	}
 }
