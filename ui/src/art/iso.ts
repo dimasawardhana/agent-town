@@ -577,9 +577,12 @@ export class IsoPix {
         const dy = (wy - cy) / ry;
         const t = Math.min(1, Math.sqrt(dx * dx + dy * dy));
         const rise = fall(t);
-        // Which band of the dome this is, by height and by depth. Naming the plane
-        // is what gives the dome its shading, and it is derived from the height
-        // rather than from the position so the three bands always meet cleanly.
+        // Which band of the dome this is. `top` is chosen by height: the rise is
+        // at least 0.66 of the apex rise `fall(0)`. The other two are *not* chosen
+        // by height and not by camera depth — they are split by world y against
+        // the centre, rows above `cy` taking `far` and rows below it `near`, so
+        // the far/near join is a straight row through the middle that cuts
+        // across the circular edge of the top band rather than following it.
         const ink = rise >= fall(0) * 0.66 ? shade.top : wy < cy ? shade.far : shade.near;
         this.plot(wx, wy, zEave + rise, ink);
         if (prev >= 0) {
@@ -702,6 +705,14 @@ export function boundsOf(
   return { minX, minY, maxX, maxY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
-/** The hand-drawn half-width of a footprint's shadow in world units. Shadow is
- *  what stops a building looking pasted onto the ground. */
+/**
+ * SHADOW_OFFSET is 0, and nothing in the tree reads it.
+ *
+ * A footprint's ground shadow is not displaced by this constant. `buildShadow`
+ * bakes the shadow as its own cel lying flat at z = 0, offset 2 world units
+ * along x and 3 along y — `footprint(2, 3, side + 3, side + 3, 0, …)` — so the
+ * half-width a shadow is given is zero here and the only real offset is that
+ * one call. Shadow is still what stops a building looking pasted onto the
+ * ground; it just is not this number.
+ */
 export const SHADOW_OFFSET = 0;

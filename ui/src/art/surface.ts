@@ -132,7 +132,13 @@ export class Pix {
 
 
   /**
-   * outline draws a 1px ink edge around every opaque pixel.
+   * outline returns a copy of the cel with `ink` in every transparent pixel
+   * whose left, right, above or below neighbour is opaque.
+   *
+   * The test is orthogonal, so a pixel that touches the art only at a corner
+   * stays empty, and the pass never inks over a pixel that is already opaque. A
+   * hole punched through the middle of a shape is outlined exactly like the
+   * shape's outer edge — that is the same rule applied twice, not an oversight.
    *
    * Done as a separate pass, on the assembled cel rather than on each part, so
    * joints between parts do not acquire interior lines. A uniform 1px outline
