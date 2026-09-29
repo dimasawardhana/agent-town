@@ -7,6 +7,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
+import { bakedCels } from "../src/art/bake";
 import { carAt, CAR_LENGTH } from "../src/traffic";
 import type { RoadLine } from "../src/view";
 
@@ -37,4 +38,16 @@ test("a road with no importer carries no car", () => {
   const bare: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4 };
   assert.equal(bare.from, undefined, "a containment road grew a direction");
   assert.ok(CAR_LENGTH > 0);
+});
+
+test("a car costs the atlas nothing", () => {
+  // Traffic is generated, so it must not appear in the bake. If a car ever gets
+  // baked it comes out of a budget with 135 spare, and this is the assertion
+  // that says so before anyone notices the count.
+  const keys = bakedCels(0).map((c) => c.key);
+  assert.equal(
+    keys.filter((k) => k.startsWith("car:")).length,
+    0,
+    "a car was baked into the atlas; traffic is generated and must not cost cels",
+  );
 });

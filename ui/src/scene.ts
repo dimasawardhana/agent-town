@@ -33,6 +33,7 @@ import {
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
+import { Traffic } from "./traffic";
 import { SKY_DEPTH, skyTexture } from "./sky";
 import { type Stage, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, type Archetype } from "./art/roof";
@@ -145,6 +146,9 @@ export class TownScene extends Phaser.Scene {
    * off, which means it could not be an event-driven child either.
    */
   private embers: Embers | null = null;
+  /** Cars on the import roads. Generated, so no atlas cost, and re-synced with
+   *  the draw so a turn re-routes them against the turned roads. */
+  private traffic: Traffic | null = null;
   /** The backdrop, pinned to the camera. Resized with the view and no further. */
   private sky: Phaser.GameObjects.Image | null = null;
 
@@ -356,6 +360,13 @@ export class TownScene extends Phaser.Scene {
     this.chimneys = new Chimneys(this, this.chimneyRooftops(layout), DEPTH.smoke);
     this.embers?.destroy();
     this.embers = new Embers(this, DEPTH.ember);
+
+    // Traffic, for the same reason as the chimneys: the redraw calls `removeAll`,
+    // so a layer not re-added here is simply gone. Synced after construction
+    // because `sync` is what puts a car on each road.
+    this.traffic?.destroy();
+    this.traffic = new Traffic(this);
+    this.traffic.sync(roadsAsLines(layout.roads ?? [], (x, y) => this.project(x, y)));
 
     // The sky is here for the same reason the chimneys are: the redraw calls
     // `removeAll`, so anything not re-added here is simply gone. Created in
@@ -1293,6 +1304,7 @@ export class TownScene extends Phaser.Scene {
       if (w.place) working.add(w.place);
     }
     this.embers.reconcile(touched, working);
+    this.traffic?.update(this.time.now);
   }
 
   /**

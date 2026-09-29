@@ -82,3 +82,26 @@ test("a road line carries which end is the importer", () => {
   assert.equal(lines[1].from, undefined, "a containment road grew a direction");
   assert.equal(lines[1].to, undefined, "a containment road grew a direction");
 });
+
+test("a road line spans the road, rather than being as long as the road is thick", () => {
+  const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
+  // 100 long and 8 thick: the shape an import road between two buildings has.
+  const [line] = roadsAsLines([{ x: 0, y: 0, w: 100, h: 8, kind: "import" }], project);
+  const span = Math.hypot(line.bx - line.ax, line.by - line.ay);
+  const near = project(0, 0);
+  const far = project(100, 8);
+  const roadLen = Math.hypot(far.x - near.x, far.y - near.y);
+  // Roughly half the road, because `a` is the centre and `b` the far end. The
+  // slack is generous on purpose: what is being pinned is that the line is
+  // *proportional to the road's length at all*.
+  //
+  // Taking `b` as the midpoint of the road's top edge instead — which is what
+  // this did — makes the line's length a function of the road's *thickness*, so
+  // a hundred-unit street came out two pixels long. Nothing noticed while the
+  // lines only fed proximity tests; a car travelling one crawls two pixels and
+  // never crosses.
+  assert.ok(
+    span > roadLen * 0.4,
+    `a ${roadLen.toFixed(1)}px road produced a ${span.toFixed(1)}px line`,
+  );
+});

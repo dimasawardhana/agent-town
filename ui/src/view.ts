@@ -442,11 +442,18 @@ export function roadsAsLines(
     ];
     const cx = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
     const cy = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
-    // Along the long axis, which is the direction the road runs.
+    // The far end, along the long axis — which is the direction the road runs.
+    //
+    // The far *end*, not the midpoint of the long edge: `a` is the centre, so
+    // reaching the end means stepping the whole way along the axis. Taking the
+    // midpoint of the near edge instead makes the line's length a function of
+    // the road's *thickness*, which for a long thin band is a few pixels — a
+    // hundred-unit street came out two pixels long, and a car placed on it
+    // crawled rather than drove.
     const horizontal = r.w >= r.h;
     const end = horizontal
-      ? project(x0 + r.w / 2, y0)
-      : project(x0, y0 + r.h / 2);
+      ? project(x1, y0 + r.h / 2)
+      : project(x0 + r.w / 2, y1);
     out.push({ ax: cx, ay: cy, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.w : r.h) / 2), from: r.from, to: r.to });
   }
   return out;

@@ -13,6 +13,14 @@
 // **Generated, not baked.** Drawn with Phaser Graphics at runtime, like the
 // ember and the sky, so this costs no atlas cels. The atlas has 135 spare and
 // they are spoken for.
+//
+// **Depth comes from where the car stands, not from a constant.** Road bands
+// are painted into the ground texture (`paintRoads` in `scene.ts`), so a car is a
+// ground-plane object and has to sort among the buildings by screen position
+// exactly as they do. One constant cannot do that: the town spans thousands of
+// pixels of y, so any single value either floats every car over every roof or
+// hides every car behind every building in front of it. `roadsAsLines` already
+// returned projected screen coordinates, so the car's own y is the number.
 
 // A *type-only* Phaser import, and deliberately so. `Graphics.fillStyle` takes a
 // number while every colour in `P` is a hex string, so the conversion below is
@@ -30,9 +38,9 @@ export const CAR_LENGTH = 6;
 
 /** The lit step of the metal ramp, as the number `Graphics.fillStyle` takes.
  *
- *  Hoisted out of the update loop so the parse is not repeated for every car on
- *  every frame, and flat because a 6-pixel body has no room for a ramp: a
- *  gradient on a rectangle that size is a blob. */
+ *  Hoisted so the parse is not repeated for every car on every frame, and flat
+ *  because a 6-pixel body has no room for a ramp: a gradient on a rectangle
+ *  that size is a blob. */
 const CAR_TINT = Number.parseInt(P.metal[2].slice(1), 16);
 
 /** How long one car takes to cross its road, in milliseconds.
@@ -73,11 +81,9 @@ export class Traffic {
   private cars = new Map<string, Phaser.GameObjects.Graphics>();
   private roads: RoadLine[] = [];
   private scene: Phaser.Scene;
-  private depth: number;
 
-  constructor(scene: Phaser.Scene, depth: number) {
+  constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    this.depth = depth;
   }
 
   /** sync replaces the road set, dropping a car for a road that is gone. */
@@ -95,8 +101,10 @@ export class Traffic {
     for (const road of this.roads) {
       const id = `${road.from}${road.to}`;
       if (this.cars.has(id)) continue;
-      const car = this.scene.add.graphics().setDepth(this.depth);
-      this.cars.set(id, car);
+      // Depth is set every frame rather than once here, because it is a function
+      // of where the car is on its road. The value given at creation is only the
+      // first one, and it stops mattering as soon as the car moves.
+      this.cars.set(id, this.scene.add.graphics());
     }
   }
 
@@ -116,6 +124,7 @@ export class Traffic {
       car.fillStyle(CAR_TINT, 1);
       car.fillRect(-CAR_LENGTH / 2, -1, CAR_LENGTH, 2);
       car.setPosition(x, y);
+      car.setDepth(y);
     }
   }
 
