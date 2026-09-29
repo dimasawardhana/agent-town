@@ -199,6 +199,24 @@ function turnRect(turn: Turn, r: WorldRect): WorldRect {
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
 }
 
+/** turnBand turns a band's two ends the way turnRect turns a box.
+ *
+ *  A field the turn does not know about is a field that vanishes rather than
+ *  one that drifts: `turnLayout` spreads the returned keys over the road, so a
+ *  band the turn ignored comes back still in the old frame, and the painter —
+ *  correctly, following the layout it was given — draws a road belonging to an
+ *  orientation the town is no longer in.
+ *
+ *  Returns nothing for a road with no band. Row and district roads are areas
+ *  rather than joins between two places, and spreading zeroes over them would
+ *  turn "no band" into "a band at the origin". */
+function turnBand(turn: Turn, r: { ax?: number; ay?: number; bx?: number; by?: number }) {
+  if (typeof r.ax !== "number" || typeof r.bx !== "number") return {};
+  const a = turnPoint(turn, r.ax, r.ay!);
+  const b = turnPoint(turn, r.bx, r.by!);
+  return { ax: a.x, ay: a.y, bx: b.x, by: b.y };
+}
+
 /**
  * turnLayout presents a layout as the camera currently sees it.
  *
@@ -220,7 +238,14 @@ function turnRect(turn: Turn, r: WorldRect): WorldRect {
  * The result is re-based to start at (0, 0), because the ground painter and the
  * land box assume a layout whose coordinates begin at the origin.
  */
-export function turnLayout<S extends WorldRect, D extends WorldRect, R extends WorldRect = WorldRect & { kind?: string }>(
+export function turnLayout<
+  S extends WorldRect,
+  D extends WorldRect,
+  // The constraint, not just the default: a band is optional per road, but the
+  // turn has to know the four fields exist to turn them. A default alone lets a
+  // caller infer an `R` with no band on it, and then the band cannot be turned.
+  R extends WorldRect & { kind?: string; ax?: number; ay?: number; bx?: number; by?: number },
+>(
   turn: number,
   layout: { sites: S[]; districts: D[]; roads?: R[]; width: number; height: number },
 ): { sites: S[]; districts: D[]; roads?: R[]; width: number; height: number } {
@@ -236,7 +261,7 @@ export function turnLayout<S extends WorldRect, D extends WorldRect, R extends W
   // drew nothing. A field the turn does not know about is a field that vanishes
   // rather than one that drifts, which is why this is a named line and not a
   // spread over the return.
-  const roads = layout.roads?.map((r) => ({ ...r, ...turnRect(t, r) }));
+  const roads = layout.roads?.map((r) => ({ ...r, ...turnRect(t, r), ...turnBand(t, r) }));
 
   // One shift for everything, from the whole town's box — derived from the outline
   // the layout declares rather than from the rects, which would be the same number
@@ -244,7 +269,17 @@ export function turnLayout<S extends WorldRect, D extends WorldRect, R extends W
   const whole = turnRect(t, { x: 0, y: 0, w: layout.width, h: layout.height });
   const shift = { x: -whole.x, y: -whole.y };
 
-  const move = <R extends WorldRect>(r: R): R => ({ ...r, x: r.x + shift.x, y: r.y + shift.y });
+  // The band is shifted too, and separately from the rect, because a band left
+  // behind is a road drawn several hundred pixels from where the layout says
+  // it is: visible, plausible, and belonging to no orientation at all.
+  const move = <R extends WorldRect & { ax?: number; ay?: number; bx?: number; by?: number }>(r: R): R => ({
+    ...r,
+    x: r.x + shift.x,
+    y: r.y + shift.y,
+    ...(typeof r.ax === "number"
+      ? { ax: r.ax + shift.x, ay: r.ay! + shift.y, bx: r.bx! + shift.x, by: r.by! + shift.y }
+      : {}),
+  });
 
   return {
     sites: sites.map(move),

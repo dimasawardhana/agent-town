@@ -116,3 +116,36 @@ test("a road's width is its thickness, not how far it runs", () => {
   const [short] = roadsAsLines([{ x: 0, y: 0, w: 8, h: 122, kind: "import" }], project);
   assert.equal(short.halfWidth, 4, "the vertical case took the wrong side");
 });
+
+test("a turn carries the road's band with it", () => {
+  // Turn 1, not turn 0: at turn 0 `turnLayout` returns the layout untouched and
+  // an unchanged band would prove nothing. The point is that the band is part
+  // of what a turn moves, not that it happens to be where it started.
+  const withBand = {
+    ...layout,
+    roads: [{ ...layout.roads[0], ax: 40, ay: 150, bx: 300, by: 150 }],
+  };
+  const turned = turnLayout(1, withBand) as {
+    roads: { kind: string; x: number; ax: number; ay: number; bx: number; by: number }[];
+  };
+  const before = withBand.roads[0] as unknown as { ax: number; ay: number; bx: number; by: number };
+  const after = turned.roads[0];
+  assert.equal(typeof after.bx, "number", "the turn dropped the band's far end entirely");
+  assert.equal(typeof after.ay, "number", "the turn dropped the band's near end");
+  // A quarter turn maps (x, y) to (y, -x), so a horizontal band becomes a
+  // vertical one. Anything that leaves both ends where they were is a band the
+  // turn ignored.
+  const moved = after.ax !== before.ax || after.ay !== before.ay ||
+    after.bx !== before.bx || after.by !== before.by;
+  assert.ok(moved, "the band was left in the old frame while the rectangle turned");
+  // Both ends must move by the same amount as the rect, or the band belongs to
+  // a different town than the road it is attached to.
+  const rect = turned.roads[0];
+  assert.equal(typeof rect.x, "number", "the road lost its extent too");
+  const spanBefore = Math.hypot(before.bx - before.ax, before.by - before.ay);
+  const spanAfter = Math.hypot(after.bx - after.ax, after.by - after.ay);
+  assert.ok(
+    Math.abs(spanAfter - spanBefore) < 0.001,
+    `a quarter turn changed the band's length from ${spanBefore} to ${spanAfter}`,
+  );
+});
