@@ -9,7 +9,7 @@
     "test:blankcaps": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-blankcaps.test.mjs test/blankcaps.test.ts --log-level=warning && node --test ui-blankcaps.test.mjs",
     "test:archetypes": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-archetypes.test.mjs test/archetypes.test.ts --log-level=warning && node --test ui-archetypes.test.mjs",
     "test:visibility": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-visibility.test.mjs test/visibility.test.ts --log-level=warning && node --test ui-visibility.test.mjs",
-    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:embers && npm run test:roads && npm run test:turnroads && npm run test:turnalign && npm run test:flagcorner && npm run test:sky && npm run test:materials && npm run test:routing && npm run test:visibility && npm run test:light && npm run test:atlas && npm run test:commenttruth",
+    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:embers && npm run test:roads && npm run test:turnroads && npm run test:turnalign && npm run test:flagcorner && npm run test:sky && npm run test:motion && npm run test:materials && npm run test:routing && npm run test:visibility && npm run test:light && npm run test:atlas && npm run test:commenttruth",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:light": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-light.test.mjs test/light.test.ts --log-level=warning && node --test ui-light.test.mjs",
     "test:atlas": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-atlas.test.mjs test/atlas.test.ts --log-level=warning && node --test ui-atlas.test.mjs",
@@ -22,7 +22,8 @@
     "test:turnalign": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-turnalign.test.mjs test/turnalign.test.ts --log-level=warning && node --test ui-turnalign.test.mjs",
     "test:flagcorner": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-flagcorner.test.mjs test/flagcorner.test.ts --log-level=warning && node --test ui-flagcorner.test.mjs",
     "test:sky": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-sky.test.mjs test/sky.test.ts --log-level=warning && node --test ui-sky.test.mjs",
-    "test:commenttruth": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-commenttruth.test.mjs test/commenttruth.test.ts --log-level=warning && node --test ui-commenttruth.test.mjs"
+    "test:commenttruth": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-commenttruth.test.mjs test/commenttruth.test.ts --log-level=warning && node --test ui-commenttruth.test.mjs",
+    "test:motion": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-motion.test.mjs test/motion.test.ts --log-level=warning && node --test ui-motion.test.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1",

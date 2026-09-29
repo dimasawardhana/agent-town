@@ -635,7 +635,7 @@ export class IsoPix {
   }
 
   /**
-   * shadeFace darkens or lightens every opaque pixel inside a screen-space
+   * tintRect darkens or lightens every opaque pixel inside a screen-space
    * rectangle. It is the cheap way to add a form shadow after the fact — under
    * an eave, beside a doorway — without re-running a fill with another colour.
    */

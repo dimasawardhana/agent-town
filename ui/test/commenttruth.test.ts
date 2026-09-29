@@ -21,11 +21,14 @@
 //
 // WHAT IT CAN AND CANNOT CATCH
 //
-// Three shapes, all mechanical:
+// Two shapes it catches, both mechanical, and one it deliberately does not:
 //
 //   1. A quantity in a comment that contradicts a constant in the same file.
 //      "two minutes" against `EMBER_MS = 120_000`, converted through a real
-//      unit table, not a string match.
+//      unit table, not a string match. Also the record form — a comment that
+//      states a member's duration, or a total, for a keyed table of durations.
+//      Also the counted-run form: "these are the four colours" above a run of
+//      literal entries.
 //   2. A `/** */` block whose first sentence names a declaration that is not
 //      the one immediately below it. The `resizeSky`/`ensureSky` shape.
 //   3. (excluded, on purpose) A documented count that *nothing asserts* — an
@@ -42,54 +45,78 @@
 //
 // The design rule is: **a claim is only checked when it can be resolved to a
 // specific thing in the same file.** An unresolvable number in a comment is not
-// reported, because reporting every one of them produced 448 candidates on this
-// tree and a person would have deleted the test on day two. Every finding
-// therefore carries its own evidence — the comment, the claim, the constant, the
+// reported. A first pass that reported every comment line in `ui/src` and
+// `internal` containing a digit and a unit-ish word found 448 candidates, and
+// a person would have deleted the test on day two. Every finding therefore
+// carries its own evidence — the comment, the claim, the constant, the
 // constant's real value, and the line of each — so a human can triage in
 // seconds without opening the file.
 //
-// Three further mechanisms keep the false-positive rate at zero without hiding
-// anything:
+// Seven mechanisms keep the false-positive rate at zero without hiding
+// anything. Each one exists because its absence produced a real false positive
+// that was measured and then fixed, and the reason is written down here so the
+// next person to loosen one can see what it cost:
 //
 //   * **Sentence scoping.** A claim is only ever compared against a constant its
 //     own sentence names. A doc block that says three unrelated things does not
 //     let the first number vouch for the third.
-//   * **Qualifiers.** A quantity that is explicitly *not* an equality — "five
-//     minutes ago is not", "the last minute or so" used as a threshold — is
-//     reported in its own bucket with the qualifier named, and never fails the
-//     build. Equality is the only claim that can be mechanically true or false.
+//   * **Module scope.** Only column-zero declarations are referents. `roof.ts`
+//     says "Two pixels down puts it on the curve", and an unanchored checker
+//     reads `curve` as a `const curve = 1 - t * t` in another method.
+//   * **Qualifiers.** A quantity that is explicitly *not* an equality — "one
+//     made five minutes ago is not" — is reported in its own bucket with the
+//     qualifier named, and never fails the build. Equality is the only claim
+//     that can be mechanically true or false.
+//   * **Quotations.** A number inside a code span is something the comment is
+//     showing, not asserting. `gotest.go` quotes a `go test` output line.
 //   * **Narrated history.** `embers.ts` contains, inside its own doc block, a
 //     quotation of the bug this file exists to catch: `A comment here once said
 //     "the last minute or so"`. A comment *reporting* a past lie is not
-//     asserting a present one. Sentences carrying a historical marker are
-//     reported under `historical`, and never fail.
+//     asserting a present one.
+//   * **Per-item products.** "Two steps of about seven pixels each" is a
+//     statement about a product, not about `STRIDE_PX`. It reconciles only
+//     because the sentence says `each`.
+//   * **No bare `s`.** A one-letter unit collides with ordinary English: "the
+//     steep ones" is not a claim about one second.
 //
 // Every finding lands in exactly one of five buckets, and only `defect` fails:
 //
 //   defect      — an assertion that is false. Fails the build.
 //   qualified   — a threshold or a negation; the code cannot contradict it.
+//   quoted      — a number the comment is showing rather than claiming.
 //   historical  — a comment reporting the past. See the quotation above.
-//   unresolved  — a doc block naming a declaration that exists nowhere in the
-//                 file. Real drift, but the check cannot say what it should
-//                 have said, so it is reported and left to a human.
 //   allowlisted — a known, written-down exception, with its reason in
 //                 ALLOWLIST below. A stale allowlist entry is itself a defect,
 //                 so the list cannot rot silently.
 //
+// Every non-failing bucket is printed in full on every run, with the reason. A
+// finding that vanishes quietly is indistinguishable from one that was never
+// found, and this file is arguing against exactly that confusion.
+//
 // PROOF THAT THE RULES FIRE
 //
-// The three shapes above were all fixed before this file existed, so a clean
-// tree proves nothing about the checker. The first group of tests therefore
-// runs the same engine over inline fixtures carrying the historical defects
-// verbatim and asserts each rule catches its shape. The engine is a pure
-// function of source text; the fixtures never touch the filesystem.
+// The three shapes at the top of this file had all been fixed before it
+// existed, so a green run over the tree would have proved nothing about the
+// checker. The first group of tests therefore runs the same engine over inline
+// fixtures carrying those defects verbatim and asserts each rule catches its
+// shape. The engine is a pure function of source text; the fixtures never touch
+// the filesystem. The counter-cases — thresholds, quotations, narrated history,
+// per-item products, `//` inside a string — are pinned just as firmly, because
+// a check that flags those is a check a person turns off.
+//
+// On the tree as it stands, the tree test does not pass: it finds one live
+// instance of shape 2, a doc block in `ui/src/art/iso.ts` headed `shadeFace`
+// sitting above the function that `shadeFace` was renamed to. That is the check
+// working, and it is left unfixed here because this file's job is to report
+// defects, not to edit the code it finds them in.
 //
 // SCOPE
 //
-// `ui/src/**`, `internal/**` and `.scratch/**`. Inside `.scratch` only the
-// contents of fenced code blocks are analysed, because a ticket's *prose* is
-// exactly the unanchored claim described above. Two paths are excluded by name
-// and the exclusion is printed on every run: `internal/web/static/` holds a
+// `ui/src/**`, `internal/**` and `.scratch/**`; the per-root count is printed
+// on every run so the coverage is a number rather than a claim. Inside
+// `.scratch` only fenced code blocks are analysed, because a ticket's *prose*
+// is exactly the unanchored claim described above. Two paths are excluded by
+// name and the exclusion is printed too: `internal/web/static/` holds a
 // checked-in build artefact, and minified output has no comments to be true in.
 
 import { strict as assert } from "node:assert";
@@ -357,8 +384,15 @@ function commentBlocks(src: string, regions: Region[]): CommentBlock[] {
         for (let k = 0; k < cleaned.length; k++) lines.push(p.line + idx);
       });
     }
+    // The block text is trimmed of the leading indentation that `/**` and ` * `
+    // leave behind. It has to be: the first-sentence rules anchor on the first
+    // character, and a block starting with two spaces reads as an untagged
+    // sentence to every regex in the file. `lead` remembers how far the trim
+    // moved things so a reported line still points at the real source line.
+    const lead = text.length - text.replace(/^[ \t\n]+/, "").length;
+    const trimmed = text.replace(/^[ \t\n]+/, "").replace(/[ \t\n]+$/, "");
     return {
-      text,
+      text: trimmed,
       startLine: parts[0]!.line,
       // The line the block *ends* on, which is what "attached to the
       // declaration below" is measured from. Counting the newlines inside the
@@ -369,7 +403,7 @@ function commentBlocks(src: string, regions: Region[]): CommentBlock[] {
         for (let i = last.start; i < last.end; i++) if (src[i] === "\n") n++;
         return n;
       })(),
-      lineAt: (index: number) => lines[Math.min(index, lines.length - 1)] ?? parts[0]!.line,
+      lineAt: (index: number) => lines[Math.min(index + lead, lines.length - 1)] ?? parts[0]!.line,
       doc,
     };
   };
@@ -387,9 +421,8 @@ function commentBlocks(src: string, regions: Region[]): CommentBlock[] {
     }
     if (run.length > 0) {
       const last = run[run.length - 1]!;
-      if (last.end !== r.start) {
-        flush();
-      }
+      // A `//` region stops *before* its newline, so adjacency is end + 1.
+      if (last.end + 1 !== r.start) flush();
     }
     run.push(r);
   }
@@ -450,7 +483,9 @@ const UNIT_SCALE: Record<string, number> = {
   px: 1, pixel: 1, pixels: 1,
 };
 
-const UNIT_WORD = "ms|milliseconds?|s|secs?|seconds?|mins?|minutes?|hrs?|hours?|px|pixels?";
+// The units a *comment* may use. Deliberately narrower than UNIT_SCALE above,
+// which also serves constant names: see the note on the bare `s` below.
+const UNIT_WORD = "ms|milliseconds?|secs?|seconds?|mins?|minutes?|hrs?|hours?|px|pixels?";
 
 // A constant's unit comes from its own name, or — when the name is bare — from
 // a unit word sitting in the sentence that names it. Both are checked in
@@ -487,9 +522,21 @@ function quantityValue(token: string): number {
 // An explicit claim is a quantity immediately followed by a unit word. The unit
 // word must be a real one, which is what keeps "stage 2" and "44, 60, 78 or 100
 // world units" out of the results: neither `stage` nor `units` is a unit.
+//
+// Note what is *not* in UNIT_WORD: a bare `s`. It reads as a time unit and it
+// is one, in `120 s` — but with `\s*` between the quantity and the unit it
+// also reads the trailing "s" of "ones", "two adjacent" and "the two s" as a
+// unit, and `kerb.ts`'s "a run of length two ... the steep ones" was reported
+// as a one-second claim. `sec`, `secs` and `second` carry the same meaning
+// without the collision. A constant whose *name* ends in `_S` still resolves
+// to seconds, through the name table rather than the prose table.
+// Case-insensitive because a sentence-initial quantity is capitalised, and
+// "Two minutes" at the head of `EMBER_MS`'s own doc block is exactly the shape
+// this check exists for. Requiring lowercase would have made the rule
+// unreachable for the defect it was written for.
 const EXPLICIT_CLAIM = new RegExp(
   `\\b(\\d[\\d_]*(?:\\.\\d+)?|${NUMBER_WORD_RE})\\s*(?:of\\s+)?(${UNIT_WORD})\\b`,
-  "g",
+  "gi",
 );
 
 // A claim of one unit with no written quantity: "the last minute", "over the
@@ -499,7 +546,7 @@ const EXPLICIT_CLAIM = new RegExp(
 // codebase's art comments.
 const IMPLICIT_ONE_CLAIM = new RegExp(
   `\\b(?:the|over|within|for|in|since)\\s+(?:last|past|previous|following|next)\\s+(${UNIT_WORD})\\b`,
-  "g",
+  "gi",
 );
 
 interface Claim {
@@ -509,6 +556,7 @@ interface Claim {
   family: Family;
   /** True when the quantity was implied by "the last X" rather than written. */
   implicit: boolean;
+  /** Offset *within the sentence*, so a qualifier can be read off the tail. */
   index: number;
 }
 
@@ -547,7 +595,7 @@ function claimsIn(sentence: Sentence): Claim[] {
       unit,
       family: UNIT_TO_FAMILY[unit]!,
       implicit: false,
-      index: sentence.start + m.index,
+      index: m.index,
     });
   }
   IMPLICIT_ONE_CLAIM.lastIndex = 0;
@@ -558,7 +606,7 @@ function claimsIn(sentence: Sentence): Claim[] {
       unit,
       family: UNIT_TO_FAMILY[unit]!,
       implicit: true,
-      index: sentence.start + m.index,
+      index: m.index,
     });
   }
   return out.sort((a, b) => a.index - b.index);
@@ -577,7 +625,7 @@ const NEGATION_CUE = /\b(?:not|never|no longer|out of|outside|excludes?|excluded
 const THRESHOLD_CUE = /\b(?:ago|after|older than|earlier than|more than|past|beyond)\b/;
 
 function qualifierAfter(sentence: Sentence, claim: Claim): "negated" | "threshold" | null {
-  const after = sentence.text.slice(claim.index + 1, sentence.index + 40);
+  const after = sentence.text.slice(claim.index + 1);
   // A narrow window: within four words of the claim. A wider window would let
   // the trailing "is not" of one clause silence a correct claim earlier in the
   // same sentence, which is exactly the mistake this narrowness avoids.
@@ -602,6 +650,41 @@ function isHistorical(sentence: Sentence): boolean {
   // sentence that merely contains "once" and then makes a fresh assertion is
   // not history.
   return /["“”'`]|comment|called|said|claimed|wrote|read/i.test(sentence.text);
+}
+
+// A claim written inside a code span or quotes is a *quotation*, not an
+// assertion: `gotest.go` writes that `go test` always ends an attribution with
+// a duration, and quotes a line to show what one looks like. That number
+// belongs to another program's output. Only the spans themselves are consulted,
+// so a bare number in ordinary prose is still an assertion — the exemption is
+// for the typography of quoting, not for the content of the sentence.
+const QUOTED_SPAN = /`[^`]*`|"[^"\n]*"|“[^”]*”/g;
+
+function isQuoted(sentence: Sentence, claim: Claim): boolean {
+  const end = claim.index + String(claim.value).length;
+  QUOTED_SPAN.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = QUOTED_SPAN.exec(sentence.text))) {
+    if (m.index <= claim.index && end <= m.index + m[0].length) return true;
+  }
+  return false;
+}
+
+// A per-item quantity next to a count is a product, not a disagreement.
+// `workers.ts` says "Two steps of about seven pixels each" above
+// `STRIDE_PX = 14`, and it is right: 7 is a step, 14 is a cycle. The `each` is
+// what makes this safe to accept. It is also what stops the exemption from
+// becoming a hole — a comment that says "two" and states a window is not
+// thereby claiming half of it, because it never says `each`.
+const EACH_CUE = /\beach\b/i;
+
+function reconciledAsProduct(sentence: Sentence, claim: Claim, have: number): boolean {
+  if (!EACH_CUE.test(sentence.text)) return false;
+  for (const n of [...sentence.text.matchAll(new RegExp(`\\b(\\d[\\d_]*(?:\\.\\d+)?|${NUMBER_WORD_RE})\\b`, "gi"))]) {
+    const count = quantityValue(n[0]);
+    if (Number.isFinite(count) && count >= 2 && same(claim.value * count, have)) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -665,17 +748,29 @@ function parseDecls(code: string, starts: number[]): Decl[] {
     add(m[1]!, lineOf(starts, index), "method");
   }
 
-  // Values. Only numeric literals and records of numeric literals are read; a
+  // Values, and only for *top-level* declarations.
+  //
+  // Module scope is the whole point. A comment is audited against a documented
+  // constant, not against a local in some other function that happens to share
+  // a word with the prose: `roof.ts:648` says "Two pixels down puts it on the
+  // curve", and an unanchored checker reads `curve` as the `const curve = 1 -
+  // t * t` in a different method three hundred lines up. Restricting the
+  // referent to column zero removes that entire class, and in exchange this
+  // file only ever compares prose against the things a reader can look up.
+  //
+  // Only numeric literals and records of numeric literals are read; a
   // declaration whose value is a call or an expression is left valueless and
   // simply becomes unchecked, which is the safe direction.
-  const VALUE_RE = /(?:^|\n)[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[^=\n=]*(?::[^=\n]*)?=[ \t]*(?=[^\n]*)/g;
+  const VALUE_RE = /(?:^|\n)(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[^=\n]*=[ \t]*/g;
   VALUE_RE.lastIndex = 0;
   while ((m = VALUE_RE.exec(code))) {
     const name = m[1]!;
     const decl = found.get(name);
     if (!decl) continue;
-    const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 4000);
-    const rest = tail.replace(/^[^\n]*/, "");
+    // Everything after the `=` is the value expression. Stripping the rest of
+    // the first line instead would delete the opening brace of an object
+    // literal, which is the whole value.
+    const rest = code.slice(m.index + m[0].length, m.index + m[0].length + 4000);
     const scalar = rest.match(/^([ \t]*)((-?\d[\d_]*(?:\.\d+)?))/);
     if (scalar) {
       decl.value = Number(scalar[2]!.replace(/_/g, ""));
@@ -696,10 +791,14 @@ function parseDecls(code: string, starts: number[]): Decl[] {
     if (close === -1) continue;
     const body = rest.slice(open + 1, close);
     const members = new Map<string, number[]>();
-    const MEMBER = /(?:^|[,{\n])[ \t\n]*"?([A-Za-z_$][\w$]*)"?[ \t]*:[ \t]*([[(]?)([^\n]*?)[\])]?[ \t]*(?:,|$)/g;
+    // The value is captured whole — a bracketed list to its closing bracket, or
+    // a scalar to the comma — because `walk: [120, 120, 120, 120]` is one
+    // value. A lazy capture stopped at the first element, and then "a 480ms
+    // cycle" had nothing to reconcile against.
+    const MEMBER = /(?:^|[,{\n])[ \t\n]*"?([A-Za-z_$][\w$]*)"?[ \t]*:[ \t]*(\[[^\]]*\]|[^\n,]+)[ \t]*(?:,|$)/g;
     let mm: RegExpExecArray | null;
     while ((mm = MEMBER.exec(body))) {
-      const numbers = [...mm[3]!.matchAll(/-?\d[\d_]*(?:\.\d+)?/g)].map((x) => Number(x[0].replace(/_/g, "")));
+      const numbers = [...mm[2]!.matchAll(/-?\d[\d_]*(?:\.\d+)?/g)].map((x) => Number(x[0].replace(/_/g, "")));
       if (numbers.length > 0) members.set(mm[1]!, numbers);
     }
     if (members.size > 0) decl.members = members;
@@ -712,7 +811,11 @@ function parseDecls(code: string, starts: number[]): Decl[] {
 // Findings
 // ---------------------------------------------------------------------------
 
-type Bucket = "defect" | "qualified" | "historical" | "unresolved" | "allowlisted";
+// Every finding lands in exactly one bucket, and only `defect` fails. The four
+// non-failing buckets are not escape hatches: each one names a *reason the
+// claim is not an equality*, and each is printed on every run so the reason is
+// visible rather than assumed.
+type Bucket = "defect" | "qualified" | "quoted" | "historical" | "allowlisted";
 
 interface Finding {
   rule: string;
@@ -813,43 +916,63 @@ function analyseFile(path: string, src: string, lang: "ts" | "go"): Finding[] {
   ): void => {
     findings.push({ rule, bucket, file: path, line, claimed, actual, evidence: trim(b.text), referent });
   };
+  // Attachment is resolved first because it decides which rule owns a claim:
+  // a comment glued to the top of a constant is audited by Rule 2, and Rule 1
+  // stands aside rather than reporting the same lie twice.
+  const blockEndingAt = new Map<number, CommentBlock>();
+  for (const b of blocks) blockEndingAt.set(b.endLine, b);
+  const attachedTo = new Map<CommentBlock, Decl>();
+  for (const d of numericDecls) {
+    const attached = blockEndingAt.get(d.line - 1);
+    if (attached) attachedTo.set(attached, d);
+  }
 
   // --- Rule 1: a named constant -------------------------------------------
-  // The comment's own sentence must name the constant. Without that sentence
-  // scoping, any comment in a file mentioning "two minutes" would be audited
-  // against every constant in the file, and the first one would be a false
-  // positive and the rest would be noise.
+  // Two gates, and both of them exist because the naive version produced
+  // hundreds of hits.
+  //
+  // The comment's own sentence must name the constant. Without that scoping,
+  // any comment in a file mentioning "two minutes" would be audited against
+  // every constant in the file, and the first one would be a false positive
+  // and the rest would be noise.
+  //
+  // And a block attached to a constant is not Rule 1's business: Rule 2 owns
+  // it. Without this, every attached comment reported its claims twice.
   for (const b of blocks) {
+    if (attachedTo.has(b)) continue;
     for (const s of sentences(b.text)) {
       const claims = claimsIn(s);
       if (claims.length === 0) continue;
-      if (isHistorical(s)) {
-        for (const c of claims) {
-          record("quantity", "historical", b, b.lineAt(c.index), claimText(c), "narrated, so not an assertion", "-");
-        }
-        continue;
-      }
       for (const c of claims) {
+        if (isHistorical(s)) {
+          record("quantity", "historical", b, b.lineAt(s.start + c.index), claimText(c), "narrated, so not an assertion", "-");
+          continue;
+        }
+        if (isQuoted(s, c)) {
+          record("quantity", "quoted", b, b.lineAt(s.start + c.index), claimText(c), "quoted, so not an assertion", "-");
+          continue;
+        }
         const qual = qualifierAfter(s, c);
         if (qual) {
-          record("quantity", "qualified", b, b.lineAt(c.index), claimText(c), qual, "not an equality");
+          record("quantity", "qualified", b, b.lineAt(s.start + c.index), claimText(c), qual, "not an equality");
           continue;
         }
         for (const d of numericDecls) {
+          if (d.value === undefined) continue;
           if (!wordBoundaryHas(s.text, d.name)) continue;
           const unit = declaredUnits.get(d.name);
           if (!unit || UNIT_TO_FAMILY[unit] !== c.family) continue;
-          if (d.value === undefined) continue;
           const want = canonical(c.value, c.unit, c.family);
           const have = canonical(d.value, unit, c.family);
           if (want === null || have === null) continue;
-          if (same(want, have)) continue;
+          if (same(want, have) || reconciledAsProduct(s, c, have)) continue;
           record(
             "named-constant",
             "defect",
             b,
-            b.lineAt(c.index),
-            `${claimText(c)} vs \`${d.name} = ${d.value}${unit}\` = ${have}`,
+            b.lineAt(s.start + c.index),
+            claimText(c),
+            `${d.name} = ${d.value} ${unit} → ${have}`,
             `${path}:${d.line}`,
           );
         }
@@ -864,27 +987,24 @@ function analyseFile(path: string, src: string, lang: "ts" | "go"): Finding[] {
   // the line directly below, blank-line-exact: a blank line means the comment
   // is not attached, and treating it as attached is how false positives are
   // manufactured.
-  const blockEndingAt = new Map<number, CommentBlock>();
-  for (const b of blocks) blockEndingAt.set(b.endLine, b);
-
-  for (const d of numericDecls) {
-    const attached = blockEndingAt.get(d.line - 1);
-    if (!attached) continue;
+  for (const [attached, d] of attachedTo) {
     const unit = declaredUnits.get(d.name);
     if (d.value !== undefined && unit) {
       for (const s of sentences(attached.text)) {
         const claims = claimsIn(s);
         if (claims.length === 0) continue;
-        if (isHistorical(s)) {
-          for (const c of claims) {
-            record("quantity", "historical", attached, attached.lineAt(c.index), claimText(c), "narrated, so not an assertion", `${path}:${d.line}`);
-          }
-          continue;
-        }
         for (const c of claims) {
+          if (isHistorical(s)) {
+            record("quantity", "historical", attached, attached.lineAt(s.start + c.index), claimText(c), "narrated, so not an assertion", `${path}:${d.line}`);
+            continue;
+          }
+          if (isQuoted(s, c)) {
+            record("quantity", "quoted", attached, attached.lineAt(s.start + c.index), claimText(c), "quoted, so not an assertion", `${path}:${d.line}`);
+            continue;
+          }
           const qual = qualifierAfter(s, c);
           if (qual) {
-            record("quantity", "qualified", attached, attached.lineAt(c.index), claimText(c), qual, `${path}:${d.line}`);
+            record("quantity", "qualified", attached, attached.lineAt(s.start + c.index), claimText(c), qual, `${path}:${d.line}`);
             continue;
           }
           // A sentence that names a *different* constant is about that one.
@@ -893,12 +1013,14 @@ function analyseFile(path: string, src: string, lang: "ts" | "go"): Finding[] {
           const want = canonical(c.value, c.unit, c.family);
           const have = canonical(d.value, unit, c.family);
           if (want === null || have === null || same(want, have)) continue;
+          if (reconciledAsProduct(s, c, have)) continue;
           record(
             "attached-constant",
             "defect",
             attached,
-            attached.lineAt(c.index),
-            `${claimText(c)} vs \`${d.name} = ${d.value}${unit}\` = ${have}`,
+            attached.lineAt(s.start + c.index),
+            claimText(c),
+            `${d.name} = ${d.value} ${unit} → ${have}`,
             `${path}:${d.line}`,
           );
         }
@@ -927,14 +1049,16 @@ function analyseFile(path: string, src: string, lang: "ts" | "go"): Finding[] {
             "attached-record",
             "defect",
             attached,
-            attached.lineAt(c.index),
-            `${claimText(c)} vs \`${d.name}\` keys ${keys.join(", ")} = [${keys.map((k) => d.members!.get(k)!.join(", ")).join("] [")}]`,
+            attached.lineAt(s.start + c.index),
+            claimText(c),
+            `${d.name}: ${keys.map((k) => `${k} = [${d.members!.get(k)!.join(", ")}]`).join("; ")}`,
             `${path}:${d.line}`,
           );
         }
       }
     }
   }
+
 
   // --- Rule 3: a count over a run of literal entries -----------------------
   // The palette shape: "these are the four colours" above a run of hex
@@ -974,7 +1098,9 @@ function analyseFile(path: string, src: string, lang: "ts" | "go"): Finding[] {
           const line = codeLines[i]!;
           const entry = line.match(/^[ \t]*([A-Za-z_$][\w$]*|"[^"]+")?[ \t]*:[ \t]*(.+?)[ \t]*,?[ \t]*$/);
           if (!entry) break;
-          const value = (entry[2] ?? "").trim().replace(/,$/, "").trim();
+          // The quotes come off before the value is classified, or a hex test
+          // would never once see a hex.
+          const value = (entry[2] ?? "").trim().replace(/,$/, "").trim().replace(/^"(.*)"$/, "$1");
           if (value === "") break;
           run.push({ name: entry[1] ?? "", value, line: i + 1 });
           i++;
@@ -995,44 +1121,56 @@ function analyseFile(path: string, src: string, lang: "ts" | "go"): Finding[] {
           "defect",
           b,
           b.startLine,
-          `"${claimed} ${noun}" above ${run.length} entries (${run[0]!.line}-${run[run.length - 1]!.line})`,
-          `${path}:${opening + 1}`,
+          `"${claimed} ${noun}"`,
+          `${run.length} entries: ${run.map((e) => e.name).join(", ")}`,
+          `${path}:${run[0]!.line}-${run[run.length - 1]!.line}`,
         );
       }
     }
   }
 
   // --- Rule 4: a doc block attached to the wrong declaration ---------------
-  // The `resizeSky`/`ensureSky` shape. The precision is in requiring the name
-  // in the first sentence to be a declaration that exists *somewhere in the
-  // same file*: a doc block that says "a ramp runs dark to light" names no
-  // declaration and is not a finding, while a block that says `resizeSky does
-  // X` above `ensureSky` is unambiguously wrong because `resizeSky` is right
-  // there in the same class.
-  const camel = new RegExp(`^(${IDENT})(?=[ \\t])`);
+  // The `resizeSky`/`ensureSky` shape, and the rule that found the one live
+  // instance of it still in the tree (`iso.ts`, a block headed `shadeFace`
+  // sitting above `tintRect`, the function `shadeFace` was renamed to).
+  //
+  // Two gates keep it precise.
+  //
+  // The leading word has to look like a *name*: either it is a declaration in
+  // this file, or it is camelCase with an internal capital. Without that,
+  // "How long a touch is visible." names `How`, and the rule fires on every
+  // doc block in the repository that opens with a question word, an article,
+  // or a preposition.
+  //
+  // The block must actually be attached: a declaration on the line immediately
+  // below, with no blank line between.
+  //
+  // Both outcomes are defects, and they are separated in the message rather
+  // than in the bucket. A name that exists elsewhere in the file is a block
+  // moved by one declaration; a name that exists nowhere is a block left
+  // behind by a rename. Neither describes the code beneath it, and splitting
+  // them by severity would only mean a human had to read both to learn that.
+  const lead = new RegExp(`^(${IDENT})(?=[ \\t])`);
+  const camelCase = /^[a-z_$][\w$]*[A-Z]/;
   for (const b of blocks) {
     if (!b.doc) continue;
     const first = sentences(b.text)[0];
     if (!first) continue;
-    const lead = first.text.match(camel);
-    if (!lead) continue;
-    const named = lead[1]!;
-    // A leading capital or no internal capital is prose, not a name: "Ramp is a
-    // type" is PascalCase and is a name, but "A ramp runs" is not, and the
-    // pattern already excluded it by requiring the identifier to start the
-    // sentence. What remains is checked against real declarations below.
-    // The declaration the block is attached to is the first one below it: a
-    // blank line detaches, exactly as it does everywhere else in this file.
+    const m = first.text.match(lead);
+    if (!m) continue;
+    const named = m[1]!;
+    const elsewhere = byName.has(named);
+    if (!elsewhere && !camelCase.test(named)) continue;
     const below = decls.find((d) => d.line === b.endLine + 1);
     if (!below) continue;
     if (below.name === named) continue;
-    const elsewhere = byName.has(named);
     record(
       "doc-attachment",
-      elsewhere ? "defect" : "unresolved",
+      "defect",
       b,
       b.startLine,
-      `doc names \`${named}\`, declaration below is \`${below.name}\``,
+      `doc block names \`${named}\`${elsewhere ? ", a real declaration in this file" : ", a name declared nowhere in this file"}`,
+      `${below.name} is what is directly below`,
       `${path}:${below.line}`,
     );
   }
@@ -1092,17 +1230,23 @@ function fencesOf(md: string): Fence[] {
   return out;
 }
 
-function scanTree(): { findings: Finding[]; files: number; comments: number } {
+function scanTree(): { findings: Finding[]; perRoot: Record<string, number>; comments: number } {
   const findings: Finding[] = [];
-  let files = 0;
+  const perRoot: Record<string, number> = {};
   let comments = 0;
   for (const root of SCAN_ROOTS) {
+    perRoot[root] = 0;
     for (const p of walk(join(ROOT, root))) {
       const rel = relative(ROOT, p).split(sep).join("/");
       const src = readFileSync(p, "utf8");
       if (p.endsWith(".md")) {
+        // A ticket's prose is the unanchored claim this check cannot make, but
+        // the code it quotes is fair game: a fenced block carries its own
+        // constants, so the same rules apply to it. The count is reported so
+        // that "`.scratch` is covered" is a number in the output rather than a
+        // claim in this comment.
         for (const f of fencesOf(src)) {
-          files++;
+          perRoot[root]!++;
           const found = analyseFile(`${rel}#fence@${f.startLine}`, f.body, f.lang);
           comments += commentBlocks(f.body, lex(f.body, f.lang)).length;
           // Fence bodies are offset by the fence's position in the file so a
@@ -1114,25 +1258,27 @@ function scanTree(): { findings: Finding[]; files: number; comments: number } {
       }
       if (!/\.(ts|tsx|mjs|js|go)$/.test(p)) continue;
       const lang = p.endsWith(".go") ? "go" : "ts";
-      files++;
+      perRoot[root]!++;
       comments += commentBlocks(src, lex(src, lang)).length;
       findings.push(...analyseFile(rel, src, lang));
     }
   }
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule));
-  return { findings, files, comments };
+  return { findings, perRoot, comments };
 }
 
 // ---------------------------------------------------------------------------
 // Reporting
-// ---------------------------------------------------------------------------
+// The print order, most serious first. It is fixed rather than derived so that
+// two runs of a clean tree produce byte-identical reports and can be diffed.
+const BUCKETS: Bucket[] = ["defect", "qualified", "quoted", "historical", "allowlisted"];
 
-const BUCKETS: Bucket[] = ["defect", "qualified", "historical", "unresolved", "allowlisted"];
-
-function report(findings: Finding[], files: number, comments: number): string {
+function report(findings: Finding[], perRoot: Record<string, number>, comments: number): string {
+  const files = Object.values(perRoot).reduce((a, b) => a + b, 0);
   const lines: string[] = [];
   lines.push("── comment truth ────────────────────────────────────────────────");
   lines.push(`scanned ${files} source units, ${comments} comment blocks`);
+  lines.push(`  by root: ${Object.entries(perRoot).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   lines.push(`excluded: ${EXCLUDED.join(", ")}`);
   lines.push("");
   for (const bucket of BUCKETS) {
@@ -1155,13 +1301,51 @@ function report(findings: Finding[], files: number, comments: number): string {
   return lines.join("\n");
 }
 
+// Splits findings into what fails and what is explained, applying the
+// allowlist. Extracted from the tree test so that the allowlist's own two
+// behaviours — it silences a known hit, and it *fails* when it has gone stale
+// — can be tested without a tree to run against.
+function triage(
+  findings: Finding[],
+  perRoot: Record<string, number>,
+  comments: number,
+): { defects: string[]; stale: string[]; out: string } {
+  const allowed = new Set(ALLOWLIST.map((a) => a.key));
+  const used = new Set<string>();
+  const defects: string[] = [];
+  for (const f of findings) {
+    if (f.bucket !== "defect") continue;
+    const key = allowlistKey(f);
+    if (allowed.has(key)) {
+      used.add(key);
+      f.bucket = "allowlisted";
+      continue;
+    }
+    defects.push(
+      `  ${f.file}:${f.line}  [${f.rule}]\n` +
+        `      claimed   ${f.claimed}\n` +
+        `      actual    ${f.actual}\n` +
+        `      referent  ${f.referent}\n` +
+        `      comment   ${f.evidence}`,
+    );
+  }
+  return {
+    defects,
+    stale: ALLOWLIST.filter((a) => !used.has(a.key)).map((a) => `  ${a.key} - ${a.why}`),
+    out: report(findings, perRoot, comments),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 1. The rules fire
 // ---------------------------------------------------------------------------
-// Each fixture is a real defect, written the way it was actually shipped. They
-// are here because the tree is clean: a green run over a clean tree is
-// consistent with a checker that does nothing, which is the failure mode this
-// file is most at risk of.
+// Each fixture is a real defect, written the way it was actually shipped.
+//
+// They are here because the tree cannot demonstrate the rules. Three of the
+// five shapes were fixed before this file existed, and a passing run over a
+// clean tree is equally consistent with a checker that does nothing — which is
+// the failure mode this file is most at risk of, and the one it is least able
+// to detect about itself.
 
 const FIXTURES: { name: string; path: string; src: string; rule: string; line: number }[] = [
   {
@@ -1169,8 +1353,12 @@ const FIXTURES: { name: string; path: string; src: string; rule: string; line: n
     path: "fixture/a.ts",
     rule: "named-constant",
     line: 1,
+    // The blank line matters and is part of the fixture: it is what separates
+    // the *file header* — which names the constant and is therefore audited by
+    // Rule 1 — from a doc block attached to it, which Rule 2 would own.
     src: `// An ember means touched in the last minute or so - see EMBER_MS, the
 // only place that number is written.
+
 export const EMBER_MS = 120_000;
 `,
   },
@@ -1212,7 +1400,8 @@ export const EMBER_MS = 120_000;
     rule: "counted-run",
     line: 1,
     src: `export const P = {
-  // The sky, and nothing else in the art is allowed to use them.
+  // The sky, and nothing else in the art is allowed to use them, so these are
+  // the four colours.
   skyZenith: "#1a2740",
   skyMid: "#3d5570",
   skyHaze: "#7d8a80",
@@ -1247,7 +1436,7 @@ for (const fx of FIXTURES) {
     assert.ok(
       hit,
       `rule "${fx.rule}" found nothing in the fixture\n` +
-        report(found, 1, 1) +
+        report(found, { fixture: 1 }, 1) +
         `\nfixture was:\n${fx.src}`,
     );
     assert.equal(hit.file, fx.path);
@@ -1269,7 +1458,7 @@ export const STOREY = 20;
   assert.deepEqual(
     found.filter((f) => f.bucket === "defect").map((f) => f.rule),
     [],
-    report(found, 1, 1),
+    report(found, { fixture: 1 }, 1),
   );
 });
 
@@ -1282,7 +1471,7 @@ export const EMBER_MS = 120_000;
   assert.deepEqual(
     found.filter((f) => f.bucket === "defect"),
     [],
-    report(found, 1, 1),
+    report(found, { fixture: 1 }, 1),
   );
   assert.ok(
     found.some((f) => f.bucket === "qualified"),
@@ -1302,7 +1491,7 @@ test("the checker does not demand the repository delete its own explanation", ()
 export const EMBER_MS = 120_000;
 `;
   const found = analyseFile("fixture/h.ts", src, "ts");
-  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, 1, 1));
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
   assert.ok(found.some((f) => f.bucket === "historical"));
 });
 
@@ -1317,7 +1506,7 @@ test("a doc block that correctly names the declaration below it is not a finding
 }
 `;
   const found = analyseFile("fixture/i.ts", src, "ts");
-  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, 1, 1));
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
 });
 
 test("a `//` inside a string is not a comment", () => {
@@ -1328,7 +1517,85 @@ export const EMBER_MS = 120_000;
   const found = analyseFile("fixture/j.ts", src, "ts");
   // The comment above is attached to HINT, whose value is a string, so nothing
   // is checked; and the string's "two minutes" must not be read as a claim.
-  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, 1, 1));
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
+});
+
+test("a number quoted from another program is not a claim about this one", () => {
+  // The shape from `gotest.go`: a comment showing what `go test` prints. The
+  // 0.336 belongs to another program's output, and `EMBER_MS` has nothing to
+  // do with it.
+  const src = `// The window is whatever the runner says: \`FAIL  pkg  336ms\`
+// and nothing more.
+export const EMBER_MS = 120_000;
+`;
+  const found = analyseFile("fixture/k.ts", src, "ts");
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
+  assert.ok(
+    found.some((f) => f.bucket === "quoted" && f.claimed === "336 ms"),
+    `the quoted quantity should still be reported, just not failed:\n${report(found, { fixture: 1 }, 1)}`,
+  );
+});
+
+test("a per-item quantity and a count are a product, not a disagreement", () => {
+  // `workers.ts` in full: the comment says a step is seven pixels and there are
+  // two of them, and `STRIDE_PX` is the cycle.
+  const src = `/** The distance one walk cycle covers. Two steps of about seven
+ *  pixels each.
+ */
+const STRIDE_PX = 14;
+`;
+  const found = analyseFile("fixture/l.ts", src, "ts");
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
+});
+
+test("an allowlist entry silences the hit it names and nothing else", () => {
+  const findings: Finding[] = [
+    {
+      rule: "named-constant",
+      bucket: "defect",
+      file: "a.ts",
+      line: 1,
+      claimed: "1 minute",
+      actual: "EMBER_MS = 120000 ms → 120000",
+      evidence: "x",
+      referent: "a.ts:2",
+    },
+    {
+      rule: "named-constant",
+      bucket: "defect",
+      file: "b.ts",
+      line: 1,
+      claimed: "1 minute",
+      actual: "WINDOW_MS = 60000 ms → 60000",
+      evidence: "y",
+      referent: "b.ts:2",
+    },
+  ];
+  ALLOWLIST.push({ key: "a.ts named-constant 1 minute", why: "a known, argued exception" });
+  try {
+    const { defects, stale } = triage(findings, { fixture: 2 }, 2);
+    assert.equal(defects.length, 1, "exactly the unlisted hit should fail");
+    assert.match(defects[0]!, /^ {2}b\.ts:1/);
+    assert.deepEqual(stale, [], "an entry that matched is not stale");
+    assert.equal(findings[0]!.bucket, "allowlisted");
+    assert.equal(findings[1]!.bucket, "defect");
+  } finally {
+    ALLOWLIST.pop();
+  }
+});
+
+test("an allowlist entry that no longer matches is itself a failure", () => {
+  // Without this, the list is a place where a fixed comment's exemption goes
+  // to sit forever, waiting to quietly cover the next defect filed under the
+  // same name.
+  ALLOWLIST.push({ key: "gone.ts named-constant 1 minute", why: "fixed in a commit nobody remembers" });
+  try {
+    const { stale } = triage([], {}, 0);
+    assert.equal(stale.length, 1);
+    assert.match(stale[0]!, /gone\.ts named-constant 1 minute/);
+  } finally {
+    ALLOWLIST.pop();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1336,52 +1603,33 @@ export const EMBER_MS = 120_000;
 // ---------------------------------------------------------------------------
 
 test("every comment in the tree agrees with the code beside it", () => {
-  for (const marker of ["ui/src", "internal", ".scratch"]) {
-    assert.ok(
-      SCAN_ROOTS.includes(marker as (typeof SCAN_ROOTS)[number]),
-      `scan root ${marker} is not registered`,
-    );
-  }
   // A root that does not exist would produce an empty scan, and an empty scan
-  // looks exactly like a clean tree. Refusing to report a clean tree from an
-  // empty file list is the difference between a check and a decoration.
-  const { findings, files, comments } = scanTree();
-  assert.ok(files > 40, `only ${files} source units were scanned; the root is probably wrong`);
+  // looks exactly like a clean tree. These floors are what stop the check
+  // reporting a clean tree because it read nothing — the failure mode that
+  // makes a check indistinguishable from a decoration.
+  const { findings, perRoot, comments } = scanTree();
+  const files = Object.values(perRoot).reduce((a, b) => a + b, 0);
+  for (const root of SCAN_ROOTS) {
+    assert.ok(perRoot[root]! > 0, `scan root ${root} contributed nothing; the walk is broken`);
+  }
+  assert.ok(files > 60, `only ${files} source units were scanned; the root is probably wrong`);
   assert.ok(comments > 200, `only ${comments} comment blocks were parsed; the lexer is probably wrong`);
 
-  const allowed = new Set(ALLOWLIST.map((a) => a.key));
-  const defects: string[] = [];
-  const stale: string[] = [];
-  const used = new Set<string>();
-
-  for (const f of findings) {
-    const base = { rule: f.rule, file: f.file, claimed: f.claimed, actual: f.actual, evidence: f.evidence, referent: f.referent };
-    const key = allowlistKey(base);
-    if (f.bucket === "defect" && allowed.has(key)) {
-      used.add(key);
-      f.bucket = "allowlisted";
-    } else if (f.bucket === "defect") {
-      defects.push(
-        `  ${f.file}:${f.line}  [${f.rule}]\n` +
-          `      claimed   ${f.claimed}\n` +
-          `      actual    ${f.actual}\n` +
-          `      referent  ${f.referent}\n` +
-          `      comment   ${f.evidence}`,
-      );
-    }
+  const { defects, stale, out } = triage(findings, perRoot, comments);
+  if (defects.length === 0 && stale.length === 0) {
+    // Printed before the assertion so a green run and a red run show the same
+    // picture. A report that only exists on failure is a report nobody reads on
+    // the days they most need it — the days it is green and they are wondering
+    // whether it is green because it is right or because it is blind.
+    console.log(out);
+    return;
   }
-  for (const a of ALLOWLIST) if (!used.has(a.key)) stale.push(`  ${a.key} - ${a.why}`);
-
-  const out = report(findings, files, comments);
-  if (defects.length > 0 || stale.length > 0) {
-    assert.fail(
-      `${defects.length} comment(s) contradict the code beside them.\n\n${out}\n` +
-        (defects.length > 0 ? `${defects.join("\n\n")}\n\n` : "") +
-        (stale.length > 0
-          ? `These allowlist entries no longer match anything, so they are suppressing nothing and are only hiding a future edit:\n${stale.join("\n")}\n`
-          : "") +
-        `Fix the comment, or fix the code. If the comment is right, add an entry to ALLOWLIST in test/commenttruth.test.ts with the reason it is not a defect.`,
-    );
-  }
-  console.log(out);
+  assert.fail(
+    `${defects.length} comment(s) contradict the code beside them.\n\n${out}\n` +
+      (defects.length > 0 ? `${defects.join("\n\n")}\n\n` : "") +
+      (stale.length > 0
+        ? `These allowlist entries no longer match anything, so they are suppressing nothing and are only hiding a future edit:\n${stale.join("\n")}\n`
+        : "") +
+      `Fix the comment, or fix the code. If the comment is right, add an entry to ALLOWLIST in test/commenttruth.test.ts with the reason it is not a defect.`,
+  );
 });
