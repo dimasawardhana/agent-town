@@ -216,3 +216,46 @@ test("a band of zero length still terminates", () => {
   assert.ok(tiles.length >= 0, "should not hang or throw");
   assert.ok(tiles.length <= 4, `a zero-length band painted ${tiles.length} tiles`);
 });
+
+test("a band shorter than one tile is still a road", () => {
+  // The gap between two plots on this repository is 14 world units and a tile
+  // is 16. Testing whether a tile's *centre* lies within the band paints
+  // nothing here whenever the band straddles a tile boundary — which is most of
+  // the time, and always for the four axis-aligned roads.
+  const tiles = bandTiles(220, 330, 234, 330, 4, 16, 16);
+  assert.ok(tiles.length > 0, "a 14-unit band painted no tiles at all; it is not a road");
+});
+
+test("a band is continuous across tile boundaries", () => {
+  // Every tile the walk returns must touch its neighbour in the chain. A dotted
+  // road is worse than a wide one: a reader sees a dashed line and concludes
+  // there is no connection.
+  // Every tile the walk returns must touch one already reached.
+  //
+  // Eight neighbours, not four. The ground tiles are an isometric diamond
+  // lattice: under the projection a tile at (wx, wy) and one at (wx+16, wy+16)
+  // land directly above one another, so a diagonal band advances by a
+  // diagonal step and a four-neighbour flood fill reports a perfectly
+  // continuous road as forty pieces.
+  const tiles = bandTiles(100, 100, 500, 180, 4, 16, 16);
+  const keys = new Set(tiles.map((t) => `${t.wx},${t.wy}`));
+  const seen = new Set<string>();
+  const queue = [`${tiles[0].wx},${tiles[0].wy}`];
+  const STEPS: [number, number][] = [];
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx !== 0 || dy !== 0) STEPS.push([dx * 16, dy * 16]);
+    }
+  }
+  while (queue.length > 0) {
+    const key = queue.pop()!;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const [wx, wy] = key.split(",").map(Number);
+    for (const [dx, dy] of STEPS) {
+      const n = `${wx + dx},${wy + dy}`;
+      if (keys.has(n) && !seen.has(n)) queue.push(n);
+    }
+  }
+  assert.equal(seen.size, keys.size, `the band is in ${keys.size - seen.size} pieces, not one`);
+});

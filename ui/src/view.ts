@@ -546,12 +546,21 @@ export function roadsAsLines(
  *
  *  Exported and pure because this is the difference between a road and a
  *  square, and it is the one piece of that decision that can be checked
- *  without a GPU: walk the tiles whose centre lies within `half` of the line,
- *  rather than filling the rectangle the line arrived in.
+ *  without a GPU: walk the tiles the band overlaps, rather than filling the
+ *  rectangle the line arrived in.
  *
- *  **Tile centres, not tile intersections.** A tile the line only clips at a
- *  corner is not road a reader can see, and painting it widens the band back
- *  towards the box this change exists to remove. */
+ *  **Overlap, not centre distance.** The obvious rule — paint a tile whose
+ *  *centre* is within `half` of the line — produces a dotted road. A band is
+ *  8 world units wide and a tile is 16, so most tiles along it have their
+ *  centre nowhere near the line and get skipped, and a short band falls
+ *  between two tiles and paints nothing at all. A road with holes in it is not
+ *  a road, and the test for "is this tile road" has to be whether the band
+ *  touches it, not whether it happens to be centred on it.
+ *
+ *  The cost is that a band can paint one tile wider than itself where the
+ *  line runs close to a tile's edge. That is the same quantisation every other
+ *  road in this town already has — row and district roads are painted as whole
+ *  tiles — and it is the price of a road that is continuous. */
 export function bandTiles(
   ax: number,
   ay: number,
@@ -562,30 +571,81 @@ export function bandTiles(
   tileH: number,
 ): { wx: number; wy: number }[] {
   const out: { wx: number; wy: number }[] = [];
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy;
   // Bounded by the box the band cannot leave, so the walk is O(area of the
-  // box) rather than unbounded, and a degenerate band still terminates. This is
-  // the same rectangle the old painter filled — used here as a bound and not as
-  // the shape, which is the whole difference between the two versions.
+  // box) rather than unbounded and a degenerate band still terminates.
   const x0 = Math.floor((Math.min(ax, bx) - half) / tileW) * tileW;
   const x1 = Math.ceil((Math.max(ax, bx) + half) / tileW) * tileW;
   const y0 = Math.floor((Math.min(ay, by) - half) / tileH) * tileH;
   const y1 = Math.ceil((Math.max(ay, by) + half) / tileH) * tileH;
   for (let wy = y0; wy < y1; wy += tileH) {
     for (let wx = x0; wx < x1; wx += tileW) {
-      const cx = wx + tileW / 2;
-      const cy = wy + tileH / 2;
-      let t = 0;
-      if (len2 > 0) {
-        t = ((cx - ax) * dx + (cy - ay) * dy) / len2;
-        t = Math.max(0, Math.min(1, t));
-      }
-      if (Math.hypot(cx - (ax + dx * t), cy - (ay + dy * t)) <= half) {
+      if (segmentRectDistance(ax, ay, bx, by, wx, wy, wx + tileW, wy + tileH) <= half) {
         out.push({ wx, wy });
       }
     }
   }
   return out;
+}
+
+/** segmentRectDistance is the shortest distance from a segment to an
+ *  axis-aligned rectangle: zero when they touch.
+ *
+ *  **The crossing test comes first and it is not optional.** Measuring only
+ *  corners-to-line and ends-to-rectangle is the cheap version and it is wrong
+ *  in the one case that matters most: a segment running straight through the
+ *  middle of a tile. No corner is near the line and neither end is near the
+ *  tile, so the tile comes out unpainted and the road has a hole in it exactly
+ *  where it is most obviously a road. A band across this repository went from
+ *  41 tiles to 5 disconnected pieces before this test existed.
+ *
+ *  Once crossing is ruled out, the shortest way in is either a rectangle corner
+ *  to the line or a segment end to the rectangle, and taking the minimum of
+ *  both is exact. */
+function segmentRectDistance(
+  ax: number, ay: number, bx: number, by: number,
+  rx0: number, ry0: number, rx1: number, ry1: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+
+  // Liang-Barsky: clip the segment to the rectangle and see whether anything
+  // survives. Four inequalities, and `enter <= leave` at the end is the answer.
+  let enter = 0;
+  let leave = 1;
+  const clip = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) {
+      if (t > leave) return false;
+      if (t > enter) enter = t;
+    } else {
+      if (t < enter) return false;
+      if (t < leave) leave = t;
+    }
+    return true;
+  };
+  if (clip(-dx, ax - rx0) && clip(dx, rx1 - ax) && clip(-dy, ay - ry0) && clip(dy, ry1 - ay)) {
+    if (enter <= leave) return 0;
+  }
+
+  const len2 = dx * dx + dy * dy;
+  const cornerToSegment = (px: number, py: number): number => {
+    let t = 0;
+    if (len2 > 0) {
+      t = ((px - ax) * dx + (py - ay) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+    }
+    return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  };
+  const pointToRect = (px: number, py: number): number => {
+    const cx = Math.max(rx0, Math.min(px, rx1));
+    const cy = Math.max(ry0, Math.min(py, ry1));
+    return Math.hypot(px - cx, py - cy);
+  };
+  let best = cornerToSegment(rx0, ry0);
+  for (const c of [[rx1, ry0], [rx0, ry1], [rx1, ry1]] as [number, number][]) {
+    best = Math.min(best, cornerToSegment(c[0], c[1]));
+  }
+  best = Math.min(best, pointToRect(ax, ay), pointToRect(bx, by));
+  return best;
 }
