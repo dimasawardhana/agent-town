@@ -160,8 +160,13 @@ type Road struct {
 // buildingSize scales a building's footprint by its source-file count.
 //
 // Size is the whole point of the town: a glance should tell you which parts
-// of the project are big. Four discrete steps rather than a continuous scale,
-// because a continuous one produces a row of near-identical rectangles.
+// of the project are big. Five fixed footprints (44, 58, 72, 86, 100) rather
+// than a continuous scale, because a continuous one produces a row of
+// near-identical rectangles — and because the returned number is the join key
+// to the art: the renderer passes it straight to `baseFrame` as the cel side,
+// so a footprint the bake does not draw is a building nothing can be drawn
+// for. The other end of that key is `SIZES` in ui/src/art/bake.ts, and
+// TestEveryEmittedFootprintIsOneTheAtlasDraws holds the two ends together.
 func buildingSize(files int) (w, h float64) {
 	switch {
 	case files <= 2:
@@ -185,13 +190,14 @@ func buildingSize(files int) (w, h float64) {
 // broad low block. Both are true statements about a codebase, and a map with
 // only one of them is answering a smaller question than it could.
 //
-// A table rather than a formula, for the reason buildingSize gives about its own
-// four steps: a continuous scale produces a row of near-identical towers, while
-// a table can be argued about row by row and tuned without touching logic. The
-// thresholds were calibrated against this repository's real distribution (1.9 kB
-// to 1.7 MB across 15 building directories). Applied to those real totals they
-// give: cmd/analyze 1, internal/agent/extension 2, cmd/townd 3,
-// internal/{registry,agent} 4, internal/{town,analyzer,ui/src/art/props} 5,
+// A table rather than a formula, for the reason buildingSize gives about its
+// own five steps: a continuous scale produces a row of near-identical towers,
+// while a table can be argued about row by row and tuned without touching
+// logic. The thresholds were calibrated against this repository's real
+// distribution (1.9 kB to 1.7 MB across 15 building directories). Applied to
+// those real totals they give: cmd/analyze 1, internal/agent/extension 2,
+// cmd/townd 3, internal/{registry,agent} 4,
+// internal/{town,analyzer,ui/src/art/props} 5,
 // ui/src/art 7, ui/src 9, ui 9 — a spread legible as a skyline rather than as a
 // row of equals. The three generated directories draw one storey each despite
 // out-weighing everything else.
@@ -547,12 +553,13 @@ func placeDistrict(l *Layout, d District, buildings []Building, containers []Con
 	// Its footprint is a *baked* size from `buildingSize`, not the plate's own
 	// extent, and that is the correction of a real defect. Sending the plate
 	// extent made the daemon and the renderer disagree about what the site was:
-	// the atlas bakes four footprints (44, 60, 78, 100), so the art was drawn at
-	// the nearest of those while the layout centred the plate's size. Measured:
-	// `internal`'s tower stood 81 units left and 66 units up of its plate, and
-	// `cmd`'s 100-unit art overflowed its 142x114 plate by 43 units vertically.
-	// A site whose declared footprint is not the footprint its art occupies
-	// cannot be placed correctly by anyone.
+	// the art is drawn at the nearest cel the atlas bakes, while the layout
+	// centred the plate's own size. Measured when the atlas baked four
+	// footprints (44, 60, 78, 100 — it bakes five now, and buildingSize
+	// follows it): `internal`'s tower stood 81 units left and 66 units up of
+	// its plate, and `cmd`'s 100-unit art overflowed its 142x114 plate by 43
+	// units vertically. A site whose declared footprint is not the footprint
+	// its art occupies cannot be placed correctly by anyone.
 	// Centreing uses the same expression a building's cell does, so a container
 	// and a building stand on their ground by one rule.
 	//

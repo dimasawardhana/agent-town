@@ -1352,6 +1352,7 @@ const FIXTURES: { name: string; path: string; src: string; rule: string; line: n
     name: "a comment's window contradicts the constant it names",
     path: "fixture/a.ts",
     rule: "named-constant",
+    // The claim is in the header line itself, so the finding opens on line 1.
     line: 1,
     // The blank line matters and is part of the fixture: it is what separates
     // the *file header* — which names the constant and is therefore audited by
@@ -1366,7 +1367,8 @@ export const EMBER_MS = 120_000;
     name: "a doc block contradicts the constant it is attached to",
     path: "fixture/b.ts",
     rule: "attached-constant",
-    line: 1,
+    // The claim is the last line of the doc block, not its `/**`.
+    line: 4,
     src: `/**
  * How long a touch is visible.
  *
@@ -1379,7 +1381,8 @@ export const EMBER_MS = 120_000;
     name: "a doc block is attached to the wrong declaration",
     path: "fixture/c.ts",
     rule: "doc-attachment",
-    line: 1,
+    // An attachment defect is about the block, so it opens on the `/**`.
+    line: 2,
     src: `class Scene {
   /**
    * resizeSky repaints the backdrop for a new view size.
@@ -1398,7 +1401,8 @@ export const EMBER_MS = 120_000;
     name: "a count contradicts the run of entries below it",
     path: "fixture/d.ts",
     rule: "counted-run",
-    line: 1,
+    // "the four colours" is the second line of the run's comment.
+    line: 3,
     src: `export const P = {
   // The sky, and nothing else in the art is allowed to use them, so these are
   // the four colours.
@@ -1416,7 +1420,8 @@ export const EMBER_MS = 120_000;
     name: "a doc block's numbers are checked against the record they document",
     path: "fixture/e.ts",
     rule: "attached-record",
-    line: 1,
+    // "Walk is 150ms" is the fourth line of the block.
+    line: 4,
     src: `/**
  * FRAME_MS is each animation's per-frame duration.
  *
@@ -1440,7 +1445,21 @@ for (const fx of FIXTURES) {
         `\nfixture was:\n${fx.src}`,
     );
     assert.equal(hit.file, fx.path);
-    assert.ok(hit.line > 0, "a finding must carry a line a human can open");
+    // The line is the line a person opens, so it is asserted as the line the
+    // fixture says it is rather than as "some line at all". `hit.line > 0` let
+    // through a checker that anchored every finding at the head of the comment
+    // block instead of at the sentence doing the claiming: all five fixtures
+    // would still pass at 1, and a report entry would send the reader to the
+    // top of a block whose third line is the lie. It also let through a
+    // checker that pointed at the *declaration* below the comment — the number
+    // being correct, the sentence being wrong, and the two indistinguishable
+    // to `> 0`. Each fixture below carries the line its own claim sits on, and
+    // they differ, which is the point: 4 of the 5 are not line 1.
+    assert.equal(
+      hit.line,
+      fx.line,
+      `rule "${fx.rule}" is reported at line ${hit.line}, not the claim's line ${fx.line}`,
+    );
     assert.ok(hit.claimed.length > 0, "a finding must say what was claimed");
     assert.ok(hit.actual.length > 0, "a finding must say what the code says");
   });

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -436,7 +438,7 @@ func TestPlacesHaveDepthZero(t *testing.T) {
 // TestFloorsFromBytes covers the floors table.
 //
 // A table rather than a formula, for the reason `buildingSize` gives about its
-// own four steps: a continuous scale produces a row of near-identical towers,
+// own five steps: a continuous scale produces a row of near-identical towers,
 // while a table can be argued about row by row and tuned without touching logic.
 func TestFloorsFromBytes(t *testing.T) {
 	cases := []struct {
@@ -721,7 +723,7 @@ func TestContainersAreDeterministic(t *testing.T) {
 //
 // The daemon sends a site's footprint and the renderer draws that footprint's
 // art, so the two have to agree. The first version sent the *plate's* extent
-// while the atlas bakes only four sizes, so `internal`'s tower stood 81 units
+// while the atlas baked only four sizes, so `internal`'s tower stood 81 units
 // left and 66 units up of its plate and `cmd`'s art overflowed its plate by 43
 // units vertically. Both were invisible in the code, because each side was
 // individually consistent.
@@ -774,6 +776,186 @@ func TestContainerFootprintIsABakedSizeAndSitsInsideItsPlate(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no container site placed for a tree whose only source is one level down")
 	}
+}
+
+// footprint is one rung of the ladder as the atlas records it: a cel side, and
+// a source-file count that the atlas says draws at that side.
+type footprint struct {
+	side  float64
+	files int
+}
+
+// bakedFootprints is the ladder ui/src/art/bake.ts bakes — the other end of
+// the key a site's W is looked up by, since the renderer passes W straight to
+// baseFrame(side, …).
+//
+// Read, never restated. A copy of the table in a second language is not a test
+// of it, it is a second thing to forget to update, and the drift is not
+// hypothetical: this ladder grew from four rungs to five, and for a while the
+// two ends named different numbers (see the comment on placeDistrict).
+func bakedFootprints(t *testing.T) []footprint {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "ui", "src", "art", "bake.ts"))
+	if err != nil {
+		t.Fatalf("reading the atlas's footprint table: %v", err)
+	}
+	entry := regexp.MustCompile(`\{\s*side:\s*([0-9]+)\s*,\s*files:\s*([0-9]+)\s*\}`)
+	var out []footprint
+	for _, m := range entry.FindAllStringSubmatch(string(b), -1) {
+		side, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("unreadable side %q in SIZES: %v", m[1], err)
+		}
+		files, err := strconv.Atoi(m[2])
+		if err != nil {
+			t.Fatalf("unreadable file count %q in SIZES: %v", m[2], err)
+		}
+		out = append(out, footprint{side: float64(side), files: files})
+	}
+	if len(out) == 0 {
+		t.Fatal("no { side: N, files: M } entries in ui/src/art/bake.ts; the table was reshaped and this test would otherwise pass on nothing")
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].side < out[j].side })
+	return out
+}
+
+// TestEveryEmittedFootprintIsOneTheAtlasDraws walks the whole footprint ladder
+// and holds both ends of the join key against each other.
+//
+// A site that declares a footprint the bake does not have is a site the
+// renderer draws at the nearest cel it has, at a size the layout never asked
+// for — which is the defect recorded on placeDistrict, where a container's
+// tower stood 81 units off its own plate. The reverse is dead art: a rung the
+// atlas bakes and this package never emits is a cel nothing can ever ask for.
+// So the two ends must agree, in both directions, and at every rung.
+//
+// The rung a *count* lands on matters as much as the set of rungs, and that
+// is the assertion a set comparison alone cannot make: sliding a breakpoint
+// from 9 files to 8 emits the same five sizes overall, so the set is
+// unchanged and the town is not — nine files quietly stops being the 72-unit
+// building. Hence the file counts below are the atlas's own, walked through a
+// real Analyze and LayoutTown rather than checked against the table directly.
+//
+// Checked per kind, not over the union. A building and a container reach the
+// ladder by different routes — a container's size is then capped against its
+// plate — so a threshold that moved out from under one of them is still a
+// ladder no single kind of site can climb.
+func TestEveryEmittedFootprintIsOneTheAtlasDraws(t *testing.T) {
+	rungs := bakedFootprints(t)
+
+	// Every file count the atlas records, plus one just past each, plus the
+	// smallest tree there is. Sorted and de-duplicated, so the monotonic walk
+	// below is over file counts and not over district names.
+	countSet := map[int]bool{1: true}
+	for _, r := range rungs {
+		countSet[r.files] = true
+		countSet[r.files+1] = true
+	}
+	counts := make([]int, 0, len(countSet))
+	for n := range countSet {
+		counts = append(counts, n)
+	}
+	sort.Ints(counts)
+
+	// One district per count, holding a single building — and a second
+	// district per count whose only source is one level down, so the same
+	// count reaches the ladder as a container. A one-building district is
+	// itself an ancestor of a building and so grows a container too; only the
+	// c<i> ones are this walk's own.
+	districts := map[string][2]int{}
+	containerDistricts := map[string]bool{}
+	for i, n := range counts {
+		districts["d"+itoa(i)] = [2]int{1, n}
+		name := "c" + itoa(i)
+		districts[name+"/leaf"] = [2]int{1, n}
+		containerDistricts[name] = true
+	}
+	l := layoutOf(t, tree(t, districts))
+
+	byKind := map[Place]map[float64]bool{PlaceBuilding: {}, PlaceContainer: {}}
+	byCount := map[Place]map[int]float64{PlaceBuilding: {}, PlaceContainer: {}}
+	var widest float64
+	for _, s := range l.Sites {
+		if s.Kind != PlaceBuilding && s.Kind != PlaceContainer {
+			continue
+		}
+		if s.Kind == PlaceContainer && !containerDistricts[s.District] {
+			continue
+		}
+		if s.W != s.H {
+			t.Errorf("%s footprint is %vx%v, but a cel is a square side", s.Path, s.W, s.H)
+		}
+		byKind[s.Kind][s.W] = true
+		byCount[s.Kind][s.Files] = s.W
+		if s.W > widest {
+			widest = s.W
+		}
+	}
+
+	for _, kind := range []Place{PlaceBuilding, PlaceContainer} {
+		emitted, seen := byKind[kind], byCount[kind]
+		if len(seen) != len(counts) {
+			t.Fatalf("%s: %d file counts walked but %d sites found, so this walk is not measuring what it claims",
+				kind, len(counts), len(seen))
+		}
+
+		// Each rung, at the count the atlas records for it.
+		for _, r := range rungs {
+			if got, ok := seen[r.files]; !ok {
+				t.Errorf("%s: nothing was placed at %d files, the count the atlas records against the %.0f-unit cel",
+					kind, r.files, r.side)
+			} else if got != r.side {
+				t.Errorf("%s: %d files drew %.0f units, but the atlas records that count against the %.0f-unit cel; a rung has moved",
+					kind, r.files, got, r.side)
+			}
+		}
+
+		// Nothing undrawable, and no rung of baked art that nothing reaches.
+		for side := range emitted {
+			if _, ok := sideFor(rungs, side); !ok {
+				t.Errorf("a %s is emitted at %.0f units, which the atlas does not bake; the renderer would draw a different size", kind, side)
+			}
+		}
+		for _, r := range rungs {
+			if !emitted[r.side] {
+				t.Errorf("the atlas bakes a %.0f-unit footprint that no %s reaches; the cel is dead art", r.side, kind)
+			}
+		}
+
+		// More files must never mean a smaller footprint, and a discrete
+		// ladder must be discrete: every count landing on its own size would
+		// be a continuous scale, the thing buildingSize argues against.
+		for i := 1; i < len(counts); i++ {
+			if lo, hi := seen[counts[i-1]], seen[counts[i]]; hi < lo {
+				t.Errorf("%s: %d files drew %.0f units and %d files drew %.0f: the ladder is not monotonic",
+					kind, counts[i-1], lo, counts[i], hi)
+			}
+		}
+		if len(emitted) >= len(counts) {
+			t.Errorf("%s: %d file counts produced %d distinct footprints; the scale is continuous again",
+				kind, len(counts), len(emitted))
+		}
+	}
+
+	// The biggest thing that can stand anywhere is the biggest cel the atlas
+	// bakes. maxBuildingFootprint is the claim; the bake is the fact.
+	biggest := rungs[len(rungs)-1].side
+	if widest != maxBuildingFootprint {
+		t.Errorf("the largest footprint emitted is %.0f, but maxBuildingFootprint is %.0f", widest, maxBuildingFootprint)
+	}
+	if maxBuildingFootprint != biggest {
+		t.Errorf("maxBuildingFootprint is %.0f, but the atlas's largest cel is %.0f", maxBuildingFootprint, biggest)
+	}
+}
+
+// sideFor is the rung a cel side belongs to, by exact match.
+func sideFor(rungs []footprint, side float64) (footprint, bool) {
+	for _, r := range rungs {
+		if r.side == side {
+			return r, true
+		}
+	}
+	return footprint{}, false
 }
 
 // TestContainerFitsATightPlate covers the case the cap exists for.

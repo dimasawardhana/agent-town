@@ -72,10 +72,22 @@ export interface FrameInfo {
 /** Every frame the town draws, by name. Built by `bake` and read by the scene. */
 export type Atlas = Record<string, FrameInfo>;
 
-/** The four building footprints the analyzer emits, and the file count each
- *  step corresponds to (internal/analyzer/layout.go). */
 /**
- * The footprints a building can be drawn at.
+ * The footprints a building can be drawn at, and the file count each step
+ * corresponds to.
+ *
+ * **The join with the analyzer is a contract, not a coincidence.** The daemon
+ * decides a building's size from its file count (`buildingSize`,
+ * internal/analyzer/layout.go) and passes the result here as the cel side, so the
+ * two lists must agree exactly. Nothing in the type system ties them together
+ * across the language boundary, which is why
+ * `TestEveryEmittedFootprintIsOneTheAtlasDraws` reads *this* table out of this
+ * file and walks it through the analyzer's ladder — a join asserted rather than
+ * assumed.
+ *
+ * It had drifted: a comment here said "the four building footprints" directly
+ * above a block saying five, and the analyzer's own doc said four steps for a
+ * switch with five rungs. Found by a crew working only in the Go half.
  *
  * Five, and the number is a budget rather than a preference. Four left eight of
  * this repository's fourteen buildings on the same footprint, which is what made

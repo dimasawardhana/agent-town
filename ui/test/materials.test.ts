@@ -64,7 +64,37 @@ test("a base damage overlay exists for every family, and a blank beside it", () 
 test("the body is keyed on the archetype, not the file count", () => {
   // Two buildings of the same size but different archetypes must differ. This is
   // the whole change: before it, the body came from `files` and a path hash.
-  const a1 = baseFrame(78, materialFor("chapel"), "completed", 0);
-  const a2 = baseFrame(78, materialFor("tower"), "completed", 0);
-  assert.notEqual(a1, a2, "two archetypes share one base frame; the body is still keyed on size");
+  //
+  // Asserted as the frame each archetype *lands on*, not as a difference between
+  // two of them. `assert.notEqual(a1, a2)` only asks that stone and glass
+  // disagree, which stays true when `baseFrame` uppercases the material, swaps
+  // two fields, or hashes the name instead of writing it — every base in the
+  // town would then resolve to a key the bake never cut and draw nothing, and
+  // the pair would still be "different". Worse, the side it asked about was 78,
+  // and the bake cuts 44, 58, 72, 86 and 100: a frame for a footprint the town
+  // has no building on can never be wrong, so the test was asking about nothing
+  // at all. So each key is pinned to the string it must be *and* looked up in
+  // the frames the bake really holds, at a footprint it really cuts.
+  const keys = new Set(bakedCels().map((c) => c.key));
+  const a1 = baseFrame(86, materialFor("chapel"), "completed", 0);
+  const a2 = baseFrame(86, materialFor("tower"), "completed", 0);
+  assert.equal(a1, "base:86:completed:stone", "a chapel's ground storey is not the stone base");
+  assert.equal(a2, "base:86:completed:glass", "a tower's ground storey is not the glass base");
+  assert.ok(keys.has(a1), `${a1} is not a baked frame, so every chapel draws no ground storey`);
+  assert.ok(keys.has(a2), `${a2} is not a baked frame, so every tower draws no ground storey`);
+
+  // And the claim is about every archetype, not the two that happen to differ:
+  // all twelve must land on a frame that exists, and on exactly the five
+  // families and no more. A key that also carried the archetype's own name
+  // would still separate chapel from tower — the pair above would still pass —
+  // and would triple every base cel in the atlas to do it.
+  const frames = new Set(ARCHETYPES.map((a) => baseFrame(86, materialFor(a), "completed", 0)));
+  assert.equal(
+    frames.size,
+    MATERIALS.length,
+    `twelve archetypes resolve to ${frames.size} base frames, want one per family`,
+  );
+  for (const f of frames) {
+    assert.ok(keys.has(f), `${f} is not a baked frame, so an archetype draws no ground storey`);
+  }
 });
