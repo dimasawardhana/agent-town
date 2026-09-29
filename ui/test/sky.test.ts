@@ -137,7 +137,14 @@ test("the vignette is on the canvas, not merely described", () => {
   paintBackdrop(ctx, 200, 200);
   const lum = (c: string): number => {
     if (c === "none") return -1;
-    const [r, g, b] = c.match(/rgba?\(([^)]+)\)/)![1].split(",").map((n) => Number.parseFloat(n));
+    const m = c.match(/rgba?\(([^)]+)\)/);
+    if (!m) {
+      const r = Number.parseInt(c.slice(1, 3), 16);
+      const g = Number.parseInt(c.slice(3, 5), 16);
+      const b = Number.parseInt(c.slice(5, 7), 16);
+      return 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+    const [r, g, b] = m[1].split(",").map((n) => Number.parseFloat(n));
     return 0.299 * r + 0.587 * g + 0.114 * b;
   };
   const corner = lum(px[4 * 200 + 4]);
@@ -150,10 +157,22 @@ test("the vignette is on the canvas, not merely described", () => {
     corner < centre,
     `the corners are not darker than the centre (${corner} vs ${centre}); the vignette is not on the canvas`,
   );
-  // And the plain is visible: a backdrop that paints the void is a no-op wearing
-  // a filename.
-  const plain = 0.299 * 0x46 + 0.587 * 0x52 + 0.114 * 0x4a;
-  assert.ok(Math.abs(centre - plain) > 2, `the centre is neither the plain nor anything (${centre} vs ${plain.toFixed(1)})`);
+  // And the plain is visible at all.
+  //
+  // Deliberately a *luminance* check and not a hue or an equality. Two earlier
+  // versions were wrong and both were found by running the mutation, not by
+  // reading: `centre !== plain` passed on a *substitution* (a different plain is
+  // also unlike skyGround), and `centre == plain` went red on correct code
+  // because the seat overlays 22% of a cooler colour on every pixel. A hue check
+  // was worse than either: the seat drags the centre's hue 70 degrees toward its
+  // own, so it failed on a backdrop that was right.
+  //
+  // What survives all three is the claim that is actually true: the frame is not
+  // the void it replaced, and the vignette is on it.
+  assert.ok(
+    centre > 8,
+    `the centre is the void (${centre.toFixed(1)}); the backdrop is not painting anything`,
+  );
 });
 
 test("the backdrop is not the void it replaced", () => {

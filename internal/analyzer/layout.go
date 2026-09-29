@@ -318,7 +318,11 @@ func LayoutTown(t *Town) Layout {
 	// and left the bottom of `internal` standing beside bare grass.
 	flushRow := func(to *Layout) {
 		for _, gx := range gaps {
-			to.Roads = append(to.Roads, Road{X: gx, Y: rowTop, W: rowGap, H: rowH, Kind: "district"})
+			// The gap is *before* the district that caused the wrap decision, not
+			// under it. The stored x is that district's own left edge, so the band
+			// goes back one gap — without this the road is drawn underneath the
+			// next district, which is a road through a building.
+			to.Roads = append(to.Roads, Road{X: gx - rowGap, Y: rowTop, W: rowGap, H: rowH, Kind: "district"})
 		}
 		gaps = gaps[:0]
 	}

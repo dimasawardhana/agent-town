@@ -24,7 +24,8 @@
     "test:sky": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-sky.test.mjs test/sky.test.ts --log-level=warning && node --test ui-sky.test.mjs",
     "test:commenttruth": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-commenttruth.test.mjs test/commenttruth.test.ts --log-level=warning && node --test ui-commenttruth.test.mjs",
     "test:motion": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-motion.test.mjs test/motion.test.ts --log-level=warning && node --test ui-motion.test.mjs",
-    "test:selftest": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-selftest.test.mjs test/selftest.test.ts --log-level=warning && node --test ui-selftest.test.mjs"
+    "test:selftest": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-selftest.test.mjs test/selftest.test.ts --log-level=warning && node --test ui-selftest.test.mjs",
+    "test:mutate": "node test/mutate.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1",

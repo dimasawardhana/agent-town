@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+// Does any test notice when the code is wrong?
+//
+// Three of the four ways this project shipped a useless test were *shapes* — a
+// local that reimplemented the logic, a double that half-implemented an
+// interface, a probe that computed the wrong thing. Those are greppable and
+// `selftest.test.ts` catches them. The fourth is not: a test that calls the right
+// function and asserts the wrong thing about it has no shape at all. It reads
+// perfectly. The shadow test that guarded a ring which never came off imported
+// the real module, used the real names, and was worth nothing.
+//
+// That question has a mechanical answer, and this is it. For each mutation, break
+// the code on purpose, run the suite, and require it to go **red**. A mutation
+// that survives is a claim that no test can tell right from wrong here — and it
+// must be either fixed or written down, not left to be discovered later.
+//
+// Deliberately narrow. Mutation testing the whole suite is slow enough that
+// nobody runs it, and a slow check is a dead check. This covers the handful of
+// places where a wrong answer becomes a **false claim on the map** — the ember's
+// window, the district geometry, the test-district weight, the import resolution.
+// Those are the ones the project's founding promise depends on.
+//
+// Every mutation below is one the map would happily draw a lie about.
+
+import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const ROOT = new URL("../../", import.meta.url).pathname;
+const UI = join(ROOT, "ui");
+
+/** file, from, to, and the suites that must notice. */
+const MUTATIONS = [
+  {
+    what: "the ember outlives its window",
+    file: "src/embers.ts",
+    from: "if (age >= EMBER_MS) return 0;",
+    to: "if (age >= EMBER_MS * 4) return 0;",
+    suite: "test:embers",
+    // This one is a real hole, recorded rather than pretended away.
+    survives: true,
+    why: "EMBER_MS bounds the strength; nothing asserts the mark is *removed* at the window, only that its strength is zero. The panel's own test would catch it if the count changed.",
+  },
+  {
+    what: "a touched building never stops glowing",
+    file: "src/embers.ts",
+    from: "if (age <= 0) return 1;",
+    to: "if (age <= 0) return 0.5;",
+    suite: "test:embers",
+  },
+  {
+    what: "the sky gains a horizon again",
+    file: "src/sky.ts",
+    from: "  g.fillStyle = P.skyGround;",
+    to: "  g.fillStyle = P.skyMid;",
+    suite: "test:sky",
+    survives: true,
+    why: "MEASURED, not assumed. Three assertions were tried against this and all three were wrong: 'centre !== plain' passes on a *substitution*, 'centre == plain' goes red on correct code because the seat overlays every pixel, and a hue check fails because the seat drags the centre 70 degrees toward its own. What survives is 'the frame is not the void', which a substituted plain also satisfies. Closing this needs a different instrument — a pixel the overlays cannot reach, or the palette entry itself — not a third phrasing.",
+  },
+  {
+    what: "the tree's test district is no longer weighted down",
+    file: "../internal/analyzer/layout.go",
+    from: "testPitch = 0.7",
+    to: "testPitch = 1.0",
+    suite: null, // Go suite
+    go: true,
+  },
+  {
+    what: "districts are laid out on top of each other",
+    file: "../internal/analyzer/layout.go",
+    from: "x += blk.W + rowGap",
+    to: "x += blk.W",
+    suite: null,
+    go: true,
+  },
+  {
+    what: "a bare specifier is counted as unresolvable",
+    file: "../internal/analyzer/imports.go",
+    from: 'if !strings.HasPrefix(spec, ".") {',
+    to: "if false {",
+    suite: null,
+    go: true,
+  },
+];
+
+const run = (cmd, cwd) => {
+  try {
+    execSync(cmd, { cwd, stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const results = [];
+for (const m of MUTATIONS) {
+  const abs = join(UI, m.file);
+  const before = readFileSync(abs, "utf8");
+  if (!before.includes(m.from)) {
+    results.push({ ...m, verdict: "STALE", note: "the anchor text is gone; the mutation no longer applies" });
+    continue;
+  }
+  writeFileSync(abs, before.replace(m.from, m.to));
+
+  // Red means a test noticed. Green means nothing did.
+  const green = m.go
+    ? run("go test ./internal/analyzer/ -count=1", ROOT)
+    : run(`npm run --silent ${m.suite}`, UI);
+
+  writeFileSync(abs, before);
+  if (!green) {
+    results.push({ ...m, verdict: "caught" });
+  } else if (m.survives) {
+    results.push({ ...m, verdict: "survives (known)", why: m.why });
+  } else {
+    results.push({ ...m, verdict: "SURVIVES" });
+  }
+}
+
+const pad = Math.max(...results.map((r) => r.what.length));
+for (const r of results) {
+  const mark = r.verdict === "caught" ? "caught   " : r.verdict === "SURVIVES" ? "SURVIVES " : r.verdict.padEnd(8) + " ";
+  console.log(`  ${mark} ${r.what.padEnd(pad)}`);
+  if (r.why) console.log(`  ${" ".repeat(9)}${r.why}`);
+}
+
+const uncaught = results.filter((r) => r.verdict === "SURVIVES" || r.verdict === "STALE");
+console.log("");
+console.log(`  ${results.length} mutations · ${results.filter((r) => r.verdict === "caught").length} caught · ${uncaught.length} unaccounted for`);
+if (uncaught.length) {
+  console.log("");
+  console.log("  An unaccounted-for mutation means no test can tell right from wrong here.");
+  console.log("  Fix a test, or write down why the survival is acceptable.");
+  process.exit(1);
+}

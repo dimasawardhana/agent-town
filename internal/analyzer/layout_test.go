@@ -1367,3 +1367,44 @@ func TestAMultiRowTownLaysOutAndRoads(t *testing.T) {
 		}
 	}
 }
+
+// A district road must lie in a gap, not on top of a district.
+//
+// Mutation testing wrote this test, and the first version of it was wrong. It
+// asserted that no two districts *overlap*, which a fixture that does not wrap
+// cannot falsify — and even once it wrapped, removing the gap entirely makes the
+// districts flush rather than overlapping, so the test still passed.
+//
+// The gap is not there to keep districts apart. It is there so a **road** fits
+// in it, and that is the claim worth asserting: a band drawn where a district
+// stands is a road through a building, and the map would draw it without
+// complaint.
+func TestDistrictRoadsDoNotRunOverADistrict(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"} {
+		for b := 0; b < 6; b++ {
+			dir := filepath.Join(root, d, "m"+itoa(b), "src")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for f := 0; f < 6; f++ {
+				if err := os.WriteFile(filepath.Join(dir, "f"+itoa(f)+".ts"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	l := layoutOf(t, root)
+	for _, r := range l.Roads {
+		if r.Kind != "district" && r.Kind != "row" {
+			continue
+		}
+		for _, d := range l.Districts {
+			overlaps := r.X < d.X+d.W && d.X < r.X+r.W && r.Y < d.Y+d.H && d.Y < r.Y+r.H
+			if overlaps {
+				t.Errorf("a %s road at %.0f,%.0f %.0fx%.0f runs over the %s district at %.0f,%.0f %.0fx%.0f",
+					r.Kind, r.X, r.Y, r.W, r.H, d.Name, d.X, d.Y, d.W, d.H)
+			}
+		}
+	}
+}
