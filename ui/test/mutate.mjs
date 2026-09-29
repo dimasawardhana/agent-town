@@ -77,6 +77,20 @@ const MUTATIONS = [
     suite: null,
     go: true,
   },
+  {
+    what: "a car's position stops depending on its road",
+    file: "src/traffic.ts",
+    from: '  const phase = hash(`${road.from ?? ""}${road.to ?? ""}`);',
+    to: "  const phase = 0;",
+    suite: "test:traffic",
+  },
+  {
+    what: "cars drive on containment roads too",
+    file: "src/traffic.ts",
+    from: "return roads.filter((r) => r.from && r.to);",
+    to: "return roads;",
+    suite: "test:traffic",
+  },
 ];
 
 const run = (cmd, cwd) => {

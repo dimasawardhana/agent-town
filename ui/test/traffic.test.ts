@@ -8,7 +8,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { bakedCels } from "../src/art/bake";
-import { carAt, CAR_LENGTH } from "../src/traffic";
+import { carAt, CAR_LENGTH, drivenRoads } from "../src/traffic";
 import type { RoadLine } from "../src/view";
 
 const road: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4, from: "a", to: "b" };
@@ -38,6 +38,20 @@ test("a road with no importer carries no car", () => {
   const bare: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4 };
   assert.equal(bare.from, undefined, "a containment road grew a direction");
   assert.ok(CAR_LENGTH > 0);
+});
+
+test("only import roads carry cars, and containment roads carry none", () => {
+  const lines: RoadLine[] = [
+    { ax: 0, ay: 0, bx: 10, by: 0, halfWidth: 4, from: "a", to: "b" },
+    { ax: 20, ay: 0, bx: 30, by: 0, halfWidth: 4 },
+    { ax: 40, ay: 0, bx: 50, by: 0, halfWidth: 4, from: "c" },
+    { ax: 60, ay: 0, bx: 70, by: 0, halfWidth: 4, from: "d", to: "" },
+  ];
+  assert.deepEqual(
+    drivenRoads(lines).map((r) => `${r.from ?? ""}->${r.to ?? ""}`),
+    ["a->b"],
+    "a road without both ends of a dependency is being given a car",
+  );
 });
 
 test("a car costs the atlas nothing", () => {

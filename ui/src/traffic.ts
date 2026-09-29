@@ -76,6 +76,21 @@ export function carAt(road: RoadLine, now: number): number {
   return t < 0 ? t + 1 : t;
 }
 
+/** drivenRoads is the road set that carries traffic: the import roads only.
+ *
+ *  A containment road is a true fact and a static one — "this sits inside
+ *  that" is not a dependency, and a car on it would claim one that is not
+ *  there. Row and district roads are the ground the town is drawn on, not
+ *  journeys between buildings.
+ *
+ *  Named and exported rather than left as an inline filter because this *is* the
+ *  claim "a car only ever says this building uses that one", and a rule that is
+ *  only reachable through a constructor that needs a live scene is a rule no
+ *  headless test can check. The mutation runner holds this line honest. */
+export function drivenRoads(roads: readonly RoadLine[]): RoadLine[] {
+  return roads.filter((r) => r.from && r.to);
+}
+
 /** Traffic draws one car on every import road. */
 export class Traffic {
   private cars = new Map<string, Phaser.GameObjects.Graphics>();
@@ -90,7 +105,7 @@ export class Traffic {
   sync(roads: RoadLine[]): void {
     // A containment road is a true fact and a static one; "this sits inside
     // that" is not a dependency and a car on it would claim one that is not there.
-    this.roads = roads.filter((r) => r.from && r.to);
+    this.roads = drivenRoads(roads);
     const live = new Set(this.roads.map((r) => `${r.from}${r.to}`));
     for (const [id, car] of this.cars) {
       if (!live.has(id)) {
