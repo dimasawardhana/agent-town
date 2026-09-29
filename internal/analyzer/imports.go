@@ -34,16 +34,17 @@ import (
 	"strings"
 )
 
-// importEdges finds every import between two buildings in this town.
+// importEdgesCounting finds every import between two buildings in this town, and
+// reports what it could not place.
 //
-// The result is a set of ordered pairs, deduplicated, so a package that imports
-// its neighbour forty times produces one road rather than forty.
-func importEdges(root string, buildings map[string]bool) map[[2]string]bool {
-	edges, _ := importEdgesCounting(root, buildings)
-	return edges
-}
-
-// importEdgesCounting is importEdges, and also reports what it could not place.
+// A set of ordered pairs, deduplicated, so a package that imports its neighbour
+// forty times produces one road rather than forty. The count is the point of the
+// second return: a scanner that silently drops what it cannot resolve is safe
+// but unreadable, and the caller needs to be able to say so out loud.
+//
+// It was once two functions, the outer one delegating and throwing the count
+// away. Its only remaining caller was a test, which is the definition of a
+// middle man: a name on the way past a real thing.
 //
 // The count is the point of the second return. A scanner that silently drops
 // what it cannot resolve is safe but unreadable: the map shows fewer roads than

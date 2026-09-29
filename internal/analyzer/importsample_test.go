@@ -52,7 +52,7 @@ func TestImportRoadCollapseIsAMeasurementNotAnAssumption(t *testing.T) {
 		for _, b := range town.Buildings {
 			buildings[filepath.ToSlash(b.Path)] = true
 		}
-		edges := importEdges(root, buildings)
+		edges, _ := importEdgesCounting(root, buildings)
 		same, cross, unresolvable := 0, 0, 0
 		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {

@@ -29,7 +29,6 @@ export const SKY_DEPTH = -1_000_000;
  * the problem. Exported as `null` so the test that pinned the composition has
  * something honest to assert about.
  */
-export const HORIZON_FRACTION: number | null = null;
 
 /**
  * skyTexture paints the backdrop, once, at a size the camera can pan within.

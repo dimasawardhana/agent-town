@@ -46,59 +46,61 @@ export const WORK_TEX = "working";
  * because a hard-edged sprite at this zoom would read as damage, which is a
  * *condition*; this has to read as something that is simply recent.
  */
-export function emberTexture(scene: Phaser.Scene): string {
-  if (scene.textures.exists(EMBER_TEX)) return EMBER_TEX;
-  const r = 5;
-  const size = r * 2 + 1;
-  const pix = new Pix(size, size);
+/**
+ * glow writes a soft dot or a ring into a canvas, and returns its key.
+ *
+ * One function because there were two, and they were the same function with a
+ * different test on the radius: `emberTexture` and `workingTexture` each built a
+ * 2N+1 square, each hand-rolled a hex-to-bytes write, and each re-derived the
+ * alpha ramp. The second one also forgot to route through whatever the surface
+ * already offers, so the knowledge of how a colour becomes a pixel lived in three
+ * places.
+ *
+ * `ring` draws the rim and leaves the middle clear, so the building's own contact
+ * shadow stays visible through it — a filled mark would sit on the ground the
+ * building stands on.
+ */
+function glow(scene: Phaser.Scene, key: string, colour: string, radius: number, ring: boolean): string {
+  if (scene.textures.exists(key)) return key;
+  const size = radius * 2 + 3;
+  const canvas = scene.textures.createCanvas(key, size, size);
+  if (!canvas) return key;
+  const g = canvas.getContext() as CanvasRenderingContext2D;
   const c = Math.floor(size / 2);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const d = Math.hypot(x - c, y - c);
-      if (d > r) continue;
-      // Falls off toward the rim so it reads as a glow. The one place in this
-      // project alpha is not 0 or 255, and deliberately: the artifact is
-      // generated, never baked, so no palette invariant sees it.
-      const a = Math.round(255 * (1 - d / r) ** 1.5);
-      const i = (y * size + x) * 4;
-      pix.data[i] = Number.parseInt(P.accentDim.slice(1, 3), 16);
-      pix.data[i + 1] = Number.parseInt(P.accentDim.slice(3, 5), 16);
-      pix.data[i + 2] = Number.parseInt(P.accentDim.slice(5, 7), 16);
-      pix.data[i + 3] = a;
+      // A ring, or a disc that falls off toward the rim. Same shape test, two
+      // answers, one loop.
+      if (d > radius) continue;
+      if (ring && d < radius - 1.5) continue;
+      // The one place alpha is not 0 or 255, and deliberately: the artifact is
+      // generated, never baked, so no palette invariant ever sees it.
+      const a = ring ? 255 : Math.round(255 * (1 - d / radius) ** 1.5);
+      g.fillStyle = colour;
+      g.globalAlpha = a / 255;
+      g.fillRect(x, y, 1, 1);
     }
   }
-  scene.textures.addCanvas(EMBER_TEX, pix.toCanvas());
-  return EMBER_TEX;
+  g.globalAlpha = 1;
+  canvas.refresh();
+  return key;
+}
+
+/** The ember: a soft dot, so a recent touch reads as a glow rather than a mark. */
+export function emberTexture(scene: Phaser.Scene): string {
+  return glow(scene, EMBER_TEX, P.accentDim, 5, false);
 }
 
 /**
- * workingTexture is a ring, where the ember is a dot.
+ * workingTexture is the ring, where the ember is a dot.
  *
  * A different *shape* on purpose: a brighter dot reads as the same mark pulsing,
  * and a pulse is not a claim. A ring reads as "occupied", which is exactly what
  * the daemon said.
  */
-function workingTexture(scene: Phaser.Scene): string {
-  if (scene.textures.exists(WORK_TEX)) return WORK_TEX;
-  const r = 6;
-  const size = r * 2 + 3;
-  const pix = new Pix(size, size);
-  const c = Math.floor(size / 2);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const d = Math.hypot(x - c, y - c);
-      // A ring: the rim is drawn, the middle is not, so the building's own
-      // contact shadow stays visible through it.
-      if (d < r - 1.5 || d > r) continue;
-      const i = (y * size + x) * 4;
-      pix.data[i] = Number.parseInt(P.accent.slice(1, 3), 16);
-      pix.data[i + 1] = Number.parseInt(P.accent.slice(3, 5), 16);
-      pix.data[i + 2] = Number.parseInt(P.accent.slice(5, 7), 16);
-      pix.data[i + 3] = 255;
-    }
-  }
-  scene.textures.addCanvas(WORK_TEX, pix.toCanvas());
-  return WORK_TEX;
+export function workingTexture(scene: Phaser.Scene): string {
+  return glow(scene, WORK_TEX, P.accent, 6, true);
 }
 
 /** How strongly a building is still glowing, 0..1. */

@@ -81,6 +81,11 @@ export function machineFor(key: string): MachineKind {
 // A character names a *material*, not a colour, and the shading pass below picks
 // the ramp step. Naming the material is what lets one rule light all five kinds
 // identically; naming the colour would put that decision in five hands.
+//
+// Five materials and no more. `glass` and `canvas` were here for a cab window
+// and a tarpaulin that no grid draws, which is the smallest possible version of
+// an abstraction built for a need nobody has — and a key nobody reaches is a
+// material that would be mis-shaded silently if one were ever added.
 const MAT: Record<string, readonly string[]> = {
   // Track rubber: the darkest thing on the machine, and what it sits on.
   t: P.rubber,
@@ -97,8 +102,6 @@ const MAT: Record<string, readonly string[]> = {
   // round, so the beacon's lit edge took its *darkest* step and its shadow edge
   // its brightest — the one material in the fleet lit against the key.
   a: [P.helmetChief[0], P.helmetChief[1], P.helmetChief[2], P.helmetChief[3]],
-  // Canvas, for the one tarpaulin in the fleet.
-  c: P.canvas,
 };
 
 const W = 26;

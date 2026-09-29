@@ -4,7 +4,86 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { HORIZON_FRACTION } from "../src/sky";
+import { paintBackdrop, type BackdropContext } from "../src/sky";
+import { readFileSync } from "node:fs";
+
+/**
+ * A 2D context that models radial gradients well enough to *see* one.
+ *
+ * The version that stored the fill style verbatim stored the gradient *object*,
+ * so the canvas came back empty and the test could not have failed. That is the
+ * whole difference: a vignette is a gradient, and a canvas that cannot model one
+ * cannot assert that a vignette is on it.
+ *
+ * Sampling takes the last stop at or before `t`. That is coarse, and coarse in a
+ * way that cannot hide the property under test — the corners are darker than the
+ * centre — because a two-stop ramp is monotone by construction.
+ */
+function backdrop(w = 200, h = 200) {
+  const px: string[] = new Array(w * h).fill("none");
+  let fill: unknown = "none";
+  const rgb = (c: string): [number, number, number] => {
+    const m = c.match(/rgba?\(([^)]+)\)/);
+    if (!m) return [0, 0, 0];
+    const p = m[1].split(",").map((n) => Number.parseFloat(n.trim()));
+    return [p[0] || 0, p[1] || 0, p[2] || 0];
+  };
+  const alpha = (c: string): number => {
+    const m = c.match(/rgba?\(([^)]+)\)/);
+    if (!m) return 0;
+    const p = m[1].split(",").map((n) => Number.parseFloat(n.trim()));
+    return p.length > 3 ? p[3] : 1;
+  };
+  const blend = (dst: string, src: string): string => {
+    if (dst === "none") return src;
+    const d = rgb(dst);
+    const s = rgb(src);
+    const a = alpha(src);
+    const out = [0, 1, 2].map((i) => Math.round(s[i] * a + d[i] * (1 - a)));
+    return `rgb(${out.join(",")})`;
+  };
+  const sample = (t: number, stops: [number, string][]): string => {
+    let chosen = stops[0]?.[1] ?? "none";
+    for (const [o, c] of stops) if (t >= o) chosen = c;
+    return chosen;
+  };
+  const rect = (x: number, y: number, ww: number, hh: number) => {
+    const gr = fill as { x0: number; y0: number; r0: number; r1: number; stops: [number, string][] } | undefined;
+    for (let j = y; j < y + hh; j++) {
+      for (let i = x; i < x + ww; i++) {
+        if (i < 0 || j < 0 || i >= w || j >= h) continue;
+        const idx = j * w + i;
+        let src: string;
+        if (gr && Array.isArray(gr.stops)) {
+          const d = Math.hypot(i - gr.x0, j - gr.y0);
+          const t = gr.r1 === gr.r0 ? 1 : Math.min(1, Math.max(0, (d - gr.r0) / (gr.r1 - gr.r0)));
+          src = sample(t, gr.stops);
+        } else {
+          src = typeof fill === "string" ? fill : "none";
+        }
+        if (src !== "none") px[idx] = blend(px[idx], src);
+      }
+    }
+  };
+  const grad = (x0: number, y0: number, r0: number, r1: number) => {
+    const stops: [number, string][] = [];
+    const o = {
+      addColorStop: (o2: number, c: string) => { stops.push([o2, c]); },
+      __grad: { x0, y0, r0, r1, stops },
+    };
+    return o;
+  };
+  return {
+    px,
+    ctx: {
+      get fillStyle() { return fill; },
+      set fillStyle(v: unknown) { fill = v && typeof v === "object" ? (v as { __grad?: unknown }).__grad ?? v : v; },
+      fillRect: rect,
+      createRadialGradient: (x0: number, y0: number, r0: number, _a: number, _b: number, r1: number) => grad(x0, y0, r0, r1),
+      createLinearGradient: (x0: number, y0: number) => grad(x0, y0, 0, 1),
+    } as unknown as BackdropContext,
+  };
+}
 
 /** A 2D-context stand-in that records fills, so the backdrop can be drawn
  *  without a browser. Deliberately not a mock of the drawing: it only has to
@@ -26,17 +105,55 @@ import { HORIZON_FRACTION } from "../src/sky";
 import { P } from "../src/art/palette";
 
 test("there is no horizon, because a horizon is the diorama", () => {
-  // The backdrop once drew a gradient, a glow, two ridges and a treeline, and the
-  // horizon line crossed the middle of the frame. Every attempt to fix it by
-  // moving the horizon up or down traded one diorama for another, because the
-  // diorama *was* the horizon: a horizon is a distant view, and putting one
-  // behind something meant to be read from above says the map is a model of a
-  // place rather than a place.
-  assert.equal(
-    HORIZON_FRACTION,
-    null,
-    "a horizon constant is back; a backdrop with a horizon is a diorama",
+  // Asserted by *absence*, not by a constant exported to be nil. The previous
+  // version kept `HORIZON_FRACTION = null` for exactly this test — a number
+  // shaped like a value the code no longer computes, exported so a test could
+  // say it was absent. The source has no horizon; the test can say so.
+  const sky = readFileSync(new URL("./src/sky.ts", import.meta.url), "utf8");
+  assert.ok(
+    !/HORIZON|horizon\s*=\s*[0-9.]/.test(sky),
+    "a horizon is back in the backdrop; the town reads as a diorama on a table again",
   );
+  // And the composition it replaced is what is actually painted: a plain, a
+  // seat, and a vignette last.
+  const lastFill = sky.lastIndexOf("g.fillStyle = vig");
+  const plainFill = sky.indexOf("g.fillStyle = P.skyGround");
+  assert.ok(
+    lastFill > plainFill,
+    "the vignette is drawn before the opaque plain, so the plain paints over it",
+  );
+});
+
+test("the vignette is on the canvas, not merely described", () => {
+  // The bug this exists for: the backdrop drew the vignette and *then* filled the
+  // frame with opaque `skyGround`, so it survived nowhere — and the previous test
+  // asserted a delta between two palette constants and never touched a canvas.
+  //
+  // A vignette is a property of the *rendered image*: it darkens the corners
+  // relative to the centre. There is no way to check that by reading a palette,
+  // which is why the check that read a palette passed on a backdrop that painted
+  // no vignette at all.
+  const { px, ctx } = backdrop();
+  paintBackdrop(ctx, 200, 200);
+  const lum = (c: string): number => {
+    if (c === "none") return -1;
+    const [r, g, b] = c.match(/rgba?\(([^)]+)\)/)![1].split(",").map((n) => Number.parseFloat(n));
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  };
+  const corner = lum(px[4 * 200 + 4]);
+  const centre = lum(px[100 * 200 + 100]);
+  assert.ok(
+    corner >= 0 && centre >= 0,
+    `the canvas came back empty (corner ${corner}, centre ${centre}); the fake is not modelling the drawing`,
+  );
+  assert.ok(
+    corner < centre,
+    `the corners are not darker than the centre (${corner} vs ${centre}); the vignette is not on the canvas`,
+  );
+  // And the plain is visible: a backdrop that paints the void is a no-op wearing
+  // a filename.
+  const plain = 0.299 * 0x46 + 0.587 * 0x52 + 0.114 * 0x4a;
+  assert.ok(Math.abs(centre - plain) > 2, `the centre is neither the plain nor anything (${centre} vs ${plain.toFixed(1)})`);
 });
 
 test("the backdrop is not the void it replaced", () => {
