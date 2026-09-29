@@ -458,6 +458,18 @@ export interface RoadLine {
  *  is a usable question at map scale, which is what worker routing needs and
  *  the only consumer of this number. */
 const BAND_HALF_PX = 4;
+
+/** The half-width of a band road, in *world* units.
+ *
+ *  The analyzer's `importBand` is 8 world units. This is the same fact on this
+ *  side of the wire, written out rather than derived, for the same reason
+ *  `BAND_HALF_PX` is: the browser may not re-derive geometry from the layout
+ *  (ADR-0012), and a number that looks computed but is really a constant is
+ *  one that will be computed differently somewhere else.
+ *
+ *  Only `paintRoads` uses this, to decide which ground tiles a band covers.
+ *  Everything that draws in the picture uses `BAND_HALF_PX`. */
+export const BAND_HALF_WORLD = 4;
 /**
  * roadsAsLines projects a layout's roads into the picture.
  *
@@ -526,6 +538,54 @@ export function roadsAsLines(
     // 61-pixel half-width: "am I on the road" was true almost everywhere, which
     // is the same long/short confusion that made the line itself two pixels long.
     out.push({ ax: start.x, ay: start.y, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.h : r.w) / 2), from: r.from, to: r.to });
+  }
+  return out;
+}
+
+/** bandTiles is every ground tile a band of the given half-width passes through.
+ *
+ *  Exported and pure because this is the difference between a road and a
+ *  square, and it is the one piece of that decision that can be checked
+ *  without a GPU: walk the tiles whose centre lies within `half` of the line,
+ *  rather than filling the rectangle the line arrived in.
+ *
+ *  **Tile centres, not tile intersections.** A tile the line only clips at a
+ *  corner is not road a reader can see, and painting it widens the band back
+ *  towards the box this change exists to remove. */
+export function bandTiles(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  half: number,
+  tileW: number,
+  tileH: number,
+): { wx: number; wy: number }[] {
+  const out: { wx: number; wy: number }[] = [];
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  // Bounded by the box the band cannot leave, so the walk is O(area of the
+  // box) rather than unbounded, and a degenerate band still terminates. This is
+  // the same rectangle the old painter filled — used here as a bound and not as
+  // the shape, which is the whole difference between the two versions.
+  const x0 = Math.floor((Math.min(ax, bx) - half) / tileW) * tileW;
+  const x1 = Math.ceil((Math.max(ax, bx) + half) / tileW) * tileW;
+  const y0 = Math.floor((Math.min(ay, by) - half) / tileH) * tileH;
+  const y1 = Math.ceil((Math.max(ay, by) + half) / tileH) * tileH;
+  for (let wy = y0; wy < y1; wy += tileH) {
+    for (let wx = x0; wx < x1; wx += tileW) {
+      const cx = wx + tileW / 2;
+      const cy = wy + tileH / 2;
+      let t = 0;
+      if (len2 > 0) {
+        t = ((cx - ax) * dx + (cy - ay) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+      }
+      if (Math.hypot(cx - (ax + dx * t), cy - (ay + dy * t)) <= half) {
+        out.push({ wx, wy });
+      }
+    }
   }
   return out;
 }

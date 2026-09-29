@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { roadsAsLines, turnLayout } from "../src/view";
+import { bandTiles, roadsAsLines, turnLayout } from "../src/view";
 
 // Square, because a wide town turns nearly onto itself and a fixture that
 // barely moves proves nothing about whether the roads moved with it.
@@ -188,4 +188,31 @@ test("a road with no band still comes from its rectangle", () => {
   assert.equal(row.ax, project(0, 212).x, "a row road lost its rectangle");
   assert.equal(row.bx, project(1000, 212).x, "a row road lost its far end");
   assert.equal(row.halfWidth, 12, "a row road's width is its thickness");
+});
+
+test("a band paints the tiles it passes through, not the box around it", () => {
+  // A band from (20,20) to (100,100) with a half-width of 4 runs down the
+  // diagonal; the box it came from is 122x122 and covers the whole corner.
+  const tiles = bandTiles(20, 20, 100, 100, 4, 24, 24);
+  const xs = tiles.map((t) => t.wx);
+  const ys = tiles.map((t) => t.wy);
+  const spanX = Math.max(...xs) - Math.min(...xs);
+  const spanY = Math.max(...ys) - Math.min(...ys);
+  assert.ok(spanX < 100 && spanY < 100, `the band reached ${spanX}x${spanY} of tiles`);
+  // And it must be continuous: a road with gaps in it is not a road.
+  tiles.sort((a, b) => a.wy - b.wy || a.wx - b.wx);
+  for (let i = 1; i < tiles.length; i++) {
+    const dx = Math.abs(tiles[i].wx - tiles[i - 1].wx);
+    const dy = Math.abs(tiles[i].wy - tiles[i - 1].wy);
+    assert.ok(dx <= 24 && dy <= 24, `tiles ${tiles[i - 1].wx},${tiles[i - 1].wy} and ${tiles[i].wx},${tiles[i].wy} are not adjacent`);
+  }
+});
+
+test("a band of zero length still terminates", () => {
+  // The degenerate case is the one an unbounded walk hangs on, and it is
+  // reachable: two plots at the same centre cannot happen, but a band whose
+  // endpoints round to the same tile can.
+  const tiles = bandTiles(50, 50, 50, 50, 4, 24, 24);
+  assert.ok(tiles.length >= 0, "should not hang or throw");
+  assert.ok(tiles.length <= 4, `a zero-length band painted ${tiles.length} tiles`);
 });

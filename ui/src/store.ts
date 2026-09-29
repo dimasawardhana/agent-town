@@ -25,6 +25,17 @@ export interface Road {
    *  field existed. */
   from?: string;
   to?: string;
+  /** The two ends of a band's centre line, in world units, for the road kinds
+   *  that join two places.
+   *
+   *  Absent on "row" and "district" — those are areas rather than joins — and
+   *  absent on any payload serialized before this field existed. When present,
+   *  these are the road: `x/y/w/h` is its bounding box, for the camera bounds
+   *  and the turn, and the line is what is painted. */
+  ax?: number;
+  ay?: number;
+  bx?: number;
+  by?: number;
 }
 
 export interface Site {

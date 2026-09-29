@@ -30,7 +30,7 @@ import {
   groundEdgeFrame,
   propFrame,
 } from "./art/bake";
-import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { BAND_HALF_WORLD, TURN_COUNT, type Turn, bandTiles, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { Traffic } from "./traffic";
@@ -645,6 +645,25 @@ export class TownScene extends Phaser.Scene {
     l: Layout,
   ): void {
     for (const r of l.roads ?? []) {
+      // A band is painted along its line; the tile grid below is for the road
+      // kinds that really are rectangles. `continue` rather than an `else`, so
+      // there is one place a band can be painted and one way it can be missed.
+      //
+      // **No kerb piece for a band.** `onEdge` picks a frame by comparing
+      // against a rectangle's faces, and a line has no faces — a band whose
+      // middle tile got a kerb would show a kerb laid across the road. The
+      // band's ends sit in the gaps between plots, where the surrounding tile
+      // already reads as an edge.
+      if (typeof r.ax === "number" && typeof r.bx === "number") {
+        for (const { wx, wy } of bandTiles(r.ax, r.ay!, r.bx, r.by!, BAND_HALF_WORLD, TILE, TILE)) {
+          const key = groundFrame("road", tileVariant(wx, wy));
+          const f = this.atlas[key];
+          if (!f) continue;
+          const [cx, cy] = toCanvas(wx, wy);
+          ctx.drawImage(this.tileCanvas(key), Math.round(cx - f.ox), Math.round(cy - f.oy));
+        }
+        continue;
+      }
       // The tile grid is walked from the band's own origin, aligned so the road
       // starts and ends on a tile boundary. Aligned to the *world* grid rather
       // than the band's, or two bands would meet with a seam between them.
