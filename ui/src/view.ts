@@ -445,6 +445,19 @@ export interface RoadLine {
   to?: string;
 }
 
+/** The half-width of a band road, in *picture* pixels.
+ *
+ *  This is a picture-space constant, not the analyzer's 8 world units, and the
+ *  two are deliberately not derived from one another: the world width goes
+ *  through the projection to become a picture width, and how much depends on
+ *  the road's direction — a band running along x projects shorter than the same
+ *  band along y. Deriving it would make a road's width a function of which way
+ *  it pointed, and "how wide is this road" is a property of the road.
+ *
+ *  4px half-width, floored at 3 by the caller: enough that "am I on the road"
+ *  is a usable question at map scale, which is what worker routing needs and
+ *  the only consumer of this number. */
+const BAND_HALF_PX = 4;
 /**
  * roadsAsLines projects a layout's roads into the picture.
  *
@@ -457,7 +470,19 @@ export function roadsAsLines(
   // reads it: a road kind with nowhere to be read would still be a field the
   // real payload has, and a parameter type that rejected it would push every
   // caller into a cast.
-  roads: readonly { x: number; y: number; w: number; h: number; kind?: string; from?: string; to?: string }[],
+  roads: readonly {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    kind?: string;
+    from?: string;
+    to?: string;
+    ax?: number;
+    ay?: number;
+    bx?: number;
+    by?: number;
+  }[],
   project: (x: number, y: number) => { x: number; y: number },
 ): RoadLine[] {
   const out: RoadLine[] = [];
@@ -465,6 +490,20 @@ export function roadsAsLines(
     const x0 = r.x;
     const y0 = r.y;
     const x1 = r.x + r.w;
+    // A band is drawn as itself. Row and district roads carry no band — they are
+    // areas rather than joins between two places — and fall through to the
+    // rectangle below exactly as they did before.
+    //
+    // The half-width is the band's own width, not the rectangle's short side.
+    // They coincide for a rectangle that *is* a band and differ for one that is
+    // not, which is the whole point: an import road's rectangle is now its
+    // bounding box, so its short side is the band's *length*, not its width.
+    if (typeof r.ax === "number" && typeof r.bx === "number") {
+      const a = project(r.ax, r.ay!);
+      const b = project(r.bx, r.by!);
+      out.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, halfWidth: BAND_HALF_PX, from: r.from, to: r.to });
+      continue;
+    }
     const y1 = r.y + r.h;
     // The two ends of the road's long axis — which is the direction it runs.
     //

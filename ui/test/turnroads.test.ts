@@ -149,3 +149,43 @@ test("a turn carries the road's band with it", () => {
     `a quarter turn changed the band's length from ${spanBefore} to ${spanAfter}`,
   );
 });
+
+test("a road line follows the band, not the rectangle around it", () => {
+  const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
+  const [line] = roadsAsLines(
+    [
+      {
+        x: 0, y: 0, w: 122, h: 122, kind: "import",
+        from: "a", to: "b",
+        // The band from A's plot edge to B's — far shorter than the box.
+        ax: 20, ay: 20, bx: 100, by: 100,
+      },
+    ],
+    project,
+  );
+  const bandLen = Math.hypot(line.bx - line.ax, line.by - line.ay);
+  const far = project(122, 122);
+  const rectLen = Math.hypot(far.x - project(0, 0).x, far.y - project(0, 0).y);
+  assert.ok(
+    bandLen < rectLen * 0.75,
+    `the line is ${bandLen.toFixed(1)}px — the ${rectLen.toFixed(1)}px rectangle is still driving it`,
+  );
+  assert.equal(line.halfWidth, 4, "a band's width is its thickness, not its length");
+  // And the line must be the band, in the right place: both ends projected.
+  const wantA = project(20, 20);
+  const wantB = project(100, 100);
+  assert.equal(line.ax, wantA.x, "the line's near end is not the band's near end");
+  assert.equal(line.bx, wantB.x, "the line's far end is not the band's far end");
+});
+
+test("a road with no band still comes from its rectangle", () => {
+  // Row and district roads are areas, not joins between two places. They carry
+  // no band and must keep working, because a renderer that branched on "is
+  // there an ax" instead of "does this road have a band" would leave the whole
+  // town's streets unpainted and every test still green.
+  const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
+  const [row] = roadsAsLines([{ x: 0, y: 200, w: 1000, h: 24, kind: "row" }], project);
+  assert.equal(row.ax, project(0, 212).x, "a row road lost its rectangle");
+  assert.equal(row.bx, project(1000, 212).x, "a row road lost its far end");
+  assert.equal(row.halfWidth, 12, "a row road's width is its thickness");
+});
