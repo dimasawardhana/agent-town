@@ -91,6 +91,20 @@ const MUTATIONS = [
     to: "return roads;",
     suite: "test:traffic",
   },
+  {
+    what: "a road band goes back to being its bounding box",
+    file: "src/view.ts",
+    from: '    if (typeof r.ax === "number" && typeof r.bx === "number") {',
+    to: "    if (false) {",
+    suite: "test:turnroads",
+  },
+  {
+    what: "a band paints every tile in the box around it",
+    file: "src/view.ts",
+    from: "      if (segmentRectDistance(ax, ay, bx, by, wx, wy, wx + tileW, wy + tileH) <= half) {",
+    to: "      if (true) {",
+    suite: "test:turnroads",
+  },
 ];
 
 const run = (cmd, cwd) => {
