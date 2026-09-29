@@ -33,3 +33,4 @@ ui-sky.test.mjs
 ui/ui-motion.test.mjs
 ui-commenttruth.test.mjs
 ui-selftest.test.mjs
+ui-traffic.test.mjs
