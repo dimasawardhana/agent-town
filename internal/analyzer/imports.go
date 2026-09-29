@@ -39,7 +39,19 @@ import (
 // The result is a set of ordered pairs, deduplicated, so a package that imports
 // its neighbour forty times produces one road rather than forty.
 func importEdges(root string, buildings map[string]bool) map[[2]string]bool {
+	edges, _ := importEdgesCounting(root, buildings)
+	return edges
+}
+
+// importEdgesCounting is importEdges, and also reports what it could not place.
+//
+// The count is the point of the second return. A scanner that silently drops
+// what it cannot resolve is safe but unreadable: the map shows fewer roads than
+// the code has dependencies, and nothing says so, so the absence reads as a
+// fact about the repository rather than a limit of the scanner.
+func importEdgesCounting(root string, buildings map[string]bool) (map[[2]string]bool, int) {
 	out := map[[2]string]bool{}
+	unresolved := 0
 	files := map[string][]string{} // building path -> the files that make it
 
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
@@ -83,13 +95,25 @@ func importEdges(root string, buildings map[string]bool) map[[2]string]bool {
 		for _, file := range files[from] {
 			specs := importSpecifiers(file)
 			for _, spec := range specs {
-				if to := resolveImport(root, file, spec, buildings); to != "" && to != from {
+				// Only a *relative* specifier can name a building in this town,
+				// so only one that fails to is something the map was asked to
+				// draw and could not. A bare specifier is a package elsewhere by
+				// definition and counting it would report a scanner failure
+				// where there is none — which is the noise that makes a real
+				// number stop being read.
+				if !strings.HasPrefix(spec, ".") && !strings.HasPrefix(spec, "/") {
+					continue
+				}
+				to := resolveImport(root, file, spec, buildings)
+				if to == "" {
+					unresolved++
+				} else if to != from {
 					out[[2]string{from, to}] = true
 				}
 			}
 		}
 	}
-	return out
+	return out, unresolved
 }
 
 // buildingOf is the longest building path that is a prefix of a file's path.

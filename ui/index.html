@@ -313,6 +313,13 @@
          different colour is the two-claims failure this panel is meant to avoid.
          Kept in step with `embers.ts` by hand and checked by `sky.test.ts`. */
       .pulse .sig.hot { background: #8a6414; }
+      /* A dependency the map could not draw. Deliberately the dimmest chip in the
+         panel: it is a limit of the scanner, not a state of a building, and
+         dressing it in a signal colour would claim a building is in trouble. */
+      .pulse .sig.dim {
+        background: transparent; color: var(--text-dim);
+        border: 1px solid var(--edge-lit);
+      }
 
       /* The legend explains the three places, which the map can only name.
          Each entry is ruled on its own left edge and carries a live count, so

@@ -92,3 +92,39 @@ func TestImportRoadCollapseIsAMeasurementNotAnAssumption(t *testing.T) {
 			filepath.Base(root), len(town.Buildings), len(edges), same, cross, unresolvable)
 	}
 }
+
+// The count is a claim, so it is asserted rather than logged.
+//
+// A silent refusal looks like a success, which is the whole reason this number
+// exists; a number nobody checks is a claim in exactly the way the map's are not.
+func TestUnresolvedImportsAreReported(t *testing.T) {
+	if testing.Short() {
+		t.Skip("walks repositories outside this module")
+	}
+	for _, root := range []string{
+		"/home/dimasajiwardhana/Documents/code/team-builder",
+		"../..",
+	} {
+		town, err := Analyze(root)
+		if err != nil {
+			continue
+		}
+		l := LayoutTown(town)
+		buildings := map[string]bool{}
+		for _, b := range town.Buildings {
+			buildings[filepath.ToSlash(b.Path)] = true
+		}
+		_, want := importEdgesCounting(root, buildings)
+		if l.UnresolvedImports != want {
+			t.Errorf("%s: layout reports %d unresolved imports, the scan found %d",
+				filepath.Base(root), l.UnresolvedImports, want)
+		}
+		// A bare specifier is a package elsewhere by definition. Counting those
+		// would report a scanner failure where there is none, and a number that
+		// cries wolf is worse than no number.
+		if want > 50 {
+			t.Errorf("%s: %d unresolved relative imports is not a few missed edges, it is the scanner failing", filepath.Base(root), want)
+		}
+		t.Logf("%-20s unresolved=%d", filepath.Base(root), want)
+	}
+}

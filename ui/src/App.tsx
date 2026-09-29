@@ -104,6 +104,8 @@ function TownPulse() {
 
   const at = new Map<string, number>();
   for (const b of live.buildings) at.set(b.status, (at.get(b.status) ?? 0) + 1);
+  const layout = useTown((s) => s.layout);
+  const unresolved = layout?.unresolvedImports;
   const damaged = live.buildings.filter((b) => b.damaged).length;
   const verified = live.buildings.filter((b) => b.verified).length;
 
@@ -134,6 +136,24 @@ function TownPulse() {
             );
           })}
         </ul>
+      )}
+
+      {/* What the map could not draw.
+          A relative import the scanner resolved to no building produces no road,
+          because a guessed road is a confident lie. But the reader cannot tell
+          "this project has no inter-district dependencies" from "this project
+          has six the map could not place", and those are very different claims.
+          Said here rather than on the map, because it is about the *absence* of a
+          thing and belongs where absences are reported. */}
+      {(unresolved ?? 0) > 0 && (
+        <p className="signals">
+          <span
+            className="sig dim"
+            title="Relative imports naming something the analyzer found no building for. They are real dependencies the map cannot draw, not missing ones."
+          >
+            {unresolved} not drawn
+          </span>
+        </p>
       )}
 
       {/* Only what is present. A row of zeroes is noise, and its absence

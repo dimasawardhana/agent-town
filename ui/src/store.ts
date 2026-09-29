@@ -81,6 +81,21 @@ export interface Layout {
   sites: Site[];
   roads?: Road[];
   districts: PlacedDistrict[];
+
+  /**
+   * How many relative imports named something the analyzer found no building for,
+   * and so drew no road.
+   *
+   * The map shows fewer roads than the code has dependencies whenever this is
+   * non-zero, and without the count the absence reads as a fact about the
+   * repository rather than a limit of the scanner. A bare specifier is a package
+   * elsewhere by definition and is not counted — a number that cries wolf is
+   * worse than no number.
+   *
+   * Optional, because a layout serialized before this field existed does not have
+   * it, and reading it must not be a way for an old payload to fail.
+   */
+  unresolvedImports?: number;
   width: number;
   height: number;
 }

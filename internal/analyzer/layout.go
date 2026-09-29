@@ -120,6 +120,22 @@ type Layout struct {
 	Roads  []Road  `json:"roads"`
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
+	// UnresolvedImports is how many relative imports in this repository name
+	// something the analyzer did not find a building for, and so drew no road.
+	//
+	// It travels on the layout rather than being recomputed in the browser for
+	// the same reason roads do: the layout is the single source of truth
+	// (ADR-0012), and a renderer working this out for itself would be a second
+	// implementation of the same scan.
+	//
+	// **It exists because a silent refusal looks like a success.** The scanner
+	// draws no road for a specifier it cannot resolve, which is the correct and
+	// only safe behaviour — a guessed road is a confident lie. But the reader
+	// cannot tell "this project has no dependencies between districts" from
+	// "this project has six and the map could not place them", and those are very
+	// different claims about the code. Measured on team-builder: 6 unresolvable
+	// specifiers out of 301, on a repository with 60 import roads.
+	UnresolvedImports int `json:"unresolvedImports"`
 }
 
 // Road is one paved band: a rectangle in the same world space as a site's.
@@ -628,7 +644,8 @@ func importRoads(root string, l *Layout) {
 			buildings[s.Path] = true
 		}
 	}
-	edges := importEdges(root, buildings)
+	edges, unresolved := importEdgesCounting(root, buildings)
+	l.UnresolvedImports = unresolved
 
 	byPath := map[string]Site{}
 	for _, s := range l.Sites {
