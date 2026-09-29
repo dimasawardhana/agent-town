@@ -17,8 +17,14 @@ export const SITE_ID_BUILDING_PREFIX = "building:";
 
 export interface Road {
   x: number; y: number; w: number; h: number;
-  /** "row", "district" or "containment" — which rule produced the band. */
+  /** "row", "district", "containment" or "import" — which rule produced the
+   *  band. */
   kind: string;
+  /** The building paths an import road runs between, importer first. Absent on
+   *  every other kind of road, and absent on any payload serialized before this
+   *  field existed. */
+  from?: string;
+  to?: string;
 }
 
 export interface Site {

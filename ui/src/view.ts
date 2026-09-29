@@ -400,6 +400,14 @@ export interface RoadLine {
   by: number;
   /** Half the road's width in picture pixels. */
   halfWidth: number;
+  /** The building paths this road runs between, importer first. Empty when the
+   *  road is not an import road.
+   *
+   *  Sent rather than re-derived from the geometry: the two ends of the line
+   *  are already ordered by the projection, and which of them is the importer is
+   *  a fact only the analyzer knows (ADR-0012). */
+  from?: string;
+  to?: string;
 }
 
 /**
@@ -410,7 +418,11 @@ export interface RoadLine {
  * stays free of Phaser.
  */
 export function roadsAsLines(
-  roads: readonly { x: number; y: number; w: number; h: number }[],
+  // `kind` is accepted because every caller holds it, not because this function
+  // reads it: a road kind with nowhere to be read would still be a field the
+  // real payload has, and a parameter type that rejected it would push every
+  // caller into a cast.
+  roads: readonly { x: number; y: number; w: number; h: number; kind?: string; from?: string; to?: string }[],
   project: (x: number, y: number) => { x: number; y: number },
 ): RoadLine[] {
   const out: RoadLine[] = [];
@@ -435,7 +447,7 @@ export function roadsAsLines(
     const end = horizontal
       ? project(x0 + r.w / 2, y0)
       : project(x0, y0 + r.h / 2);
-    out.push({ ax: cx, ay: cy, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.w : r.h) / 2) });
+    out.push({ ax: cx, ay: cy, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.w : r.h) / 2), from: r.from, to: r.to });
   }
   return out;
 }
