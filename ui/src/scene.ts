@@ -1283,7 +1283,16 @@ export class TownScene extends Phaser.Scene {
       const p = this.project(s.x + s.w, s.y + s.h);
       touched.push({ id: s.id, x: p.x, y: p.y, updated });
     }
-    this.embers.reconcile(touched);
+    // A worker standing at a building is the second tier: the machine is 2.5% of
+    // the frame, so the ring is what actually says "here" at map scale. It is
+    // the narrowest claim the daemon supports — a session is at this building —
+    // and it borrows no verb, because the town does not know what the session is
+    // doing beyond the caption already on the figure.
+    const working = new Set<string>();
+    for (const w of live.workers) {
+      if (w.place) working.add(w.place);
+    }
+    this.embers.reconcile(touched, working);
   }
 
   /**

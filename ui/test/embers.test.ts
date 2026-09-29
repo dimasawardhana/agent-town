@@ -4,7 +4,9 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { EMBER_MS, emberStrength } from "../src/embers";
+import { EMBER_MS, WORK_TEX, emberStrength } from "../src/embers";
+
+const EMBER_TEX = "ember";
 
 const NOW = 1_000_000_000;
 
@@ -52,4 +54,25 @@ test("strength is measured against wall clock, not the scene clock", () => {
   assert.equal(emberStrength(now, now), 1);
   assert.ok(emberStrength(now - EMBER_MS / 2, now) < 1, "half a window in should already be fading");
   assert.equal(emberStrength(now - EMBER_MS, now), 0);
+});
+
+// The second tier, and the claim it is allowed to make.
+//
+// The camera finding measured a machine at 2.5% of the frame, so the machine
+// cannot be what says "an agent is here". The ember covers "touched recently";
+// the working mark covers "being worked at", at the same scale, as a *different
+// shape* — because a brighter version of the same mark reads as one mark pulsing,
+// and a pulse is not a claim.
+test("the working mark is a different mark, not a brighter ember", () => {
+  assert.notEqual(WORK_TEX, EMBER_TEX, "the two tiers share a texture key");
+});
+
+// A ring that outlived its session would say an agent is still there, and the
+// town must not be the thing that says an agent stopped.
+test("a session that leaves stops claiming it is there", () => {
+  const building = { id: "building:a" };
+  const marked = (working: Set<string>): string[] =>
+    working.has(building.id) ? [building.id] : [];
+  assert.deepEqual(marked(new Set(["building:a"])), ["building:a"]);
+  assert.deepEqual(marked(new Set()), []);
 });

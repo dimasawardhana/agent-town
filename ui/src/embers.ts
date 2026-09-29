@@ -36,6 +36,8 @@ import { P } from "./art/palette";
 export const EMBER_MS = 120_000;
 
 const EMBER_TEX = "ember";
+/** The ring's texture key, exported so a test can assert it is not the ember's. */
+export const WORK_TEX = "working";
 
 /**
  * emberTexture is a soft dot, drawn rather than baked.
@@ -67,6 +69,54 @@ export function emberTexture(scene: Phaser.Scene): string {
   }
   scene.textures.addCanvas(EMBER_TEX, pix.toCanvas());
   return EMBER_TEX;
+}
+
+/**
+ * workingMark is whether an agent is working at this building *right now*.
+ *
+ * A second tier beside the ember, and the reason is the one the camera finding
+ * turned up: a machine is 28x22 on a map that shows the whole land, so it is
+ * 2.5% of the frame and cannot be the thing that says "here". The ember already
+ * covers "touched recently" at 11px. This covers "being worked on" at the same
+ * scale, and it is a *different shape* rather than a brighter version of the
+ * same one — a second glow at the same place reads as one mark pulsing, which
+ * says nothing an ember did not already say.
+ *
+ * The claim is the narrowest one the town can make: a session is at this
+ * building. Not that the session is busy, not that the session is doing
+ * something interesting — the daemon reports where a worker is standing, and
+ * that is the whole of it.
+ */
+
+
+/**
+ * workingTexture is a ring, where the ember is a dot.
+ *
+ * A different *shape* on purpose: a brighter dot reads as the same mark pulsing,
+ * and a pulse is not a claim. A ring reads as "occupied", which is exactly what
+ * the daemon said.
+ */
+function workingTexture(scene: Phaser.Scene): string {
+  if (scene.textures.exists(WORK_TEX)) return WORK_TEX;
+  const r = 6;
+  const size = r * 2 + 3;
+  const pix = new Pix(size, size);
+  const c = Math.floor(size / 2);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - c, y - c);
+      // A ring: the rim is drawn, the middle is not, so the building's own
+      // contact shadow stays visible through it.
+      if (d < r - 1.5 || d > r) continue;
+      const i = (y * size + x) * 4;
+      pix.data[i] = Number.parseInt(P.accent.slice(1, 3), 16);
+      pix.data[i + 1] = Number.parseInt(P.accent.slice(3, 5), 16);
+      pix.data[i + 2] = Number.parseInt(P.accent.slice(5, 7), 16);
+      pix.data[i + 3] = 255;
+    }
+  }
+  scene.textures.addCanvas(WORK_TEX, pix.toCanvas());
+  return WORK_TEX;
 }
 
 /** How strongly a building is still glowing, 0..1. */
@@ -106,7 +156,7 @@ export class Embers {
    * to *cool*: nothing happens to a building for two minutes, and the fading
    * that is the whole point would otherwise need a timer per building.
    */
-  reconcile(touched: { id: string; x: number; y: number; updated: number }[]): void {
+  reconcile(touched: { id: string; x: number; y: number; updated: number }[], working: Set<string> = new Set()): void {
     // **Wall clock, not the scene clock.** `BuildingState.updated` is Unix
     // milliseconds from the event; Phaser's `time.now` is the scene's own clock,
     // which starts near zero. Comparing the two made every age hugely negative,
@@ -123,7 +173,15 @@ export class Embers {
         img = this.scene.add.image(b.x, b.y, EMBER_TEX).setOrigin(0.5, 0.5);
         this.sprites.set(b.id, img);
       }
-      img.setPosition(b.x, b.y).setAlpha(s).setDepth(this.depth);
+      // A building someone is working at right now gets the second mark. It is
+      // placed on the same anchor and never alongside the ember, because two
+      // marks at one point read as one mark flickering.
+      const hot = working.has(b.id);
+      const key = hot ? WORK_TEX : EMBER_TEX;
+      if (img.texture.key !== key) {
+        img.setTexture(workingTexture(this.scene));
+      }
+      img.setPosition(b.x, b.y).setAlpha(hot ? 1 : s).setDepth(this.depth);
     }
     for (const [id, img] of this.sprites) {
       if (!keep.has(id)) {
