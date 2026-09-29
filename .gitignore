@@ -31,3 +31,4 @@ ui-turnalign.test.mjs
 ui-flagcorner.test.mjs
 ui-sky.test.mjs
 ui/ui-motion.test.mjs
+ui-commenttruth.test.mjs

@@ -88,6 +88,15 @@ func TestImportRoadCollapseIsAMeasurementNotAnAssumption(t *testing.T) {
 		if len(edges) > cross {
 			t.Errorf("%s: %d roads from %d cross-building imports — the map is drawing edges that do not exist", filepath.Base(root), len(edges), cross)
 		}
+		// The ratio is asserted as a range rather than a number, because a hard
+		// figure here would be a claim about two repositories on one machine
+		// that fails the moment either is edited. The *shape* is the finding.
+		if cross > 0 {
+			ratio := float64(cross) / float64(len(edges))
+			if ratio < 1.5 {
+				t.Errorf("%s: only %.1f cross-building imports per road; the collapse is the whole story and something else is wrong too", filepath.Base(root), ratio)
+			}
+		}
 		t.Logf("%-20s buildings=%3d roads=%3d same=%3d cross=%3d unres=%3d",
 			filepath.Base(root), len(town.Buildings), len(edges), same, cross, unresolvable)
 	}
@@ -121,10 +130,22 @@ func TestUnresolvedImportsAreReported(t *testing.T) {
 		}
 		// A bare specifier is a package elsewhere by definition. Counting those
 		// would report a scanner failure where there is none, and a number that
-		// cries wolf is worse than no number.
+		// cries wolf is worse than no number. The exclusion is asserted here
+		// because the count is only trustworthy if it counts the right thing.
 		if want > 50 {
 			t.Errorf("%s: %d unresolved relative imports is not a few missed edges, it is the scanner failing", filepath.Base(root), want)
 		}
+		// The shape of the claim, stated as a property rather than as a number
+		// read off a log: a bare specifier must never be counted, and a
+		// `resolveImport` that refuses it must not be reachable by the counter.
+		buildings["synthetic"] = true
+		if got := resolveImport(root, filepath.Join(root, "x.ts"), "react", buildings); got != "" {
+			t.Errorf("a bare specifier resolved to %q; if it did, the counter would count every package outside the town", got)
+		}
+		if got := resolveImport(root, filepath.Join(root, "x.ts"), "/abs/thing", buildings); got != "" {
+			t.Errorf("an absolute specifier resolved to %q; the counter would inflate the number the panel prints", got)
+		}
+		delete(buildings, "synthetic")
 		t.Logf("%-20s unresolved=%d", filepath.Base(root), want)
 	}
 }

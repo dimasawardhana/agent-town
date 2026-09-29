@@ -1304,3 +1304,66 @@ func TestRoadCountsOnThisRepositoryAreRecorded(t *testing.T) {
 		t.Error("no import roads: the scanner is finding nothing on its own repository")
 	}
 }
+
+// A town that wraps onto more than one row, exercised rather than described.
+//
+// Ticket 30 measured this by hand — 4 rows, 6 district roads, 3 row roads — and
+// the numbers lived in the ticket's prose with nothing asserting them. The
+// multi-row path is the one branch of the road layout that had shipped without
+// ever running, so "measured once by a person" is not coverage.
+func TestAMultiRowTownLaysOutAndRoads(t *testing.T) {
+	root := t.TempDir()
+	// Ten districts, each wide enough that three fit a row — which is what
+	// forces the wrap the branch exists for.
+	for _, d := range []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"} {
+		for b := 0; b < 6; b++ {
+			dir := filepath.Join(root, d, "m"+itoa(b), "src")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for f := 0; f < 6; f++ {
+				if err := os.WriteFile(filepath.Join(dir, "f"+itoa(f)+".ts"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	l := layoutOf(t, root)
+
+	rows := map[float64]int{}
+	for _, d := range l.Districts {
+		rows[d.Y]++
+	}
+	if len(rows) < 2 {
+		t.Fatalf("the fixture did not wrap: %d row(s), %d districts", len(rows), len(l.Districts))
+	}
+
+	// Every district road runs the depth of its whole row — the bug ticket 23
+	// fixed, on the branch that had never run.
+	deepest := map[float64]float64{}
+	for _, d := range l.Districts {
+		if b := d.Y + d.H; b > deepest[d.Y] {
+			deepest[d.Y] = b
+		}
+	}
+	for _, r := range l.Roads {
+		if r.Kind != "district" {
+			continue
+		}
+		if _, onARow := deepest[r.Y]; !onARow {
+			t.Errorf("district road at y=%.0f starts on no district's row", r.Y)
+		}
+		if r.Y+r.H < deepest[r.Y] {
+			t.Errorf("district road x=%.0f stops at y=%.0f, short of its row's floor at %.0f", r.X, r.Y+r.H, deepest[r.Y])
+		}
+	}
+	// Every row road crosses the full width of the map.
+	for _, r := range l.Roads {
+		if r.Kind != "row" {
+			continue
+		}
+		if r.W < l.Width-rowGap-2*rowStart {
+			t.Errorf("row road is %.0f wide in a %.0f map — it does not cross the town", r.W, l.Width)
+		}
+	}
+}

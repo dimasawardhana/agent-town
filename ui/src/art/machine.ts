@@ -93,7 +93,10 @@ const MAT: Record<string, readonly string[]> = {
   // Bare steel: a blade, a bucket, a hook.
   s: P.stone,
   // The beacon — the brightest pixel and the only warm one.
-  a: [P.helmetChief[3], P.helmetChief[2], P.helmetChief[1], P.helmetChief[0]],
+  // Darkest to lightest, like every other ramp here. It was written the other way
+  // round, so the beacon's lit edge took its *darkest* step and its shadow edge
+  // its brightest — the one material in the fleet lit against the key.
+  a: [P.helmetChief[0], P.helmetChief[1], P.helmetChief[2], P.helmetChief[3]],
   // Canvas, for the one tarpaulin in the fleet.
   c: P.canvas,
 };
@@ -106,9 +109,9 @@ const H = ARM_H + BASE_H;
 /**
  * The undercarriage and body, authored once per kind.
  *
- * Seven rows is what a machine needs: three of track, one of body, one of
- * shoulder, and ground contact. Everything above this is the arm, and the arm is
- * the only part allowed to move.
+ * Four empty rows for the air a boom needs above the body, one row of tread, one
+ * of body, one of shoulder and ground contact. Everything above this is the arm,
+ * and the arm is the only part allowed to move.
  */
 const CHASSIS: Record<MachineKind, string[]> = {
   // A crawler: wide, low, and stepped so the track reads as treads and not a bar.
@@ -504,6 +507,7 @@ const ARM: Record<MachineKind, Record<MachinePose, string[]>> = {
 // town has always refused a mark that runs off its own frame, because a clipped
 // outline is worse than none. The margin is the honest fix; shrinking the art to
 // dodge it would be the other one.
+const EMPTY_ROW = ".".repeat(W);
 const PAD = 1;
 const CEL_W = W + PAD * 2;
 const CEL_H = H + PAD * 2;
@@ -548,11 +552,32 @@ export function buildMachine(kind: MachineKind, pose: MachinePose, tier: "chief"
   const base = CHASSIS[kind];
   const mask: string[] = [...arm, ...base];
 
-  // Chief machines stand a little taller than their own sub, by adding a row of
-  // stack under the body — never a scale factor, because a scale of anything
-  // other than a whole number is what makes pixel art look broken.
-  const rows: string[] = tier === "chief" ? [...mask] : [...mask.slice(0, ARM_H - 1), ...mask.slice(ARM_H)];
-  const grid: string[] = tier === "chief" ? rows : mask;
+  // A chief is drawn one row taller than its own sub, by *cutting a row out of
+  // the arm* rather than by adding one: the cel is a fixed sheet, so a chief
+  // simply has a taller arm and a sub has a shorter one on the same footprint.
+  //
+  // The first version computed this into a variable and then threw it away —
+  // `grid` was `mask` on both branches and `void tier` admitted it — so every
+  // chief and sub cel was byte-identical while the comment above claimed a chief
+  // stood taller. A comment that describes a distinction the pixels do not make
+  // is worse than no comment, because a reader debugging the tier would trust it.
+  // A sub's arm is one row shorter, and the row it loses is *blanked* rather than
+  // removed: a cel is a fixed sheet, so a grid of a different height leaves a hole
+  // in the last row and the shading pass reads past its own input.
+  //
+  // The row blanked is the topmost one the arm actually draws, found rather than
+  // assumed. Assuming a fixed row made the loader identical to itself, because its
+  // arm is short and that row was already empty — which is the failure a chief and
+  // a sub being byte-identical would look like, one level down.
+  const grid: string[] = [...mask];
+  if (tier !== "chief") {
+    for (let y = ARM_H - 1; y >= 0; y--) {
+      if (mask[y] !== EMPTY_ROW) {
+        grid[y] = EMPTY_ROW;
+        break;
+      }
+    }
+  }
 
   const colours = shade(grid);
   const pix = new Pix(CEL_W, CEL_H);
@@ -618,6 +643,5 @@ function machineBox(turn: number): { w: number; h: number; ox: number; oy: numbe
   // Sized to the drawing, not to a footprint. The grid is a fixed sheet, so the
   // cel is that sheet and there is no second guess about how much room a boom
   // needs — which is what clipped the old fleet's arms.
-  const pad = 1;
   return { w: CEL_W, h: CEL_H, ox: 0, oy: 0 };
 }

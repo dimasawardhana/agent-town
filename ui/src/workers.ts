@@ -906,6 +906,11 @@ export class WorkerLayer {
     this.tags.delete(id);
     this.anim.delete(id);
     this.groundY.delete(id);
+    // The caption and the hit zone are destroyed above, so leaving them in their
+    // maps leaves destroyed objects reachable by id — and a later tick writing to
+    // one is a use-after-destroy rather than a missing sprite.
+    this.captions.delete(id);
+    this.hitZones.delete(id);
     this.travel.delete(id);
   }
 

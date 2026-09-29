@@ -72,24 +72,6 @@ export function emberTexture(scene: Phaser.Scene): string {
 }
 
 /**
- * workingMark is whether an agent is working at this building *right now*.
- *
- * A second tier beside the ember, and the reason is the one the camera finding
- * turned up: a machine is 28x22 on a map that shows the whole land, so it is
- * 2.5% of the frame and cannot be the thing that says "here". The ember already
- * covers "touched recently" at 11px. This covers "being worked on" at the same
- * scale, and it is a *different shape* rather than a brighter version of the
- * same one — a second glow at the same place reads as one mark pulsing, which
- * says nothing an ember did not already say.
- *
- * The claim is the narrowest one the town can make: a session is at this
- * building. Not that the session is busy, not that the session is doing
- * something interesting — the daemon reports where a worker is standing, and
- * that is the whole of it.
- */
-
-
-/**
  * workingTexture is a ring, where the ember is a dot.
  *
  * A different *shape* on purpose: a brighter dot reads as the same mark pulsing,
@@ -177,10 +159,13 @@ export class Embers {
       // placed on the same anchor and never alongside the ember, because two
       // marks at one point read as one mark flickering.
       const hot = working.has(b.id);
-      const key = hot ? WORK_TEX : EMBER_TEX;
-      if (img.texture.key !== key) {
-        img.setTexture(workingTexture(this.scene));
-      }
+      // Set the texture that was *chosen*, not the one built here. The first
+      // version computed `key` and then called `workingTexture` in both
+      // branches, so a building that stopped being worked kept its ring for the
+      // life of the layer — which is the one sentence this whole feature exists
+      // not to say.
+      const key = hot ? workingTexture(this.scene) : emberTexture(this.scene);
+      if (img.texture.key !== key) img.setTexture(key);
       img.setPosition(b.x, b.y).setAlpha(hot ? 1 : s).setDepth(this.depth);
     }
     for (const [id, img] of this.sprites) {

@@ -38,6 +38,53 @@ export const HORIZON_FRACTION: number | null = null;
  * business knowing where the town is: it is the same sky over every region, and
  * a sky that moved with the camera would be a lie about the world's size.
  */
+/**
+ * paintBackdrop draws the whole backdrop into any 2D-ish context.
+ *
+ * Split out of `skyTexture` so a test can render it and *look at the pixels*
+ * rather than at the palette. The previous test asserted a delta between two
+ * constants and never touched the canvas, which is how a backdrop that painted
+ * no vignette at all passed as one that did.
+ */
+export function paintBackdrop(g: BackdropContext, w: number, h: number): void {
+  const cx = w / 2;
+  const cy = h * 0.55;
+  const maxR = Math.hypot(cx, cy);
+
+  g.fillStyle = P.skyGround;
+  g.fillRect(0, 0, w, h);
+
+  // The seat: a soft lift under the town, radial so it can never become a line.
+  const seat = g.createRadialGradient(cx, h * 0.6, 0, cx, h * 0.6, maxR * 0.75);
+  seat.addColorStop(0, hexA(P.skyMid, 0.22));
+  seat.addColorStop(1, hexA(P.skyMid, 0));
+  g.fillStyle = seat;
+  g.fillRect(0, 0, w, h);
+
+  // And the vignette, last, darkening the corners of the frame. It says *this is
+  // where you are looking* without saying *and there is somewhere else*.
+  const vig = g.createRadialGradient(cx, cy, maxR * 0.32, cx, cy, maxR);
+  vig.addColorStop(0, hexA(P.void, 0));
+  vig.addColorStop(1, hexA(P.void, 0.82));
+  g.fillStyle = vig;
+  g.fillRect(0, 0, w, h);
+
+}
+
+/**
+ * A 2D context, narrowed to what the backdrop actually uses.
+ *
+ * Not a mock: it is the *surface* the painting needs, so a test can supply one
+ * and read the result. Anything the backdrop starts using and this does not
+ * declare is a type error rather than a runtime surprise.
+ */
+export interface BackdropContext {
+  fillStyle: unknown;
+  fillRect(x: number, y: number, w: number, h: number): void;
+  createRadialGradient(a: number, b: number, c: number, d: number, e: number, f: number): { addColorStop(o: number, c: string): void };
+  createLinearGradient(a: number, b: number, c: number, d: number): { addColorStop(o: number, c: string): void };
+}
+
 export function skyTexture(scene: Phaser.Scene, w: number, h: number): string {
   const key = `${SKY_TEX}:${w}x${h}`;
   if (scene.textures.exists(key)) return key;
@@ -46,47 +93,18 @@ export function skyTexture(scene: Phaser.Scene, w: number, h: number): string {
   if (!canvas) return key;
   const g = canvas.getContext();
 
-  // A vignette and nothing else.
+  // A plain, a seat, and a vignette — in that order, because the order is the
+  // whole composition.
   //
-  // There was a horizon here: a gradient, a glow, two ridges and a treeline, with
-  // the horizon line crossing the middle of the frame so the town stood against
-  // haze. It was competent and it was wrong, and the reason is worth recording
-  // because it took three attempts to see.
+  // The first version drew the vignette *first* and then filled the frame with
+  // opaque `skyGround` over the top of it, so the vignette survived nowhere and
+  // the only visible mark was the seat. It read as "a vignette and nothing else"
+  // while painting a flat field, and the test asserted a delta between two palette
+  // constants and never touched the canvas — so nothing caught it.
   //
-  // A horizon is a *distant view*. Drawing one behind a thing that is meant to be
-  // read from above says the map is a diorama on a table — the eye reads the
-  // band and the treeline as a backdrop, and the land stops being land and starts
-  // being a model of land. Every attempt to fix it by moving the horizon up or
-  // down traded one version of the diorama for another, because the diorama was
-  // the horizon.
-  //
-  // So there is no horizon. What is left is the thing the void was always for:
-  // the region is bounded by nothing, which is what makes a region a region, and
-  // a vignette says "this is where you are looking" without saying "and there is
-  // somewhere else".
-  const g2 = g;
-  const cx = w / 2;
-  const cy = h * 0.55;
-  const maxR = Math.hypot(cx, cy);
-  const vig = g2.createRadialGradient(cx, cy, maxR * 0.32, cx, cy, maxR);
-  vig.addColorStop(0, hexA(P.void, 0));
-  vig.addColorStop(1, hexA(P.void, 0.82));
-  g2.fillStyle = vig;
-  g2.fillRect(0, 0, w, h);
-
-  // The plain the island sits on: a clearing in a field, seen from above. It is
-  // a *floor*, not a distance, so it is flat and unlit rather than hazed — a
-  // gradient here would immediately read as ground receding to a horizon and put
-  // the diorama straight back.
-  g2.fillStyle = P.skyGround;
-  g2.fillRect(0, 0, w, h);
-  // And a soft lift under the town, so the land is seated in the field rather
-  // than pasted on it. Radial, so it cannot become a line.
-  const seat = g2.createRadialGradient(cx, h * 0.6, 0, cx, h * 0.6, maxR * 0.75);
-  seat.addColorStop(0, hexA(P.skyMid, 0.22));
-  seat.addColorStop(1, hexA(P.skyMid, 0));
-  g2.fillStyle = seat;
-  g2.fillRect(0, 0, w, h);
+  // The vignette is drawn **last**, over everything, because that is the only
+  // order in which a vignette is a vignette.
+  paintBackdrop(canvas.getContext() as unknown as BackdropContext, w, h);
 
   canvas.refresh();
   return key;

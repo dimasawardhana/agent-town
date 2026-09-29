@@ -5,6 +5,24 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { HORIZON_FRACTION } from "../src/sky";
+
+/** A 2D-context stand-in that records fills, so the backdrop can be drawn
+ *  without a browser. Deliberately not a mock of the drawing: it only has to
+ *  answer "what colour is this pixel", and the vignette is a property of those
+ *  answers, not of the calls that produced them. */
+/**
+ * A 2D context that models radial gradients well enough to *see* one.
+ *
+ * The earlier version stored the fill style verbatim, so a gradient was stored
+ * as the gradient object and the canvas came back empty. That is the difference
+ * between a test that checks the picture and one that checks the code: a
+ * vignette is a gradient, and a canvas that cannot model a gradient cannot
+ * assert that a vignette is on it.
+ *
+ * Each pixel takes the colour of the nearest gradient stop, which is coarse but
+ * sufficient for the one property being asserted — the corners are darker than
+ * the centre — and it is coarse in a way that could not hide that property.
+ */
 import { P } from "../src/art/palette";
 
 test("there is no horizon, because a horizon is the diorama", () => {

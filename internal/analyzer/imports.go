@@ -95,13 +95,18 @@ func importEdgesCounting(root string, buildings map[string]bool) (map[[2]string]
 		for _, file := range files[from] {
 			specs := importSpecifiers(file)
 			for _, spec := range specs {
-				// Only a *relative* specifier can name a building in this town,
-				// so only one that fails to is something the map was asked to
-				// draw and could not. A bare specifier is a package elsewhere by
-				// definition and counting it would report a scanner failure
-				// where there is none — which is the noise that makes a real
-				// number stop being read.
-				if !strings.HasPrefix(spec, ".") && !strings.HasPrefix(spec, "/") {
+				// Only a specifier starting with `.` can name a building in this
+				// town, because `resolveImport` refuses anything else and turns
+				// it into "" — which would count every bare and absolute
+				// specifier as a failure and report a scanner that cannot see
+				// anything.
+				//
+				// An earlier version of this guard also admitted `/`, on the
+				// theory that an absolute specifier was worth counting. It is
+				// not: `resolveImport` rejects it, so every one of them landed in
+				// the number the panel prints as "not drawn", and the comment
+				// above this line forbade exactly that.
+				if !strings.HasPrefix(spec, ".") {
 					continue
 				}
 				to := resolveImport(root, file, spec, buildings)

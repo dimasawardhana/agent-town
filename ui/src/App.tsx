@@ -100,11 +100,14 @@ const LADDER = STAGE_ORDER.map((key) => ({ key, label: STAGE_LABELS[key] ?? key 
 function TownPulse() {
   const town = useTown((s) => s.town);
   const live = useTown((s) => s.live);
+  // Above the guard on purpose. A hook called after `if (!town) return null`
+  // changes the hook count on the render where the town first arrives, and
+  // React throws on that rather than on the thing that is actually wrong.
+  const layout = useTown((s) => s.layout);
   if (!town) return null;
 
   const at = new Map<string, number>();
   for (const b of live.buildings) at.set(b.status, (at.get(b.status) ?? 0) + 1);
-  const layout = useTown((s) => s.layout);
   const unresolved = layout?.unresolvedImports;
   const damaged = live.buildings.filter((b) => b.damaged).length;
   const verified = live.buildings.filter((b) => b.verified).length;
