@@ -3,7 +3,7 @@
 // This is the product. Everything else exists so that a worker can stand on the
 // right building and visibly do the thing the agent is doing.
 //
-// Three decisions carry most of the quality here:
+// Four decisions carry most of the quality here:
 //
 //   - Frames are advanced from the art's own `FRAME_MS` table, one worker at a
 //     time, rather than through Phaser's animation manager. That is not
@@ -16,14 +16,26 @@
 //     cycles per journey gives feet that plant plausibly and an arrival time
 //     tied to the work, where a fixed rate either slides the feet or makes a
 //     worker look like it is strolling.
+//   - A machine crossing a road faces the way that road runs, and its body rides
+//     its tracks at a rate tied to the ground it is actually covering. A figure
+//     that slides sideways holding a single pose is a sprite being dragged, and
+//     dragging is the one motion on this map that says nothing about what the
+//     agent is doing — which is the only thing the map is for.
 //   - A figure is never removed while the daemon still reports it. A worker that
 //     vanished mid-hammer would say the agent stopped, which is the one thing
 //     the town must not lie about.
 
-import Phaser from "phaser";
+// Phaser is imported for its types only. The one reason is testability: a value
+// import pulls the whole engine into the module graph, and the engine touches
+// `window` while it is being *imported*, so a plain `node --test` process could
+// not load this file at all and none of the decisions above could be pinned by a
+// test. The two event names it used to supply are strings — 'update' and
+// 'shutdown' — and `update` was already written out literally below, so this is
+// one spelling of each rather than a second way of saying it.
+import type Phaser from "phaser";
 import { CREW_COLOURS } from "./art/palette";
 import { ATLAS, type Atlas, machineFrame } from "./art/bake";
-import { routeAlongRoads, type RoadLine } from "./view";
+import { WorldView, normaliseTurn, routeAlongRoads, turnPoint, type Point, type RoadLine } from "./view";
 import { FRAME_MS, type Tier, type WorkerState } from "./art/worker";
 import { POSE_FOR, machineFor, type MachineKind } from "./art/machine";
 import { PLACARD, placard } from "./art/placard";
@@ -93,6 +105,51 @@ const HIT_DEPTH = 80000;
 const WALK_CYCLE_MS = FRAME_MS.walk.reduce((a, b) => a + b, 0);
 
 /**
+ * The slowest a travelling machine's legs may move, as a multiple of the art's
+ * own walk rhythm.
+ *
+ * Half, which is 240ms a pose. Below that a machine holds one pose long enough
+ * to read as stopped rather than as slow, and a town that appears to have
+ * stopped is a town saying something false. The journeys that would ask for it
+ * are hops of a couple of pixels, short enough that the clamp is not what the
+ * reader sees.
+ */
+const MIN_WALK_RATE = 0.5;
+
+/**
+ * The fastest a travelling machine's legs may move, as a multiple of the art's
+ * own walk rhythm.
+ *
+ * Two, which is 60ms a pose and a full cycle every 240ms. At three, a one-pixel
+ * ride twenty-five times a second is a shimmer rather than a ride, and a
+ * shimmer reads as a fault in the same way a blur does. The bound costs almost
+ * nothing in honesty: by the time a crossing is this fast the machine is
+ * covering ground so quickly that the difference between two steps per unit and
+ * three is a slide no eye can measure, while the difference between *any* rate
+ * and the authored one is a moonwalk. This is the same trade `MAX_CYCLES` takes
+ * one level up — more ground per step rather than a blur — and it binds on the
+ * hauls long enough to have reached that cap.
+ */
+const MAX_WALK_RATE = 2;
+
+/**
+ * How far a travelling machine's body rides its tracks, in picture pixels: one
+ * entry per walk pose, down, down, up, up.
+ *
+ * The fleet has a single authored travel cel rather than a walk cycle, so the
+ * cadence cannot be spent on a frame change — there is no second frame to
+ * change to. What it is spent on instead is the ride: the body rises and settles
+ * as the tracks turn, which is the one motion that separates a machine driving
+ * from a cel being carried across the map.
+ *
+ * Two poses down and two up, because a bounce with a single low pose is a
+ * stutter. One pixel, because the tracks never leave the ground — the shadow
+ * and the depth stay put, so the body is the only thing that moves, and a larger
+ * lift would put the machine's own undercarriage in the air.
+ */
+const WALK_LIFT = [0, 1, 1, 0];
+
+/**
  * A journey in picture pixels.
  *
  * `startedAt` and `ms` are what let the walk be driven by progress rather than
@@ -103,6 +160,19 @@ interface Journey {
   /** The polyline walked, in picture pixels. One straight leg when there is
    *  nowhere to detour. */
   path: { x: number; y: number }[];
+  /** How long the polyline is, in picture pixels. Carried rather than measured
+   *  again every frame: it is the ground the cadence is measured against, and
+   *  it cannot change while the journey is in flight. */
+  walked: number;
+  /** The way the leg under the machine runs, in *world* units.
+   *
+   *  Held in world rather than picture units on purpose. A journey is a fact
+   *  about the map, and the map's own coordinates are what it is authored in;
+   *  the screen is a rendering of that fact and is the one thing a turn changes.
+   *  So the direction is captured where the geometry is known and asked of the
+   *  view where the sprite is, rather than being read back off the picture
+   *  where it was never stated. */
+  dir: Point;
   x1: number;
   y1: number;
   ms: number;
@@ -116,20 +186,135 @@ function pathLength(path: { x: number; y: number }[]): number {
   return d;
 }
 
-/** The point a fraction of the way along a polyline. */
-function pointAlong(path: { x: number; y: number }[], t: number): { x: number; y: number } {
+/**
+ * The point a fraction of the way along a polyline, and the way the leg it is
+ * on runs.
+ *
+ * The direction comes out with the point because it is free here and not free
+ * anywhere else: the leg is already being walked to find the point, and the
+ * machine's facing is the only thing that wants to know which way that leg
+ * points. A zero-length or absent polyline has no direction to report, and
+ * reports a zero one — which the facing rule reads as "no opinion" rather than
+ * as a turn.
+ */
+function pointAlong(
+  path: { x: number; y: number }[],
+  t: number,
+): { x: number; y: number; dx: number; dy: number } {
   const total = pathLength(path);
-  if (total <= 0 || path.length < 2) return path[path.length - 1];
+  if (total <= 0 || path.length < 2) return { ...path[path.length - 1], dx: 0, dy: 0 };
   let want = total * Math.max(0, Math.min(1, t));
   for (let i = 1; i < path.length; i++) {
-    const leg = Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+    const ex = path[i].x - path[i - 1].x;
+    const ey = path[i].y - path[i - 1].y;
+    const leg = Math.hypot(ex, ey);
     if (want <= leg || i === path.length - 1) {
       const f = leg <= 0 ? 1 : want / leg;
-      return { x: path[i - 1].x + (path[i].x - path[i - 1].x) * f, y: path[i - 1].y + (path[i].y - path[i - 1].y) * f };
+      return { x: path[i - 1].x + ex * f, y: path[i - 1].y + ey * f, dx: ex / leg, dy: ey / leg };
     }
     want -= leg;
   }
-  return path[path.length - 1];
+  return { ...path[path.length - 1], dx: 0, dy: 0 };
+}
+
+/**
+ * worldDirection is the world direction a picture-space vector points, at this
+ * turn.
+ *
+ * The inverse of the projection, written out rather than pulled from a matrix:
+ * screen x is (X - Y) / 2 and screen y is (X + Y) / 4, so X is x + 2y and Y is
+ * 2y - x. The turn is then undone, because this layer is handed a layout that
+ * has already been turned — the composition ADR-0012 rests on, run backwards to
+ * recover the direction the map was authored in. Turned twice it would be a
+ * direction nobody drew, which is the mistake a turn makes look like nothing at
+ * all until a machine drives the wrong way across the map.
+ */
+export function worldDirection(view: WorldView, sx: number, sy: number): Point {
+  return turnPoint(normaliseTurn(-view.turn), sx + 2 * sy, 2 * sy - sx);
+}
+
+/**
+ * mirrored says whether a machine travelling this world direction draws
+ * flipped.
+ *
+ * The view decides, and this module only asks. `WorldView.screenDir` is where
+ * the town settles what a direction looks like on screen, and its own comment
+ * states the rule this uses: the sign of the screen-x component is the flip. A
+ * machine heading straight up or straight down has no screen x at all, and
+ * keeps the facing it was authored with — a diagonal road then reads as a road
+ * going away from the camera, which is what it is, rather than as a mirror
+ * that flickers on and off as the figure crosses the halfway line.
+ */
+export function mirrored(view: WorldView, dx: number, dy: number): boolean {
+  return view.screenDir(dx, dy).x < 0;
+}
+
+/**
+ * walkRate is how fast a journey's legs move, as a multiple of the art's own
+ * walk timings.
+ *
+ * The reference is the art's: `FRAME_MS.walk` paces one walk cycle over
+ * `STRIDE_PX` of ground, so a machine covering ground at that rate is
+ * automatically at rate one and the authored timings are used exactly as
+ * written. Everything else is measured against it — ground covered over ground
+ * authored — which is the whole of "step at the rate you are travelling". A
+ * crossing faster than the reference takes its steps faster, and that is what
+ * stops it moonwalking: legs that keep the authored time while the ground comes
+ * at them are a cel being carried, and the reader sees the ground, not the
+ * rhythm.
+ *
+ * A journey that measured nothing takes rate one. So does one the numbers say
+ * nothing about, which is a stand-in rather than a claim: the first frame of a
+ * journey and any degenerate path still get the art's own rhythm.
+ */
+function walkRate(walked: number, ms: number): number {
+  if (!(walked > 0) || !(ms > 0)) return 1;
+  const rate = (walked * WALK_CYCLE_MS) / (ms * STRIDE_PX);
+  if (rate < MIN_WALK_RATE) return MIN_WALK_RATE;
+  return rate > MAX_WALK_RATE ? MAX_WALK_RATE : rate;
+}
+
+/**
+ * walkPhase is the walk pose a machine is standing in, `elapsed` milliseconds
+ * into a journey covering `walked` picture pixels in `ms`.
+ *
+ * Read off the elapsed time rather than accumulated frame by frame, because a
+ * journey's length is not known until the route is, and an accumulator seeded
+ * at the wrong moment starts a machine mid-stride. The art's own table is still
+ * what paces the poses — `walkRate` only says how fast that table is read — so
+ * the hammer's uneven strike and the walk's even one stay distinguishable, and
+ * a walk that happens to travel at the reference speed is read at the timings
+ * the art was drawn against.
+ */
+export function walkPhase(walked: number, ms: number, elapsed: number): number {
+  const poses = FRAME_MS.walk;
+  // The rate scales the clock, not the table: a machine travelling at three
+  // times the reference speed is three times as far along the walk by the time
+  // a pose is up, so it reads the *same* table three times as fast. Scaling the
+  // table instead would leave every journey taking exactly one cycle however
+  // fast it was driven, which is the held pose this replaced wearing a
+  // different hat.
+  const rate = walkRate(walked, ms);
+  // Folded into the cycle first, so the walk below is a single lap and cannot
+  // spin: a journey left running for a minute must not cost a minute of loop.
+  let left = ((elapsed > 0 ? elapsed : 0) * rate) % WALK_CYCLE_MS;
+  let pose = 0;
+  while (left >= poses[pose]) {
+    left -= poses[pose];
+    pose = (pose + 1) % poses.length;
+  }
+  return pose;
+}
+
+/**
+ * walkLift is how far off its ground a machine's body rides, in picture pixels.
+ *
+ * Exported with the rest of the walk because it is the only part of the cadence
+ * a reader can see, and a cadence that cannot be seen is a cadence nobody can
+ * claim is right.
+ */
+export function walkLift(pose: number): number {
+  return WALK_LIFT[((pose % WALK_LIFT.length) + WALK_LIFT.length) % WALK_LIFT.length];
 }
 
 /** Where a figure is in its current animation. */
@@ -185,6 +370,14 @@ export class WorkerLayer {
    * that a drag" would disagree on exactly the gestures readers make most.
    */
   private dragged: () => boolean;
+  /**
+   * The orientation of the layout this layer draws, asked about directions.
+   *
+   * Held rather than reached for because a turn redraws the map, and a redraw
+   * rebuilds this layer: there is one orientation per layer, so the question has
+   * one answer for the layer's whole life.
+   */
+  private view: WorldView;
   private sprites = new Map<string, Phaser.GameObjects.Sprite>();
   private shadows = new Map<string, Phaser.GameObjects.Ellipse>();
   private tags = new Map<string, Phaser.GameObjects.Rectangle>();
@@ -213,6 +406,17 @@ export class WorkerLayer {
   private travel = new Map<string, Journey>();
   /** One per figure in flight, so its update listener can be removed again. */
   private steppers = new Map<string, () => void>();
+  /**
+   * The ground each figure stands on, in picture pixels.
+   *
+   * Kept beside the sprite rather than read off it, because a travelling
+   * machine's body is not on the ground: it rides its tracks. Depth, shadow,
+   * crew tag and caption all belong to the ground, so a shadow that rose and
+   * settled with the body would be a shadow that had come off the ground, and a
+   * depth that flickered by a pixel would have the figure re-ordering against
+   * buildings it has not moved relative to.
+   */
+  private groundY = new Map<string, number>();
   private disposed = false;
 
   /** setRoads gives the layer the network to route along. Called when the map
@@ -225,6 +429,15 @@ export class WorkerLayer {
     this.scene = scene;
     this.atlas = atlas;
     this.dragged = dragged;
+    // The orientation the layout this layer is about to be handed has been
+    // turned to. Read here rather than passed in because the scene builds the
+    // layer inside the same pass that turns the layout, and a turn is one of the
+    // things that rebuilds it — so the two cannot drift apart.
+    //
+    // It is asked about *directions* only. Every position in this layer comes
+    // from the turned layout already, and turning those a second time is the
+    // error this instance exists to make impossible.
+    this.view = new WorldView(useTown.getState().turn);
     // One pixel of nothing, so a caption has something to point at before it is
     // lettered. A Phaser Image with a missing texture draws Phaser's own green
     // placeholder box, which would flash on every new worker.
@@ -235,9 +448,13 @@ export class WorkerLayer {
     // One update hook for every figure rather than a tween each: the frames of
     // an action must keep their exact rhythm, and a tween per worker would let
     // a busy town's frame budget smear that rhythm unevenly across figures.
-    scene.events.on(Phaser.Scenes.Events.UPDATE, this.tick, this);
-    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      scene.events.off(Phaser.Scenes.Events.UPDATE, this.tick, this);
+    //
+    // 'update' and 'shutdown' are Phaser's own event names, spelled out because
+    // the steppers below already register on 'update' literally. One spelling
+    // each, rather than the same hook written two ways.
+    scene.events.on('update', this.tick, this);
+    scene.events.once('shutdown', () => {
+      scene.events.off('update', this.tick, this);
       this.disposed = true;
     });
   }
@@ -398,6 +615,8 @@ export class WorkerLayer {
     });
 
     this.anim.set(w.id, { state: "idle", tier, agent: w.agent || w.id, elapsed: 0, index: 0 });
+
+    this.groundY.set(w.id, at.y);
   }
 
   /**
@@ -438,26 +657,37 @@ export class WorkerLayer {
     const distance = Math.hypot(sprite.x - to.x, sprite.y - to.y);
     if (distance < 2) {
       sprite.setPosition(to.x, to.y);
+      this.groundY.set(w.id, to.y);
       this.syncVisual(w.id);
       return;
     }
 
-    // The journey's duration and its walk-cycle count are decided together, so
     // Walk the roads rather than the line between two points. A figure that
     // crosses the grass ignores the ground the map says is there, and a road
     // nobody travels is a road that is only decoration.
     const path = routeAlongRoads({ x: sprite.x, y: sprite.y }, to, this.roads);
     const walked = pathLength(path);
 
-    // the feet plant at a plausible rate for the distance travelled.
+    // The journey's duration and its walk-cycle count are decided together, so
+    // the feet plant at a plausible rate for the distance travelled. A long haul
+    // is therefore a *faster* crossing than a short one, which is what makes the
+    // cadence in `walkPhase` mean something: ground covered, not clock time.
     const cycles = Math.min(MAX_CYCLES, Math.max(1, Math.round(walked / STRIDE_PX)));
     const ms = Math.max(MIN_TRAVEL_MS, cycles * WALK_CYCLE_MS);
-    this.travel.set(w.id, { path, x1: to.x, y1: to.y, ms, startedAt: sprite.scene.time.now });
-
-    // Face the direction of travel. A mirrored cel is how a 16-bit figure turns
-    // around: at this size an authored left-facing set would be
-    // indistinguishable and would double the art for nothing.
-    sprite.setFlipX(to.x < sprite.x);
+    // The first leg is the direction the machine sets off in, seeded here so it
+    // is known before the first frame: the facing is asked of the view on the
+    // tick, and a tick that ran first would otherwise have no direction to ask
+    // about and would draw the machine facing whichever way it was authored.
+    const off = pointAlong(path, 0);
+    this.travel.set(w.id, {
+      path,
+      walked,
+      dir: worldDirection(this.view, off.dx, off.dy),
+      x1: to.x,
+      y1: to.y,
+      ms,
+      startedAt: sprite.scene.time.now,
+    });
 
     // The position is advanced by hand rather than by a tween on x and y,
     // because a tween walks a straight line and this walks a polyline. The
@@ -482,19 +712,35 @@ export class WorkerLayer {
    * changes mid-walk is not advanced by a stale closure: the journey is read
    * back from the map on every tick, and a figure with no journey is left
    * alone.
+   *
+   * Position lives here rather than on the tick because the tick is registered
+   * first and so runs first: a lift applied there would be overwritten by the
+   * ground this writes a moment later, and the machine would never leave its
+   * own shadow. The pose and the facing are the tick's, because the tick is what
+   * knows the animation.
    */
   private stepper(id: string, startedAt: number, ms: number): () => void {
     return () => {
       const j = this.travel.get(id);
       const sprite = this.sprites.get(id);
       if (!j || !sprite) return;
-      const t = Math.min(1, (sprite.scene.time.now - startedAt) / ms);
+      const now = sprite.scene.time.now;
+      const t = Math.min(1, (now - startedAt) / ms);
       const p = pointAlong(j.path, t);
-      sprite.setPosition(p.x, p.y);
+      // The way this leg runs, kept in world units: a route that turns a corner
+      // is a machine that turns, and reading the facing off the destination
+      // instead would leave it driving the first leg's way round every corner.
+      j.dir = worldDirection(this.view, p.dx, p.dy);
+      const arrived = t >= 1;
+      // The ride settles to nothing on arrival. A machine that stopped with its
+      // body a pixel up would be standing on air, and the one frame in which
+      // that is true is a frame every reader of that corner of the map sees.
+      const lift = arrived ? 0 : walkLift(walkPhase(j.walked, j.ms, now - j.startedAt));
+      this.groundY.set(id, p.y);
+      sprite.setPosition(p.x, p.y - lift);
       this.syncVisual(id);
-      if (t >= 1) {
+      if (arrived) {
         this.travel.delete(id);
-        this.syncVisual(id);
         this.unhook(id);
       }
     };
@@ -509,24 +755,28 @@ export class WorkerLayer {
   }
 
   /** syncVisual keeps a figure's depth, shadow, tag and caption together while
-   *  it moves. Depth is its feet's y, which is what makes a worker pass in
-   *  front of a building it is standing below rather than behind it. The tag and
-   *  the caption ride above, on their own depths, so a figure walking toward the
-   *  camera draws over one behind it and both their labels stay legible. */
+   *  it moves. Depth is the ground it stands on, which is what makes a worker
+   *  pass in front of a building it is standing below rather than behind it. The
+   *  tag and the caption ride above, on their own depths, so a figure walking
+   *  toward the camera draws over one behind it and both their labels stay
+   *  legible. */
   private syncVisual(id: string): void {
     const sprite = this.sprites.get(id);
     if (!sprite) return;
-    sprite.setDepth(sprite.y);
-    // The hit zone follows the figure but keeps its own depth, so a worker
-    // walking across a district can always be pointed at.
+    // The ground, not the sprite's own y: a travelling machine's body rides its
+    // tracks, and everything below belongs to the ground rather than to the
+    // body. The hit zone is the exception — it has to cover the cel as drawn,
+    // so it follows the body.
+    const ground = this.groundY.get(id) ?? sprite.y;
+    sprite.setDepth(ground);
     const zone = this.hitZones.get(id);
     if (zone) {
       zone.setPosition(sprite.x, sprite.y);
       zone.setSize(sprite.width, sprite.height);
     }
-    this.shadows.get(id)?.setPosition(sprite.x, sprite.y).setDepth(sprite.y - 1);
-    this.tags.get(id)?.setPosition(sprite.x, sprite.y - TAG_LIFT).setDepth(sprite.y + 1);
-    this.captions.get(id)?.text.setPosition(sprite.x, sprite.y - CAPTION_LIFT).setDepth(sprite.y + 2);
+    this.shadows.get(id)?.setPosition(sprite.x, ground).setDepth(ground - 1);
+    this.tags.get(id)?.setPosition(sprite.x, ground - TAG_LIFT).setDepth(ground + 1);
+    this.captions.get(id)?.text.setPosition(sprite.x, ground - CAPTION_LIFT).setDepth(ground + 2);
   }
 
   /**
@@ -582,8 +832,10 @@ export class WorkerLayer {
    * tick advances every figure's animation by the frame's elapsed time.
    *
    * Frames come from the art's own table, so the hammer's fast strike and slow
-   * follow-through survive into the game; a walk is derived from how far the
-   * figure has actually travelled, so its feet plant where the ground is.
+   * follow-through survive into the game. A machine in flight is the one figure
+   * whose pose and facing are decided here rather than by the standing rhythm:
+   * a walk is a question about the road and the ground, and both are answered
+   * per tick from the journey in flight.
    */
   private tick(_time: number, delta: number): void {
     if (this.disposed) return;
@@ -593,14 +845,18 @@ export class WorkerLayer {
 
       const journey = this.travel.get(id);
       if (journey) {
-        // The walk reaches its last frame exactly as the figure arrives, so a
-        // long journey does not finish its cycle early and then stand still
-        // mid-stride, and a short one does not stop half way through a step.
-        const p = Phaser.Math.Clamp(
-          (sprite.scene.time.now - journey.startedAt) / journey.ms,
-          0,
-          1,
-        );
+        // Face the way the machine is going, and take it from the view. The
+        // direction is held in world units and the view is what says which way
+        // that reads on screen, so the same rule governs a machine as governs
+        // the road under it — and it is asked per tick rather than settled once
+        // at the start of the journey, because a route that turns a corner is a
+        // machine that turns.
+        //
+        // A mirrored cel is how a 16-bit figure turns around: at this size an
+        // authored left-facing set would be indistinguishable and would double
+        // the art for nothing.
+        const flip = mirrored(this.view, journey.dir.x, journey.dir.y);
+        if (sprite.flipX !== flip) sprite.setFlipX(flip);
         a.state = "walk";
         sprite.setFrame(this.frameFor(a, "walk"));
         continue;
@@ -648,9 +904,8 @@ export class WorkerLayer {
     this.sprites.delete(id);
     this.shadows.delete(id);
     this.tags.delete(id);
-    this.captions.delete(id);
-    this.hitZones.delete(id);
     this.anim.delete(id);
+    this.groundY.delete(id);
     this.travel.delete(id);
   }
 

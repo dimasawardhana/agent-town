@@ -226,8 +226,10 @@ function commentBlocks(src, regions) {
         for (let k = 0; k < cleaned.length; k++) lines.push(p.line + idx);
       });
     }
+    const lead = text.length - text.replace(/^[ \t\n]+/, "").length;
+    const trimmed = text.replace(/^[ \t\n]+/, "").replace(/[ \t\n]+$/, "");
     return {
-      text,
+      text: trimmed,
       startLine: parts[0].line,
       // The line the block *ends* on, which is what "attached to the
       // declaration below" is measured from. Counting the newlines inside the
@@ -238,7 +240,7 @@ function commentBlocks(src, regions) {
         for (let i = last.start; i < last.end; i++) if (src[i] === "\n") n++;
         return n;
       })(),
-      lineAt: (index) => lines[Math.min(index, lines.length - 1)] ?? parts[0].line,
+      lineAt: (index) => lines[Math.min(index + lead, lines.length - 1)] ?? parts[0].line,
       doc
     };
   };
@@ -255,9 +257,7 @@ function commentBlocks(src, regions) {
     }
     if (run.length > 0) {
       const last = run[run.length - 1];
-      if (last.end !== r.start) {
-        flush();
-      }
+      if (last.end + 1 !== r.start) flush();
     }
     run.push(r);
   }
@@ -329,7 +329,7 @@ var UNIT_SCALE = {
   pixel: 1,
   pixels: 1
 };
-var UNIT_WORD = "ms|milliseconds?|s|secs?|seconds?|mins?|minutes?|hrs?|hours?|px|pixels?";
+var UNIT_WORD = "ms|milliseconds?|secs?|seconds?|mins?|minutes?|hrs?|hours?|px|pixels?";
 var NAME_UNIT = [
   [/_(MS|MILLISECONDS?)$/i, "ms"],
   [/_(S|SEC|SECS|SECONDS)$/i, "s"],
@@ -367,11 +367,11 @@ function quantityValue(token) {
 }
 var EXPLICIT_CLAIM = new RegExp(
   `\\b(\\d[\\d_]*(?:\\.\\d+)?|${NUMBER_WORD_RE})\\s*(?:of\\s+)?(${UNIT_WORD})\\b`,
-  "g"
+  "gi"
 );
 var IMPLICIT_ONE_CLAIM = new RegExp(
   `\\b(?:the|over|within|for|in|since)\\s+(?:last|past|previous|following|next)\\s+(${UNIT_WORD})\\b`,
-  "g"
+  "gi"
 );
 function sentences(text) {
   const out = [];
@@ -401,7 +401,7 @@ function claimsIn(sentence) {
       unit,
       family: UNIT_TO_FAMILY[unit],
       implicit: false,
-      index: sentence.start + m.index
+      index: m.index
     });
   }
   IMPLICIT_ONE_CLAIM.lastIndex = 0;
@@ -412,7 +412,7 @@ function claimsIn(sentence) {
       unit,
       family: UNIT_TO_FAMILY[unit],
       implicit: true,
-      index: sentence.start + m.index
+      index: m.index
     });
   }
   return out.sort((a, b) => a.index - b.index);
@@ -420,7 +420,7 @@ function claimsIn(sentence) {
 var NEGATION_CUE = /\b(?:not|never|no longer|out of|outside|excludes?|excluded)\b|\bn't\b/;
 var THRESHOLD_CUE = /\b(?:ago|after|older than|earlier than|more than|past|beyond)\b/;
 function qualifierAfter(sentence, claim) {
-  const after = sentence.text.slice(claim.index + 1, sentence.index + 40);
+  const after = sentence.text.slice(claim.index + 1);
   const window = after.split(/\s+/).slice(0, 5).join(" ");
   if (NEGATION_CUE.test(window)) return "negated";
   if (THRESHOLD_CUE.test(window)) return "threshold";
@@ -430,6 +430,25 @@ var HISTORICAL_CUE = /\b(?:once|used to|formerly|originally|previously|no longer
 function isHistorical(sentence) {
   if (!HISTORICAL_CUE.test(sentence.text)) return false;
   return /["“”'`]|comment|called|said|claimed|wrote|read/i.test(sentence.text);
+}
+var QUOTED_SPAN = /`[^`]*`|"[^"\n]*"|“[^”]*”/g;
+function isQuoted(sentence, claim) {
+  const end = claim.index + String(claim.value).length;
+  QUOTED_SPAN.lastIndex = 0;
+  let m;
+  while (m = QUOTED_SPAN.exec(sentence.text)) {
+    if (m.index <= claim.index && end <= m.index + m[0].length) return true;
+  }
+  return false;
+}
+var EACH_CUE = /\beach\b/i;
+function reconciledAsProduct(sentence, claim, have) {
+  if (!EACH_CUE.test(sentence.text)) return false;
+  for (const n of [...sentence.text.matchAll(new RegExp(`\\b(\\d[\\d_]*(?:\\.\\d+)?|${NUMBER_WORD_RE})\\b`, "gi"))]) {
+    const count = quantityValue(n[0]);
+    if (Number.isFinite(count) && count >= 2 && same(claim.value * count, have)) return true;
+  }
+  return false;
 }
 var DECL_PATTERNS = [
   [/(?:^|\n)[ \t]*(?:export[ \t]+)?(?:declare[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)/g, "const"],
@@ -465,14 +484,13 @@ function parseDecls(code, starts) {
     const index = m.index + (m[0].startsWith("\n") ? 1 : 0);
     add(m[1], lineOf(starts, index), "method");
   }
-  const VALUE_RE = /(?:^|\n)[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[^=\n=]*(?::[^=\n]*)?=[ \t]*(?=[^\n]*)/g;
+  const VALUE_RE = /(?:^|\n)(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[^=\n]*=[ \t]*/g;
   VALUE_RE.lastIndex = 0;
   while (m = VALUE_RE.exec(code)) {
     const name = m[1];
     const decl = found.get(name);
     if (!decl) continue;
-    const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 4e3);
-    const rest = tail.replace(/^[^\n]*/, "");
+    const rest = code.slice(m.index + m[0].length, m.index + m[0].length + 4e3);
     const scalar = rest.match(/^([ \t]*)((-?\d[\d_]*(?:\.\d+)?))/);
     if (scalar) {
       decl.value = Number(scalar[2].replace(/_/g, ""));
@@ -496,10 +514,10 @@ function parseDecls(code, starts) {
     if (close === -1) continue;
     const body = rest.slice(open + 1, close);
     const members = /* @__PURE__ */ new Map();
-    const MEMBER = /(?:^|[,{\n])[ \t\n]*"?([A-Za-z_$][\w$]*)"?[ \t]*:[ \t]*([[(]?)([^\n]*?)[\])]?[ \t]*(?:,|$)/g;
+    const MEMBER = /(?:^|[,{\n])[ \t\n]*"?([A-Za-z_$][\w$]*)"?[ \t]*:[ \t]*(\[[^\]]*\]|[^\n,]+)[ \t]*(?:,|$)/g;
     let mm;
     while (mm = MEMBER.exec(body)) {
-      const numbers = [...mm[3].matchAll(/-?\d[\d_]*(?:\.\d+)?/g)].map((x) => Number(x[0].replace(/_/g, "")));
+      const numbers = [...mm[2].matchAll(/-?\d[\d_]*(?:\.\d+)?/g)].map((x) => Number(x[0].replace(/_/g, "")));
       if (numbers.length > 0) members.set(mm[1], numbers);
     }
     if (members.size > 0) decl.members = members;
@@ -556,63 +574,72 @@ function analyseFile(path, src, lang) {
   const record = (rule, bucket, b, line, claimed, actual, referent) => {
     findings.push({ rule, bucket, file: path, line, claimed, actual, evidence: trim(b.text), referent });
   };
+  const blockEndingAt = /* @__PURE__ */ new Map();
+  for (const b of blocks) blockEndingAt.set(b.endLine, b);
+  const attachedTo = /* @__PURE__ */ new Map();
+  for (const d of numericDecls) {
+    const attached = blockEndingAt.get(d.line - 1);
+    if (attached) attachedTo.set(attached, d);
+  }
   for (const b of blocks) {
+    if (attachedTo.has(b)) continue;
     for (const s of sentences(b.text)) {
       const claims = claimsIn(s);
       if (claims.length === 0) continue;
-      if (isHistorical(s)) {
-        for (const c of claims) {
-          record("quantity", "historical", b, b.lineAt(c.index), claimText(c), "narrated, so not an assertion", "-");
-        }
-        continue;
-      }
       for (const c of claims) {
+        if (isHistorical(s)) {
+          record("quantity", "historical", b, b.lineAt(s.start + c.index), claimText(c), "narrated, so not an assertion", "-");
+          continue;
+        }
+        if (isQuoted(s, c)) {
+          record("quantity", "quoted", b, b.lineAt(s.start + c.index), claimText(c), "quoted, so not an assertion", "-");
+          continue;
+        }
         const qual = qualifierAfter(s, c);
         if (qual) {
-          record("quantity", "qualified", b, b.lineAt(c.index), claimText(c), qual, "not an equality");
+          record("quantity", "qualified", b, b.lineAt(s.start + c.index), claimText(c), qual, "not an equality");
           continue;
         }
         for (const d of numericDecls) {
+          if (d.value === void 0) continue;
           if (!wordBoundaryHas(s.text, d.name)) continue;
           const unit = declaredUnits.get(d.name);
           if (!unit || UNIT_TO_FAMILY[unit] !== c.family) continue;
-          if (d.value === void 0) continue;
           const want = canonical(c.value, c.unit, c.family);
           const have = canonical(d.value, unit, c.family);
           if (want === null || have === null) continue;
-          if (same(want, have)) continue;
+          if (same(want, have) || reconciledAsProduct(s, c, have)) continue;
           record(
             "named-constant",
             "defect",
             b,
-            b.lineAt(c.index),
-            `${claimText(c)} vs \`${d.name} = ${d.value}${unit}\` = ${have}`,
+            b.lineAt(s.start + c.index),
+            claimText(c),
+            `${d.name} = ${d.value} ${unit} \u2192 ${have}`,
             `${path}:${d.line}`
           );
         }
       }
     }
   }
-  const blockEndingAt = /* @__PURE__ */ new Map();
-  for (const b of blocks) blockEndingAt.set(b.endLine, b);
-  for (const d of numericDecls) {
-    const attached = blockEndingAt.get(d.line - 1);
-    if (!attached) continue;
+  for (const [attached, d] of attachedTo) {
     const unit = declaredUnits.get(d.name);
     if (d.value !== void 0 && unit) {
       for (const s of sentences(attached.text)) {
         const claims = claimsIn(s);
         if (claims.length === 0) continue;
-        if (isHistorical(s)) {
-          for (const c of claims) {
-            record("quantity", "historical", attached, attached.lineAt(c.index), claimText(c), "narrated, so not an assertion", `${path}:${d.line}`);
-          }
-          continue;
-        }
         for (const c of claims) {
+          if (isHistorical(s)) {
+            record("quantity", "historical", attached, attached.lineAt(s.start + c.index), claimText(c), "narrated, so not an assertion", `${path}:${d.line}`);
+            continue;
+          }
+          if (isQuoted(s, c)) {
+            record("quantity", "quoted", attached, attached.lineAt(s.start + c.index), claimText(c), "quoted, so not an assertion", `${path}:${d.line}`);
+            continue;
+          }
           const qual = qualifierAfter(s, c);
           if (qual) {
-            record("quantity", "qualified", attached, attached.lineAt(c.index), claimText(c), qual, `${path}:${d.line}`);
+            record("quantity", "qualified", attached, attached.lineAt(s.start + c.index), claimText(c), qual, `${path}:${d.line}`);
             continue;
           }
           if (numericDecls.some((o) => o !== d && wordBoundaryHas(s.text, o.name))) continue;
@@ -620,12 +647,14 @@ function analyseFile(path, src, lang) {
           const want = canonical(c.value, c.unit, c.family);
           const have = canonical(d.value, unit, c.family);
           if (want === null || have === null || same(want, have)) continue;
+          if (reconciledAsProduct(s, c, have)) continue;
           record(
             "attached-constant",
             "defect",
             attached,
-            attached.lineAt(c.index),
-            `${claimText(c)} vs \`${d.name} = ${d.value}${unit}\` = ${have}`,
+            attached.lineAt(s.start + c.index),
+            claimText(c),
+            `${d.name} = ${d.value} ${unit} \u2192 ${have}`,
             `${path}:${d.line}`
           );
         }
@@ -652,8 +681,9 @@ function analyseFile(path, src, lang) {
             "attached-record",
             "defect",
             attached,
-            attached.lineAt(c.index),
-            `${claimText(c)} vs \`${d.name}\` keys ${keys.join(", ")} = [${keys.map((k) => d.members.get(k).join(", ")).join("] [")}]`,
+            attached.lineAt(s.start + c.index),
+            claimText(c),
+            `${d.name}: ${keys.map((k) => `${k} = [${d.members.get(k).join(", ")}]`).join("; ")}`,
             `${path}:${d.line}`
           );
         }
@@ -693,7 +723,7 @@ function analyseFile(path, src, lang) {
           const line = codeLines[i];
           const entry = line.match(/^[ \t]*([A-Za-z_$][\w$]*|"[^"]+")?[ \t]*:[ \t]*(.+?)[ \t]*,?[ \t]*$/);
           if (!entry) break;
-          const value = (entry[2] ?? "").trim().replace(/,$/, "").trim();
+          const value = (entry[2] ?? "").trim().replace(/,$/, "").trim().replace(/^"(.*)"$/, "$1");
           if (value === "") break;
           run.push({ name: entry[1] ?? "", value, line: i + 1 });
           i++;
@@ -715,30 +745,34 @@ function analyseFile(path, src, lang) {
           "defect",
           b,
           b.startLine,
-          `"${claimed} ${noun}" above ${run.length} entries (${run[0].line}-${run[run.length - 1].line})`,
-          `${path}:${opening + 1}`
+          `"${claimed} ${noun}"`,
+          `${run.length} entries: ${run.map((e) => e.name).join(", ")}`,
+          `${path}:${run[0].line}-${run[run.length - 1].line}`
         );
       }
     }
   }
-  const camel = new RegExp(`^(${IDENT})(?=[ \\t])`);
+  const lead = new RegExp(`^(${IDENT})(?=[ \\t])`);
+  const camelCase = /^[a-z_$][\w$]*[A-Z]/;
   for (const b of blocks) {
     if (!b.doc) continue;
     const first = sentences(b.text)[0];
     if (!first) continue;
-    const lead = first.text.match(camel);
-    if (!lead) continue;
-    const named = lead[1];
+    const m = first.text.match(lead);
+    if (!m) continue;
+    const named = m[1];
+    const elsewhere = byName.has(named);
+    if (!elsewhere && !camelCase.test(named)) continue;
     const below = decls.find((d) => d.line === b.endLine + 1);
     if (!below) continue;
     if (below.name === named) continue;
-    const elsewhere = byName.has(named);
     record(
       "doc-attachment",
-      elsewhere ? "defect" : "unresolved",
+      "defect",
       b,
       b.startLine,
-      `doc names \`${named}\`, declaration below is \`${below.name}\``,
+      `doc block names \`${named}\`${elsewhere ? ", a real declaration in this file" : ", a name declared nowhere in this file"}`,
+      `${below.name} is what is directly below`,
       `${path}:${below.line}`
     );
   }
@@ -781,15 +815,16 @@ function fencesOf(md) {
 }
 function scanTree() {
   const findings = [];
-  let files = 0;
+  const perRoot = {};
   let comments = 0;
   for (const root of SCAN_ROOTS) {
+    perRoot[root] = 0;
     for (const p of walk(join(ROOT, root))) {
       const rel = relative(ROOT, p).split(sep).join("/");
       const src = readFileSync(p, "utf8");
       if (p.endsWith(".md")) {
         for (const f of fencesOf(src)) {
-          files++;
+          perRoot[root]++;
           const found = analyseFile(`${rel}#fence@${f.startLine}`, f.body, f.lang);
           comments += commentBlocks(f.body, lex(f.body, f.lang)).length;
           for (const x of found) x.line += f.startLine;
@@ -799,19 +834,21 @@ function scanTree() {
       }
       if (!/\.(ts|tsx|mjs|js|go)$/.test(p)) continue;
       const lang = p.endsWith(".go") ? "go" : "ts";
-      files++;
+      perRoot[root]++;
       comments += commentBlocks(src, lex(src, lang)).length;
       findings.push(...analyseFile(rel, src, lang));
     }
   }
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule));
-  return { findings, files, comments };
+  return { findings, perRoot, comments };
 }
-var BUCKETS = ["defect", "qualified", "historical", "unresolved", "allowlisted"];
-function report(findings, files, comments) {
+var BUCKETS = ["defect", "qualified", "quoted", "historical", "allowlisted"];
+function report(findings, perRoot, comments) {
+  const files = Object.values(perRoot).reduce((a, b) => a + b, 0);
   const lines = [];
   lines.push("\u2500\u2500 comment truth \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
   lines.push(`scanned ${files} source units, ${comments} comment blocks`);
+  lines.push(`  by root: ${Object.entries(perRoot).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   lines.push(`excluded: ${EXCLUDED.join(", ")}`);
   lines.push("");
   for (const bucket of BUCKETS) {
@@ -833,14 +870,44 @@ function report(findings, files, comments) {
   lines.push("\u2500".repeat(64));
   return lines.join("\n");
 }
+function triage(findings, perRoot, comments) {
+  const allowed = new Set(ALLOWLIST.map((a) => a.key));
+  const used = /* @__PURE__ */ new Set();
+  const defects = [];
+  for (const f of findings) {
+    if (f.bucket !== "defect") continue;
+    const key = allowlistKey(f);
+    if (allowed.has(key)) {
+      used.add(key);
+      f.bucket = "allowlisted";
+      continue;
+    }
+    defects.push(
+      `  ${f.file}:${f.line}  [${f.rule}]
+      claimed   ${f.claimed}
+      actual    ${f.actual}
+      referent  ${f.referent}
+      comment   ${f.evidence}`
+    );
+  }
+  return {
+    defects,
+    stale: ALLOWLIST.filter((a) => !used.has(a.key)).map((a) => `  ${a.key} - ${a.why}`),
+    out: report(findings, perRoot, comments)
+  };
+}
 var FIXTURES = [
   {
     name: "a comment's window contradicts the constant it names",
     path: "fixture/a.ts",
     rule: "named-constant",
     line: 1,
+    // The blank line matters and is part of the fixture: it is what separates
+    // the *file header* — which names the constant and is therefore audited by
+    // Rule 1 — from a doc block attached to it, which Rule 2 would own.
     src: `// An ember means touched in the last minute or so - see EMBER_MS, the
 // only place that number is written.
+
 export const EMBER_MS = 120_000;
 `
   },
@@ -882,7 +949,8 @@ export const EMBER_MS = 120_000;
     rule: "counted-run",
     line: 1,
     src: `export const P = {
-  // The sky, and nothing else in the art is allowed to use them.
+  // The sky, and nothing else in the art is allowed to use them, so these are
+  // the four colours.
   skyZenith: "#1a2740",
   skyMid: "#3d5570",
   skyHaze: "#7d8a80",
@@ -916,7 +984,7 @@ for (const fx of FIXTURES) {
     assert.ok(
       hit,
       `rule "${fx.rule}" found nothing in the fixture
-` + report(found, 1, 1) + `
+` + report(found, { fixture: 1 }, 1) + `
 fixture was:
 ${fx.src}`
     );
@@ -935,7 +1003,7 @@ export const STOREY = 20;
   assert.deepEqual(
     found.filter((f) => f.bucket === "defect").map((f) => f.rule),
     [],
-    report(found, 1, 1)
+    report(found, { fixture: 1 }, 1)
   );
 });
 test("the checker treats a threshold and a negation as non-equalities", () => {
@@ -947,7 +1015,7 @@ export const EMBER_MS = 120_000;
   assert.deepEqual(
     found.filter((f) => f.bucket === "defect"),
     [],
-    report(found, 1, 1)
+    report(found, { fixture: 1 }, 1)
   );
   assert.ok(
     found.some((f) => f.bucket === "qualified"),
@@ -963,7 +1031,7 @@ test("the checker does not demand the repository delete its own explanation", ()
 export const EMBER_MS = 120_000;
 `;
   const found = analyseFile("fixture/h.ts", src, "ts");
-  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, 1, 1));
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
   assert.ok(found.some((f) => f.bucket === "historical"));
 });
 test("a doc block that correctly names the declaration below it is not a finding", () => {
@@ -977,7 +1045,7 @@ test("a doc block that correctly names the declaration below it is not a finding
 }
 `;
   const found = analyseFile("fixture/i.ts", src, "ts");
-  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, 1, 1));
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
 });
 test("a `//` inside a string is not a comment", () => {
   const src = `// The real comment mentions two minutes and nothing else.
@@ -985,43 +1053,90 @@ export const HINT = "https://example.test/two minutes";
 export const EMBER_MS = 120_000;
 `;
   const found = analyseFile("fixture/j.ts", src, "ts");
-  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, 1, 1));
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
+});
+test("a number quoted from another program is not a claim about this one", () => {
+  const src = `// The window is whatever the runner says: \`FAIL  pkg  336ms\`
+// and nothing more.
+export const EMBER_MS = 120_000;
+`;
+  const found = analyseFile("fixture/k.ts", src, "ts");
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
+  assert.ok(
+    found.some((f) => f.bucket === "quoted" && f.claimed === "336 ms"),
+    `the quoted quantity should still be reported, just not failed:
+${report(found, { fixture: 1 }, 1)}`
+  );
+});
+test("a per-item quantity and a count are a product, not a disagreement", () => {
+  const src = `/** The distance one walk cycle covers. Two steps of about seven
+ *  pixels each.
+ */
+const STRIDE_PX = 14;
+`;
+  const found = analyseFile("fixture/l.ts", src, "ts");
+  assert.deepEqual(found.filter((f) => f.bucket === "defect"), [], report(found, { fixture: 1 }, 1));
+});
+test("an allowlist entry silences the hit it names and nothing else", () => {
+  const findings = [
+    {
+      rule: "named-constant",
+      bucket: "defect",
+      file: "a.ts",
+      line: 1,
+      claimed: "1 minute",
+      actual: "EMBER_MS = 120000 ms \u2192 120000",
+      evidence: "x",
+      referent: "a.ts:2"
+    },
+    {
+      rule: "named-constant",
+      bucket: "defect",
+      file: "b.ts",
+      line: 1,
+      claimed: "1 minute",
+      actual: "WINDOW_MS = 60000 ms \u2192 60000",
+      evidence: "y",
+      referent: "b.ts:2"
+    }
+  ];
+  ALLOWLIST.push({ key: "a.ts named-constant 1 minute", why: "a known, argued exception" });
+  try {
+    const { defects, stale } = triage(findings, { fixture: 2 }, 2);
+    assert.equal(defects.length, 1, "exactly the unlisted hit should fail");
+    assert.match(defects[0], /^ {2}b\.ts:1/);
+    assert.deepEqual(stale, [], "an entry that matched is not stale");
+    assert.equal(findings[0].bucket, "allowlisted");
+    assert.equal(findings[1].bucket, "defect");
+  } finally {
+    ALLOWLIST.pop();
+  }
+});
+test("an allowlist entry that no longer matches is itself a failure", () => {
+  ALLOWLIST.push({ key: "gone.ts named-constant 1 minute", why: "fixed in a commit nobody remembers" });
+  try {
+    const { stale } = triage([], {}, 0);
+    assert.equal(stale.length, 1);
+    assert.match(stale[0], /gone\.ts named-constant 1 minute/);
+  } finally {
+    ALLOWLIST.pop();
+  }
 });
 test("every comment in the tree agrees with the code beside it", () => {
-  for (const marker of ["ui/src", "internal", ".scratch"]) {
-    assert.ok(
-      SCAN_ROOTS.includes(marker),
-      `scan root ${marker} is not registered`
-    );
+  const { findings, perRoot, comments } = scanTree();
+  const files = Object.values(perRoot).reduce((a, b) => a + b, 0);
+  for (const root of SCAN_ROOTS) {
+    assert.ok(perRoot[root] > 0, `scan root ${root} contributed nothing; the walk is broken`);
   }
-  const { findings, files, comments } = scanTree();
-  assert.ok(files > 40, `only ${files} source units were scanned; the root is probably wrong`);
+  assert.ok(files > 60, `only ${files} source units were scanned; the root is probably wrong`);
   assert.ok(comments > 200, `only ${comments} comment blocks were parsed; the lexer is probably wrong`);
-  const allowed = new Set(ALLOWLIST.map((a) => a.key));
-  const defects = [];
-  const stale = [];
-  const used = /* @__PURE__ */ new Set();
-  for (const f of findings) {
-    const base = { rule: f.rule, file: f.file, claimed: f.claimed, actual: f.actual, evidence: f.evidence, referent: f.referent };
-    const key = allowlistKey(base);
-    if (f.bucket === "defect" && allowed.has(key)) {
-      used.add(key);
-      f.bucket = "allowlisted";
-    } else if (f.bucket === "defect") {
-      defects.push(
-        `  ${f.file}:${f.line}  [${f.rule}]
-      claimed   ${f.claimed}
-      actual    ${f.actual}
-      referent  ${f.referent}
-      comment   ${f.evidence}`
-      );
-    }
+  const { defects, stale, out } = triage(findings, perRoot, comments);
+  if (defects.length === 0 && stale.length === 0) {
+    console.log(out);
+    return;
   }
-  for (const a of ALLOWLIST) if (!used.has(a.key)) stale.push(`  ${a.key} - ${a.why}`);
-  const out = report(findings, files, comments);
-  if (defects.length > 0 || stale.length > 0) {
-    assert.fail(
-      `${defects.length} comment(s) contradict the code beside them.
+  assert.fail(
+    `${defects.length} comment(s) contradict the code beside them.
 
 ${out}
 ` + (defects.length > 0 ? `${defects.join("\n\n")}
@@ -1029,7 +1144,5 @@ ${out}
 ` : "") + (stale.length > 0 ? `These allowlist entries no longer match anything, so they are suppressing nothing and are only hiding a future edit:
 ${stale.join("\n")}
 ` : "") + `Fix the comment, or fix the code. If the comment is right, add an entry to ALLOWLIST in test/commenttruth.test.ts with the reason it is not a defect.`
-    );
-  }
-  console.log(out);
+  );
 });
