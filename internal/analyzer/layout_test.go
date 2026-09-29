@@ -1590,3 +1590,53 @@ func TestDistrictRoadsDoNotRunOverADistrict(t *testing.T) {
 		}
 	}
 }
+
+// An import road says which building imports which, and says nothing when it
+// is not an import road.
+//
+// A car cannot be placed without it, and a car placed by guessing the direction
+// would draw "this building uses that one" backwards — a false claim about a
+// dependency, on a map whose entire claim is that it only says true things.
+func TestImportRoadsCarryTheirDirection(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("ui/src/a.ts", "import { x } from \"../shared\";\n")
+	mk("ui/shared/b.ts", "export const x = 1;\n")
+	mk("ui/src/contained.ts", "export const y = 2;\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(town)
+
+	var found bool
+	for _, r := range l.Roads {
+		switch r.Kind {
+		case "import":
+			found = true
+			if r.From == "" || r.To == "" {
+				t.Errorf("an import road has no direction: %+v", r)
+			}
+			// ui/src imports ui/shared, and the order is the whole claim.
+			if r.From == "ui/shared" || r.To == "ui/src" {
+				t.Errorf("import road points the wrong way: %s -> %s", r.From, r.To)
+			}
+		default:
+			if r.From != "" || r.To != "" {
+				t.Errorf("a %s road claims a direction: %+v", r.Kind, r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no import road was emitted at all")
+	}
+}

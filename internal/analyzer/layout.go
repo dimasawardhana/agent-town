@@ -150,11 +150,25 @@ type Road struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
-	// Kind is "row", "district" or "containment". It is carried so the three can
-	// be drawn differently if they ever need to be — a row road is a street, a
-	// district road runs between quarters, and a containment road is a footpath
-	// — and so a reader debugging the map can tell which rule produced a band.
+	// Kind is "row", "district", "containment" or "import". It is carried so
+	// they can be drawn differently if they ever need to be — a row road is a
+	// street, a district road runs between quarters, a containment road is a
+	// footpath and an import road is the checkered one — and so a reader
+	// debugging the map can tell which rule produced a band.
 	Kind string `json:"kind"`
+	// From and To are the building paths an import road runs between, in that
+	// order: the importer, then the imported.
+	//
+	// They are empty for every other kind of road, and they are *omitted* rather
+	// than sent empty, because a reader that has to distinguish "no direction"
+	// from "an empty direction" is a reader that will get it wrong eventually.
+	//
+	// This travels the wire rather than being recomputed in the browser for the
+	// same reason roads do: the layout is the single source of truth (ADR-0012),
+	// and a renderer that worked out the direction for itself would be a second
+	// implementation of the dependency graph.
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 }
 
 // buildingSize scales a building's footprint by its source-file count.
@@ -677,7 +691,6 @@ func importRoads(root string, l *Layout) {
 		}
 		return pairs[i][1] < pairs[j][1]
 	})
-
 	const band = 8.0
 	for _, e := range pairs {
 		c, p := byPath[e[0]], byPath[e[1]]
@@ -689,6 +702,10 @@ func importRoads(root string, l *Layout) {
 			W:    math.Abs(px-cx) + band,
 			H:    math.Abs(py-cy) + band,
 			Kind: "import",
+			// e[0] imports e[1]. The ordering is already the direction, so this
+			// records a fact the layout had rather than computing a new one.
+			From: e[0],
+			To:   e[1],
 		})
 	}
 }
