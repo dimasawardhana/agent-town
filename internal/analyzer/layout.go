@@ -408,7 +408,7 @@ func LayoutTown(t *Town) Layout {
 
 		blk := placeDistrict(&l, d, buildings, containersIn(t, d.Name), x, y)
 
-		x += blk.W
+		x += blk.W + rowGap
 		if blk.H > rowH {
 			rowH = blk.H
 		}
