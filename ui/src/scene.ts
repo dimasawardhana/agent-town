@@ -32,7 +32,7 @@ import {
   windowLightFrame,
   noWindowLightFrame,
 } from "./art/bake";
-import { BAND_TREATMENT, TURN_COUNT, type Turn, hasBand, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { SKY_DEPTH, skyTexture } from "./sky";
@@ -691,51 +691,19 @@ export class TownScene extends Phaser.Scene {
     l: Layout,
   ): void {
     for (const r of l.roads ?? []) {
-      // A band is painted along its line; the tile grid below is for the road
-      // kinds that really are rectangles. `continue` rather than an `else`, so
-      // there is one place a band can be painted and one way it can be missed.
-
-      // A band is filled as its own projected quad, not as a grid of ground
-      // tiles. Tiles are the right primitive for a road *area* — row and
-      // district roads, which really are regions — and the wrong one for a strip:
-      // the tile is 16 world units and the gap between two neighbouring plots is
-      // 14, so five of the fifteen banded roads on this repository are *shorter
-      // than the tile they are painted with*. Each of those came out as one or
-      // two checkered diamonds spilling under the buildings on either side, which
-      // reads as a road going through a tunnel rather than a street between two
-      // buildings.
+      // Every road here is an *area*, and every one is painted the same way: a
+      // grid of ground tiles with a kerb on its own edge.
       //
-      // A band's treatment is its *kind*, not one shared call. See
-      // `BAND_TREATMENT`: containment is a seam and import is a made surface,
-      // and drawing them the same made six predictable roads compete with nine
-      // that carry new information.
+      // The band path — a strip filled as its own projected quad, with a per-kind
+      // treatment — is gone. It existed for kinds that joined two places, and the
+      // last of those was containment: a band from a nested building to the one
+      // holding it. It had the silhouette of the import road that was removed
+      // before it, and a reader who had learned to distrust that shape was still
+      // seeing it every time they looked at the map.
       //
-      // The colour is the road tile's own average times the kind's shade, so
-      // every band is the same *material* as the district road beside it and
-      // differs only in value — a second road colour would be a second thing
-      // to learn.
-      if (hasBand(r)) {
-        const treat = BAND_TREATMENT[r.kind];
-        if (treat) {
-          const key = groundFrame("road", 0);
-          const f = this.atlas[key];
-          if (f) {
-            const base = averageColour(this.tileCanvas(key));
-            if (base) {
-              const [cr, cg, cb] = base;
-              const dim = (v: number): number => Math.min(255, Math.round(v * treat.shade));
-              bandQuad(
-                ctx, toCanvas, r, treat.half,
-                `rgb(${dim(cr)}, ${dim(cg)}, ${dim(cb)})`,
-                // A seam has no kerb: a kerb is a made edge, and giving one to a
-                // footpath is what made it read as a street.
-                treat.kerb ? `rgb(${cr * 0.6 | 0}, ${cg * 0.6 | 0}, ${cb * 0.6 | 0})` : `rgb(${dim(cr)}, ${dim(cg)}, ${dim(cb)})`,
-              );
-            }
-          }
-        }
-        continue;
-      }
+      // What it cost is in issue 40. The short version: "this sits inside that"
+      // is true, is the most predictable thing on the map, and was already in the
+      // geometry — a child building is placed inside its parent's plate.
       // The tile grid is walked from the band's own origin, aligned so the road
       // starts and ends on a tile boundary. Aligned to the *world* grid rather
       // than the band's, or two bands would meet with a seam between them.
@@ -1740,60 +1708,6 @@ export function siteName(s: Site): string {
   return `site:${s.id}`;
 }
 
-/**
- * bandQuad fills one band's surface on the ground texture.
- *
- * The band is a strip of `half` either side of its centre line, so its outline
- * is four corners: two at the `a` end, offset perpendicular to the line, and two
- * at the `b` end. Projecting those four and filling the polygon is exact — the
- * surface is exactly as wide as the road claims and stops at the plot edges,
- * which is the whole reason this replaced the tile grid.
- *
- * Free-standing because it is the only place a band becomes pixels, and a road
- * that is wrong in one place is wrong in every place.
- */
-/** bandQuad's road, with the band fields resolved by the caller's guard. */
-type BandedRoad = Road & { ax: number; ay: number; bx: number; by: number };
-
-function bandQuad(
-  ctx: CanvasRenderingContext2D,
-  toCanvas: (wx: number, wy: number) => [number, number],
-  r: BandedRoad,
-  half: number,
-  fill: string,
-  edge: string,
-): void {
-  const dx = r.bx - r.ax;
-  const dy = r.by - r.ay;
-  const len = Math.hypot(dx, dy) || 1;
-  // Unit normal to the centre line: the band's width lies along it.
-  const nx = (-dy / len) * half;
-  const ny = (dx / len) * half;
-  const quad = [
-    [r.ax + nx, r.ay + ny],
-    [r.ax - nx, r.ay - ny],
-    [r.bx - nx, r.by - ny],
-    [r.bx + nx, r.by + ny],
-  ].map(([x, y]) => toCanvas(x, y));
-
-  const trace = (): void => {
-    ctx.beginPath();
-    ctx.moveTo(quad[0][0], quad[0][1]);
-    for (let i = 1; i < quad.length; i++) ctx.lineTo(quad[i][0], quad[i][1]);
-    ctx.closePath();
-  };
-
-  ctx.fillStyle = fill;
-  trace();
-  ctx.fill();
-  // A kerb around the strip, so a band reads as a made surface with a boundary
-  // rather than as a coloured line drawn on the grass. It is the band's own
-  // outline, which is the one thing a line does not have.
-  ctx.strokeStyle = edge;
-  ctx.lineWidth = 1;
-  trace();
-  ctx.stroke();
-}
 
 /**
  * averageColour is a tile's mean opaque RGB, or null if it has no opaque pixel.

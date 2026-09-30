@@ -26,7 +26,7 @@ const layout: Fixture = {
   districts: [{ x: 40, y: 40, w: 200, h: 200 }],
   roads: [
     { x: 40, y: 150, w: 260, h: 20, kind: "row" },
-    { x: 120, y: 70, w: 30, h: 30, kind: "containment" },
+    { x: 120, y: 70, w: 30, h: 30, kind: "district" },
   ],
 };
 
@@ -68,8 +68,8 @@ test("a road's extent turns with the town, swapping as the geometry does", () =>
 
 test("a road line spans the road, rather than being as long as the road is thick", () => {
   const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
-  // 100 long and 8 thick: the shape an import road between two buildings has.
-  const [line] = roadsAsLines([{ x: 0, y: 0, w: 100, h: 8, kind: "import" }], project);
+  // 100 long and 8 thick: the shape a gap between two rows has.
+  const [line] = roadsAsLines([{ x: 0, y: 0, w: 100, h: 8, kind: "district" }], project);
   const span = Math.hypot(line.bx - line.ax, line.by - line.ay);
   const near = project(0, 0);
   const far = project(100, 8);
@@ -91,89 +91,17 @@ test("a road line spans the road, rather than being as long as the road is thick
 
 test("a road's width is its thickness, not how far it runs", () => {
   const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
-  const [long] = roadsAsLines([{ x: 0, y: 0, w: 122, h: 8, kind: "import" }], project);
+  const [long] = roadsAsLines([{ x: 0, y: 0, w: 122, h: 8, kind: "district" }], project);
   // Half of 8, floored at the 3px minimum. Taking the long side instead gave
   // 61, at which point every point in the district counts as being on the road
   // and the width stops carrying any information at all.
   assert.equal(long.halfWidth, 4, "a thin long road was given its length as its width");
-  const [short] = roadsAsLines([{ x: 0, y: 0, w: 8, h: 122, kind: "import" }], project);
+  const [short] = roadsAsLines([{ x: 0, y: 0, w: 8, h: 122, kind: "district" }], project);
   assert.equal(short.halfWidth, 4, "the vertical case took the wrong side");
 });
 
-test("a turn carries the road's band with it", () => {
-  // Turn 1, not turn 0: at turn 0 `turnLayout` returns the layout untouched and
-  // an unchanged band would prove nothing. The point is that the band is part
-  // of what a turn moves, not that it happens to be where it started.
-  const withBand = {
-    ...layout,
-    roads: [{ ...layout.roads[0], ax: 40, ay: 150, bx: 300, by: 150 }],
-  };
-  const turned = turnLayout(1, withBand) as {
-    roads: { kind: string; x: number; ax: number; ay: number; bx: number; by: number }[];
-  };
-  const before = withBand.roads[0] as unknown as { ax: number; ay: number; bx: number; by: number };
-  const after = turned.roads[0];
-  assert.equal(typeof after.bx, "number", "the turn dropped the band's far end entirely");
-  assert.equal(typeof after.ay, "number", "the turn dropped the band's near end");
-  // A quarter turn maps (x, y) to (y, -x), so a horizontal band becomes a
-  // vertical one. Anything that leaves both ends where they were is a band the
-  // turn ignored.
-  const moved = after.ax !== before.ax || after.ay !== before.ay ||
-    after.bx !== before.bx || after.by !== before.by;
-  assert.ok(moved, "the band was left in the old frame while the rectangle turned");
-  // Both ends must move by the same amount as the rect, or the band belongs to
-  // a different town than the road it is attached to.
-  const rect = turned.roads[0];
-  assert.equal(typeof rect.x, "number", "the road lost its extent too");
-  const spanBefore = Math.hypot(before.bx - before.ax, before.by - before.ay);
-  const spanAfter = Math.hypot(after.bx - after.ax, after.by - after.ay);
-  assert.ok(
-    Math.abs(spanAfter - spanBefore) < 0.001,
-    `a quarter turn changed the band's length from ${spanBefore} to ${spanAfter}`,
-  );
-});
 
-test("a road line follows the band, not the rectangle around it", () => {
-  const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
-  const [line] = roadsAsLines(
-    [
-      {
-        x: 0, y: 0, w: 122, h: 122, kind: "containment",
-        // The band from A's plot edge to B's — far shorter than the box. The
-        // kind is "containment" and used to be "import": nothing emits an
-        // import band any more, and a fixture naming a kind the analyzer
-        // cannot produce is a test for a thing that does not exist.
-        ax: 20, ay: 20, bx: 100, by: 100,
-      },
-    ],
-    project,
-  );
-  const bandLen = Math.hypot(line.bx - line.ax, line.by - line.ay);
-  const far = project(122, 122);
-  const rectLen = Math.hypot(far.x - project(0, 0).x, far.y - project(0, 0).y);
-  assert.ok(
-    bandLen < rectLen * 0.75,
-    `the line is ${bandLen.toFixed(1)}px — the ${rectLen.toFixed(1)}px rectangle is still driving it`,
-  );
-  assert.equal(line.halfWidth, 4, "a band's width is its thickness, not its length");
-  // And the line must be the band, in the right place: both ends projected.
-  const wantA = project(20, 20);
-  const wantB = project(100, 100);
-  assert.equal(line.ax, wantA.x, "the line's near end is not the band's near end");
-  assert.equal(line.bx, wantB.x, "the line's far end is not the band's far end");
-});
 
-test("a road with no band still comes from its rectangle", () => {
-  // Row and district roads are areas, not joins between two places. They carry
-  // no band and must keep working, because a renderer that branched on "is
-  // there an ax" instead of "does this road have a band" would leave the whole
-  // town's streets unpainted and every test still green.
-  const project = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
-  const [row] = roadsAsLines([{ x: 0, y: 200, w: 1000, h: 24, kind: "row" }], project);
-  assert.equal(row.ax, project(0, 212).x, "a row road lost its rectangle");
-  assert.equal(row.bx, project(1000, 212).x, "a row road lost its far end");
-  assert.equal(row.halfWidth, 12, "a row road's width is its thickness");
-});
 
 
 

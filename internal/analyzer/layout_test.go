@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1058,7 +1057,7 @@ func TestTheLayoutEmitsRoads(t *testing.T) {
 		if r.W <= 0 || r.H <= 0 {
 			t.Errorf("a road has no extent: %+v", r)
 		}
-		if r.Kind != "row" && r.Kind != "containment" && r.Kind != "district" {
+		if r.Kind != "row" && r.Kind != "district" {
 			t.Errorf("a road has kind %q, which no rule produces", r.Kind)
 		}
 	}
@@ -1100,41 +1099,6 @@ func TestRowRoadsSitInTheGapAndNotOverABuilding(t *testing.T) {
 	if rows == 0 {
 		t.Error("a tree this size wraps onto more than one row, so a row road was expected")
 	}
-}
-
-// Containment roads resolve to the *nearest* ancestor, not to the repository.
-func TestContainmentRoadsUseTheNearestAncestor(t *testing.T) {
-	root := t.TempDir()
-	for _, rel := range []string{"ui/a.go", "ui/src/b.go", "ui/src/art/c.go"} {
-		full := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte("package m\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	at, err := Analyze(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l := LayoutTown(at)
-	byPath := map[string]Site{}
-	for _, s := range l.Sites {
-		byPath[s.Path] = s
-	}
-	// ui/src/art is inside ui/src, and ui/src is inside ui. Two links, and the
-	// inner one must not skip a level to reach the repo.
-	links := 0
-	for _, r := range l.Roads {
-		if r.Kind == "containment" {
-			links++
-		}
-	}
-	if links != 2 {
-		t.Errorf("%d containment roads, want 2 — one per nested directory", links)
-	}
-	_ = byPath
 }
 
 // An import road is a claim, so the test is about what the scanner refuses to
@@ -1581,126 +1545,32 @@ func TestDistrictRoadsDoNotRunOverADistrict(t *testing.T) {
 	}
 }
 
-// An import road says which building imports which, and says nothing when it
-// is not an import road.
+// No road joins two places, at any kind.
 //
-
-// An import road crosses no building other than the two it connects.
+// This is the invariant that replaced three containment tests and one import
+// test, and it is stronger than all four put together. Those asked whether a
+// particular band was well made — trimmed to its two plots, crossing no third
+// building, its extent derived from its own centre line. They could only ever
+// fail for the kinds that existed, which is why each removal of a kind took its
+// guarantees with it and left the shape free to return in a new guise.
 //
-
-// bandCrosses is whether a band of the given half-width touches a plot.
+// This one is about the *shape*: the layout emits regions, and nothing on this
+// map runs from one building to another. The reader removed the import line
+// twice — the road, and then the mark on the roof — and the containment band was
+// still there, drawn between two buildings, because it had inherited the
+// silhouette of the thing that was removed without inheriting its meaning.
 //
-// The nearest of the plot's four corners is enough: the band is convex and the
-// plot is a rectangle, so if the band misses all four corners it cannot have
-// passed through the middle.
-func bandCrosses(r Road, s Site, half float64) bool {
-	dx, dy := r.Bx-r.Ax, r.By-r.Ay
-	len2 := dx*dx + dy*dy
-	for _, c := range [][2]float64{{s.X, s.Y}, {s.X + s.W, s.Y}, {s.X, s.Y + s.H}, {s.X + s.W, s.Y + s.H}} {
-		t := 0.0
-		if len2 > 0 {
-			t = ((c[0]-r.Ax)*dx + (c[1]-r.Ay)*dy) / len2
-			t = math.Max(0, math.Min(1, t))
+// A new kind that joins two places fails here whatever it is called.
+func TestNoRoadJoinsTwoPlaces(t *testing.T) {
+	for _, root := range []string{"../.."} {
+		town, err := Analyze(root)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if math.Hypot(c[0]-(r.Ax+dx*t), c[1]-(r.Ay+dy*t)) <= half {
-			return true
-		}
-	}
-	return false
-}
-
-// A road's rectangle is the band it actually carries, not a second opinion.
-//
-
-// A containment road is the band between two plots, not the box around them.
-//
-// This is the same defect the import roads had, and it is the reason the town is
-// covered in checkered plazas rather than footpaths. A containment band is 10
-// units wide; the box between two centres measured 238x124 on this repository —
-// it covered three buildings that have nothing to do with either plot.
-func TestContainmentRoadsCarryATrimmedBand(t *testing.T) {
-	town, err := Analyze("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := 0
-	for _, r := range LayoutTown(town).Roads {
-		if r.Kind != "containment" {
-			continue
-		}
-		seen++
-		if r.Ax == 0 && r.Ay == 0 && r.Bx == 0 && r.By == 0 {
-			t.Fatalf("a containment road carries no band: %+v", r)
-		}
-		bandLen := math.Hypot(r.Bx-r.Ax, r.By-r.Ay)
-		rectLen := math.Hypot(r.W, r.H)
-		if bandLen > 0 && bandLen >= rectLen {
-			t.Errorf("containment road at %v,%v %vx%v: band is %0.1f long and the box is %0.1f — the box is still driving it",
-				r.X, r.Y, r.W, r.H, bandLen, rectLen)
-		}
-	}
-	if seen == 0 {
-		t.Fatal("no containment roads on this repository; the test proves nothing")
-	}
-}
-
-// A containment road touches the two plots it joins and nothing else.
-//
-// "This sits inside that" is a claim about two buildings. Drawing it across a
-// third is the same false claim the import roads were making, and it is the
-// one a reader is least able to check: a footpath through a building looks
-// like a footpath that happens to go past something.
-func TestContainmentRoadsCrossNoThirdBuilding(t *testing.T) {
-	town, err := Analyze("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	l := LayoutTown(town)
-	seen := 0
-	for _, r := range l.Roads {
-		if r.Kind != "containment" {
-			continue
-		}
-		seen++
-		touched := 0
-		for _, s := range l.Sites {
-			if s.Kind != PlaceBuilding {
-				continue
+		for _, r := range LayoutTown(town).Roads {
+			if r.Kind != "row" && r.Kind != "district" {
+				t.Errorf("road kind %q joins two places; only regions are drawn", r.Kind)
 			}
-			if bandCrosses(r, s, containmentBand/2) {
-				touched++
-			}
-		}
-		if touched > 2 {
-			t.Errorf("a containment road at %v,%v %vx%v runs across %d buildings; it joins two",
-				r.X, r.Y, r.W, r.H, touched)
-		}
-	}
-	if seen == 0 {
-		t.Fatal("no containment roads on this repository; the test proves nothing")
-	}
-}
-
-// A containment road's extent is its band, for the same reason an import
-// road's is: the renderer draws the line and the camera measures the box, and
-// two fields describing one road with no test between them is how they drift.
-func TestAContainmentRoadsExtentIsItsBand(t *testing.T) {
-	town, err := Analyze("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range LayoutTown(town).Roads {
-		if r.Kind != "containment" {
-			continue
-		}
-		wantX := math.Min(r.Ax, r.Bx) - containmentBand/2
-		wantY := math.Min(r.Ay, r.By) - containmentBand/2
-		wantW := math.Abs(r.Bx-r.Ax) + containmentBand
-		wantH := math.Abs(r.By-r.Ay) + containmentBand
-		if math.Abs(r.X-wantX) > 0.01 || math.Abs(r.Y-wantY) > 0.01 ||
-			math.Abs(r.W-wantW) > 0.01 || math.Abs(r.H-wantH) > 0.01 {
-			t.Errorf("containment at %v,%v %vx%v but band gives %0.1f,%0.1f %0.1fx%0.1f",
-				r.X, r.Y, r.W, r.H, wantX, wantY, wantW, wantH)
 		}
 	}
 }

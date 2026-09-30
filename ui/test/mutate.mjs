@@ -77,11 +77,19 @@ const MUTATIONS = [
     suite: null,
     go: true,
   },
-  {
-    what: "a road band goes back to being its bounding box",
+    {
+    // A band stops being its own line and is drawn as its bounding box. This
+    // existed for the containment band and the import road, and both are gone —
+    // so rather than re-anchor it to whatever replaced them, it now pins the
+    // invariant that outlived them: a road is an area, drawn from its rectangle,
+    // and never from anything else.
+    //
+    // A stale mutation is worse than a missing one. It reports as coverage and
+    // covers nothing, which is the same failure as a vacuous test.
+    what: "a road stops being drawn from its own rectangle",
     file: "src/view.ts",
-    from: "    if (hasBand(r)) {",
-    to: "    if (false) {",
+    from: "    const horizontal = r.w >= r.h;",
+    to: "    const horizontal = r.h >= r.w;",
     suite: "test:turnroads",
   },
   {

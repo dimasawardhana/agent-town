@@ -165,20 +165,28 @@ trivial; the hard part is that nothing places it. Roads are therefore one ticket
 art and placement together — shipping the art alone would recreate the exact
 dead art that got the kind deleted.
 
-Two kinds: **row roads** filling the gaps the layout already creates, and
-**containment roads** from a building to the building containing it. A
-subdirectory is inside its parent, the analyzer already nests them, and the
-statement is always true.
+One kind: **row roads** filling the gaps the layout already creates.
+
+**Containment roads are gone**, and this section is where that is recorded. A
+band from a building to the building containing it — true, always, and the most
+predictable thing on the map — had the silhouette of the import road that was
+removed before it, and a reader who had learned to distrust that shape was still
+seeing it. Issue 36 removed the import road; 35 removed the mark; **40 removed
+the containment band**, which was the last line drawn between two buildings on
+this map.
+
+What it cost: "this sits inside that" is no longer drawn. It is also already in
+the geometry — a child building is placed inside its parent's plate — so the band
+was saying what the arrangement showed, in the most alarming shape available.
 
 **Import dependency is out of scope** — and this line was right, and is now
 history. A road from one package to another because one calls the other does
 say far more than "this is inside that", and the daemon did not build the graph.
-It does now (`importEdgesCounting`), the road was built, and the road was removed:
-see issues 15 and 35. A connection needs width, a surface, a kerb and ends, and
-having all four it crosses the buildings it passes. The dependency is now a
-property of a building — `Site.Imports`, a hairline on the importing building's own
-plot, and the list in the panel — which is this spec's own argument applied one
-step further than it was written for.
+It does now (`annotateImports`), the road was built, and the road was removed:
+see issues 15, 35 and 36. A connection needs width, a surface, a kerb and ends,
+and having all four it crosses the buildings it passes. The dependency is now a
+property of a building — `Site.Imports` and the list in the panel — which is this
+spec's own argument applied one step further than it was written for.
 
 **It got its own spec**, as the line above predicted:
 `docs/superpowers/specs/2026-09-29-town-liveliness.md`.

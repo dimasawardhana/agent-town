@@ -161,36 +161,15 @@ type Road struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
-	// Kind is "row", "district", "containment" or "import". It is carried so a
-	// reader debugging the map can tell which rule produced a band — a row road
-	// fills a gap the layout leaves, a district road runs between quarters, a
-	// containment road runs from a nested building to the one holding it, and an
-	// import road runs from a building to one whose source it names.
+	// Kind is "row" or "district". It is carried so a reader debugging the map
+	// can tell which rule produced a road — a row road fills a gap the layout
+	// leaves, a district road runs between quarters.
 	//
-	// All four are paved with the same road tile. The kinds are not four
-	// materials; they are four claims, and `Kind` says which one is being made.
+	// Both are paved with the same road tile, and both are *areas* rather than
+	// joins between two places. "containment" and "import" were here; neither is
+	// emitted, and a kind no rule produces is a kind the renderer has to know
+	// about for no reason.
 	Kind string `json:"kind"`
-	// Ax, Ay, Bx, By are the two ends of a band's centre line, in the same
-	// world units as X/Y, for the road kinds that join two places.
-	//
-	// **Why a line and not just the rectangle.** A rectangle is axis-aligned, so
-	// it cannot express a diagonal: a diagonal import between two building
-	// centres has to be a square, and the square covers whatever else is inside
-	// it. On this repository `ui/src -> ui/src/art/props` drew road over `ui`
-	// and `ui/test`, neither of which is part of that import — a map asserting a
-	// connection across buildings it is not connected to.
-	//
-	// They are zero for "row" and "district", which are areas rather than joins
-	// between two places, and `omitempty` so a reader can tell a road with no
-	// band from a band at the origin.
-	//
-	// X/Y/W/H remain, and are the band's own bounding box — the extent is
-	// derived from the line, never the other way round, because two fields
-	// describing one road and no test holding them together is how they drift.
-	Ax float64 `json:"ax,omitempty"`
-	Ay float64 `json:"ay,omitempty"`
-	Bx float64 `json:"bx,omitempty"`
-	By float64 `json:"by,omitempty"`
 }
 
 // buildingSize scales a building's footprint by its source-file count.
@@ -665,14 +644,25 @@ func buildingsIn(t *Town, district string) []Building {
 	return out
 }
 
-// linkRoads draws the bands that connect one building to another: containment
-// from a nested building to the one holding it, and import from a building to the
-// ones whose source it names.
+// annotateImports records, on each building, which buildings' source it names.
 //
-// Both are emitted here rather than in the browser because the layout is the
-// single source of truth for geometry (ADR-0012), and a road the renderer worked
+// **It is the only thing this file does between two places any more.** It used
+// to also draw containment bands, from a nested building to the one holding it —
+// and that was the last line drawn between two buildings on this map. It is gone
+// because a line between two buildings is a shape the reader had already learned
+// to distrust: it was introduced as an import road, and when the import roads went
+// the containment band inherited their silhouette without inheriting their
+// meaning. A reader who asked for the import line removed was looking at this.
+//
+// What it cost is recorded rather than argued away. "This sits inside that" is a
+// true fact and it is no longer drawn — but it is also the most predictable thing
+// on the map, and the layout already carries it: a child building is placed
+// inside its parent's plate, so the fact is in the geometry a reader is looking
+// at anyway. A band that said what the arrangement already showed was the least
+// informative mark in the town wearing the most alarming shape.
+//
+// Emitted here rather than in the browser because the layout is the
 func linkRoads(t *Town, l *Layout) {
-	containmentRoads(l)
 	annotateImports(t, l)
 }
 
@@ -755,56 +745,6 @@ func annotateImports(t *Town, l *Layout) {
 	}
 }
 
-// bandBetween is the centre line from one plot to another, trimmed to where the
-// centre-to-centre line leaves the first plot and enters the second.
-//
-// **Why trimmed.** An untrimmed line runs from the middle of one building to the
-// middle of the other, so most of its length is under the two buildings it
-// connects — drawn as road, that is road painted over the building it belongs
-// to. Trimming leaves exactly the gap between the plots, which on this
-// repository is 14 units between neighbours on the same row.
-//
-// **Why a straight line and not a route.** A router would thread the band
-// between intervening buildings, and it would be a guess: the analyzer knows
-// which buildings import which, not how traffic would go. A straight band
-// between two plot edges is the one thing it can say without inventing.
-func bandBetween(from, to Site) (ax, ay, bx, by float64) {
-	fx, fy := siteCentre(from)
-	tx, ty := siteCentre(to)
-	dx, dy := tx-fx, ty-fy
-	d := math.Hypot(dx, dy)
-	if d < 1e-9 {
-		// Two plots at one centre cannot happen, and a zero-length band would
-		// make every downstream projection divide by its own length.
-		return fx, fy, fx, fy
-	}
-	ux, uy := dx/d, dy/d
-	// How far the ray leaves a plot's box in a given direction: the standard
-	// slab exit, rather than picking which face the ray is heading for.
-	// Picking a face means asking which way the ray is going, and getting that
-	// wrong returns the plot's *centre* — the bug this exists to remove,
-	// reintroduced one level down.
-	//
-	// dir is +1 for the plot the ray leaves and -1 for the plot it enters.
-	exit := func(s Site, dir float64) (float64, float64) {
-		cx, cy := siteCentre(s)
-		t := math.Inf(1)
-		if math.Abs(ux) > 1e-9 {
-			t = math.Min(t, (s.W/2)/math.Abs(ux))
-		}
-		if math.Abs(uy) > 1e-9 {
-			t = math.Min(t, (s.H/2)/math.Abs(uy))
-		}
-		if math.IsInf(t, 1) {
-			t = 0
-		}
-		return cx + ux*t*dir, cy + uy*t*dir
-	}
-	aX, aY := exit(from, 1)
-	bX, bY := exit(to, -1)
-	return aX, aY, bX, bY
-}
-
 // siteCentre is the middle of a plot's footprint.
 //
 // Named because a band is computed from two centres and the slab exit needs one
@@ -812,78 +752,4 @@ func bandBetween(from, to Site) (ax, ay, bx, by float64) {
 // same expression ends up meaning two things.
 func siteCentre(s Site) (x, y float64) {
 	return s.X + s.W/2, s.Y + s.H/2
-}
-
-// containmentRoads adds a band from every nested building to the building that
-// contains it.
-//
-// Longest-prefix match, so a path resolves to its *nearest* ancestor rather than
-// to the repository root: `ui/src/art` is inside `ui/src`, and saying it is
-// inside the repo would be true and useless. The band is a plain rectangle
-// spanning the two plots, which is honest about what it is — a link, not a
-// street — and needs no path-walking in the browser.
-// containmentBand is the width of a containment road, in world units: 10
-// against nothing, because an import road is no longer drawn.
-//
-// Package-level, and was the local `band` before, so the tests that ask how
-// close something may come to a band measure against the number the road was
-// drawn with.
-const containmentBand = 10.0
-
-func containmentRoads(l *Layout) {
-	// Buildings only. A container is a *summary* of the directories beneath it,
-	// so linking one to its child would draw a road between a district and its
-	// own neighbourhood — which is the confusion the containment road exists to
-	// make clearer, not to create.
-	byPath := make(map[string]Site, len(l.Sites))
-	for _, s := range l.Sites {
-		if s.Kind == PlaceBuilding && s.Path != "" {
-			byPath[s.Path] = s
-		}
-	}
-	// Sorted so the layout is a pure function of the tree: a map's iteration
-	// order is not, and ADR-0012 requires determinism.
-	paths := make([]string, 0, len(byPath))
-	for p := range byPath {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-
-	// The width is `containmentBand`, package-level, so the tests that measure
-	// how close something may come to a footpath use the same number.
-	for _, child := range paths {
-		best := ""
-		for _, cand := range paths {
-			if cand == child || !strings.HasPrefix(child, cand+"/") {
-				continue
-			}
-			if len(cand) > len(best) {
-				best = cand
-			}
-		}
-		if best == "" {
-			continue
-		}
-		c, p := byPath[child], byPath[best]
-		// The band between the two plots, trimmed to their edges — the same
-		// `bandBetween` the import roads use. A child is not always below its
-		// parent on the map, which is why the line is between the two plots
-		// rather than a vertical run between their rows.
-		//
-		// The centre-to-centre box this replaces measured 238x124 on this
-		// repository: a checkered plaza painted over three buildings, for a
-		// claim about two.
-		ax, ay, bx, by := bandBetween(c, p)
-		l.Roads = append(l.Roads, Road{
-			X:    math.Min(ax, bx) - containmentBand/2,
-			Y:    math.Min(ay, by) - containmentBand/2,
-			W:    math.Abs(bx-ax) + containmentBand,
-			H:    math.Abs(by-ay) + containmentBand,
-			Kind: "containment",
-			Ax:   ax,
-			Ay:   ay,
-			Bx:   bx,
-			By:   by,
-		})
-	}
 }

@@ -200,49 +200,6 @@ function turnRect(turn: Turn, r: WorldRect): WorldRect {
 }
 
 
-/** Band is a road's centre line: the two ends of the strip it runs along.
- *
- *  Row and district roads are areas and carry no band; containment and import
- *  roads are strips and do. Four optional fields rather than two variants of
- *  Road, because the wire sends them all in one object and a road's rectangle
- *  is still meaningful for a band — it is the box the camera bounds and the
- *  turn read. */
-export interface Band {
-  ax?: number;
-  ay?: number;
-  bx?: number;
-  by?: number;
-}
-
-/** hasBand is whether a road carries a centre line.
- *
- *  One predicate rather than the `typeof r.ax === "number" && typeof r.bx ===
- *  "number"` test written at four call sites: the check is a rule about the
- *  wire format, and a rule written four times is three chances to spell it
- *  differently. The non-null assertions that followed each copy are what this
- *  removes — a caller that has checked cannot go on to re-prove it.
- */
-export function hasBand(r: Band): r is Band & { ax: number; ay: number; bx: number; by: number } {
-  return typeof r.ax === "number" && typeof r.ay === "number" &&
-    typeof r.bx === "number" && typeof r.by === "number";
-}
-/** turnBand turns a band's two ends the way turnRect turns a box.
- *
- *  A field the turn does not know about is a field that vanishes rather than
- *  one that drifts: `turnLayout` spreads the returned keys over the road, so a
- *  band the turn ignored comes back still in the old frame, and the painter —
- *  correctly, following the layout it was given — draws a road belonging to an
- *  orientation the town is no longer in.
- *
- *  Returns nothing for a road with no band. Row and district roads are areas
- *  rather than joins between two places, and spreading zeroes over them would
- *  turn "no band" into "a band at the origin". */
-function turnBand(turn: Turn, r: Band) {
-  if (!hasBand(r)) return {};
-  const a = turnPoint(turn, r.ax, r.ay);
-  const b = turnPoint(turn, r.bx, r.by);
-  return { ax: a.x, ay: a.y, bx: b.x, by: b.y };
-}
 
 /**
  * turnLayout presents a layout as the camera currently sees it.
@@ -288,7 +245,7 @@ export function turnLayout<
   // drew nothing. A field the turn does not know about is a field that vanishes
   // rather than one that drifts, which is why this is a named line and not a
   // spread over the return.
-  const roads = layout.roads?.map((r) => ({ ...r, ...turnRect(t, r), ...turnBand(t, r) }));
+  const roads = layout.roads?.map((r) => ({ ...r, ...turnRect(t, r) }));
 
   // One shift for everything, from the whole town's box — derived from the outline
   // the layout declares rather than from the rects, which would be the same number
@@ -496,35 +453,6 @@ const BAND_HALF_PX = 4;
  *  Everything that draws in the picture uses `BAND_HALF_PX`. */
 export const BAND_HALF_WORLD = 4;
 
-/**
- * How each band kind is drawn, loudest first.
- *
- * There is one entry, and that is the honest state of it. When import bands
- * existed this ranked three kinds against each other, and the reasoning was
- * sound: a containment band says "this sits inside that", which the eye can
- * already half-read from nesting, and it was shouting over the genuinely new
- * information. But the analyzer no longer emits import bands, so the ranking it
- * justified has one member and the argument no longer applies.
- *
- *  - **district** is the loudest, and is not here: it is a real region, painted
- *    from the tile grid with its own kerb, above both.
- *  - **containment** is a seam: no kerb, and a value close enough to the ground
- *    that it reads as a join rather than a made surface.
- *
- * `shade` is a multiplier on the road tile's average, so a band stays the same
- * *material* as the district road beside it — dimmer, never a different colour.
- *
- * A kind with no entry takes `hasBand`'s default, which is the loud treatment.
- * That default is a choice, not an oversight: it means a new band kind appears
- * conspicuously and someone decides to quieten it, rather than appearing
- * invisibly and nobody notices for a week.
- */
-export const BAND_TREATMENT: Record<
-  string,
-  { half: number; kerb: boolean; shade: number }
-> = {
-  containment: { half: 5, kerb: false, shade: 0.82 },
-};
 
 /**
  * roadsAsLines projects a layout's roads into the picture.
@@ -544,10 +472,6 @@ export function roadsAsLines(
     w: number;
     h: number;
     kind?: string;
-    ax?: number;
-    ay?: number;
-    bx?: number;
-    by?: number;
   }[],
   project: (x: number, y: number) => { x: number; y: number },
 ): RoadLine[] {
@@ -556,20 +480,6 @@ export function roadsAsLines(
     const x0 = r.x;
     const y0 = r.y;
     const x1 = r.x + r.w;
-    // A band is drawn as itself. Row and district roads carry no band — they are
-    // areas rather than joins between two places — and fall through to the
-    // rectangle below exactly as they did before.
-    //
-    // The half-width is the band's own width, not the rectangle's short side.
-    // They coincide for a rectangle that *is* a band and differ for one that is
-    // not, which is the whole point: an import road's rectangle is now its
-    // bounding box, so its short side is the band's *length*, not its width.
-    if (hasBand(r)) {
-      const a = project(r.ax, r.ay);
-      const b = project(r.bx, r.by);
-      out.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, halfWidth: BAND_HALF_PX });
-      continue;
-    }
     const y1 = r.y + r.h;
     // The two ends of the road's long axis — which is the direction it runs.
     //
