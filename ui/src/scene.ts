@@ -669,8 +669,6 @@ export class TownScene extends Phaser.Scene {
       //
       // Filling the quad is exact by construction: a band is `half` either side
       // of its own centre line, so the surface is exactly as wide as the road
-      // Filling the quad is exact by construction: a band is `half` either side
-      // of its own centre line, so the surface is exactly as wide as the road
       // claims and stops at the plot edges. The colour is the road tile's own
       // average, so a band and a row road are the same material.
       if (hasBand(r)) {
