@@ -497,6 +497,38 @@ const BAND_HALF_PX = 4;
  *  Only `paintRoads` uses this, to decide which ground tiles a band covers.
  *  Everything that draws in the picture uses `BAND_HALF_PX`. */
 export const BAND_HALF_WORLD = 4;
+
+/**
+ * How each band kind is drawn, loudest first.
+ *
+ * The town has 17 roads and 14 buildings, and drawn identically they compete:
+ * six containment bands saying "this sits inside that" — the most predictable
+ * fact on the map, and the one the eye can already half-read from nesting — took
+ * the same visual weight as nine import bands saying "this imports that", which
+ * is the genuinely new information.
+ *
+ * So they are ranked, and the rank is carried by width, value and kerb:
+ *
+ *  - **district** is the loudest, and is not here: it is a real region, painted
+ *    from the tile grid with its own kerb, above both.
+ *  - **import** keeps its kerb and takes the second-most attention.
+ *  - **containment** is a seam: no kerb, and a value close enough to the ground
+ *    that it reads as a join rather than a made surface.
+ *
+ * Nothing is removed. A road that is true stays drawn; this only stops six of
+ * them shouting over the nine that matter, which is the whole of "too messy".
+ *
+ * `shade` is a multiplier on the road tile's average, so a band stays the same
+ * *material* as the district road beside it — dimmer, never a different colour.
+ */
+export const BAND_TREATMENT: Record<
+  string,
+  { half: number; kerb: boolean; shade: number }
+> = {
+  import: { half: 4, kerb: true, shade: 1 },
+  containment: { half: 5, kerb: false, shade: 0.82 },
+};
+
 /**
  * roadsAsLines projects a layout's roads into the picture.
  *
@@ -675,4 +707,73 @@ function segmentRectDistance(
   }
   best = Math.min(best, pointToRect(ax, ay), pointToRect(bx, by));
   return best;
+}
+
+/**
+ * BandEdge names the side of a tile a band leaves through.
+ *
+ * Structurally the same four members as `terrain.ts`'s `Edge`, declared here so
+ * this module stays free of the art layer — it already refuses to import it for
+ * the same reason `roadsAsLines` takes its projection as an argument.
+ */
+export type BandEdge = "north" | "east" | "south" | "west";
+
+/**
+ * bandChain is `bandTiles` in the one thing a tile grid does not give for free:
+ * order. Tiles come back in grid order, which is not road order, and a road's two
+ * ends are its first and last tile.
+ *
+ * Ordering is by distance along the band's own axis, so the walk runs from `a` to
+ * `b` however diagonal it is. Each tile carries the face it leaves through and,
+ * for the two end tiles, the *outward* face — the one the road terminates
+ * against. That face is what a cap piece is chosen by, and it is the whole reason
+ * this is a function rather than a sort inside the painter: the painter needs to
+ * know which end of the road it is at, not merely which tiles are road.
+ */
+export function bandChain(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  half: number,
+  tileW: number,
+  tileH: number,
+): { wx: number; wy: number; outward: BandEdge; isEnd: boolean }[] {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const d2 = dx * dx + dy * dy || 1;
+  const len = Math.sqrt(d2) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+
+  // The face a band running in (ux, uy) leaves through. Dominant axis, because
+  // the tile set has four cardinal pieces and no diagonal one: a band at 45
+  // degrees exits as if it ran along whichever axis it leans to, which is what
+  // the eye reads at this size anyway.
+  const face = (sx: number, sy: number): BandEdge =>
+    Math.abs(sx) >= Math.abs(sy) ? (sx > 0 ? "east" : "west") : sy > 0 ? "south" : "north";
+  const opposite: Record<BandEdge, BandEdge> = {
+    east: "west", west: "east", north: "south", south: "north",
+  };
+
+  const tiles = bandTiles(ax, ay, bx, by, half, tileW, tileH)
+    .map((t) => ({
+      ...t,
+      along: ((t.wx + tileW / 2 - ax) * dx + (t.wy + tileH / 2 - ay) * dy) / d2,
+      face: face(ux, uy),
+    }))
+    .sort((p, q) => p.along - q.along);
+
+  return tiles.map((t, i) => ({
+    wx: t.wx,
+    wy: t.wy,
+    // The two ends face *opposite* ways, and using one rule for both is the bug
+    // this comment exists to stop: at the start the road arrives travelling along
+    // `t.face` and terminates against the face behind it, while at the end it
+    // leaves along `t.face` and terminates against the face ahead. Flip both and
+    // the caps face the same way, which is a road that begins and ends facing
+    // the same direction — a shape, not a road.
+    outward: i === 0 ? opposite[t.face] : t.face,
+    isEnd: i === 0 || i === tiles.length - 1,
+  }));
 }

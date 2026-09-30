@@ -30,7 +30,7 @@ import {
   groundEdgeFrame,
   propFrame,
 } from "./art/bake";
-import { BAND_HALF_WORLD, TURN_COUNT, type Turn, bandTiles, hasBand, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { BAND_TREATMENT, TURN_COUNT, type Turn, bandChain, bandTiles, hasBand, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { Traffic } from "./traffic";
@@ -667,18 +667,34 @@ export class TownScene extends Phaser.Scene {
       // reads as a road going through a tunnel rather than a street between two
       // buildings.
       //
-      // Filling the quad is exact by construction: a band is `half` either side
-      // of its own centre line, so the surface is exactly as wide as the road
-      // claims and stops at the plot edges. The colour is the road tile's own
-      // average, so a band and a row road are the same material.
+      // A band's treatment is its *kind*, not one shared call. See
+      // `BAND_TREATMENT`: containment is a seam and import is a made surface,
+      // and drawing them the same made six predictable roads compete with nine
+      // that carry new information.
+      //
+      // The colour is the road tile's own average times the kind's shade, so
+      // every band is the same *material* as the district road beside it and
+      // differs only in value — a second road colour would be a second thing
+      // to learn.
       if (hasBand(r)) {
-        const key = groundFrame("road", 0);
-        const f = this.atlas[key];
-        if (f) {
-          const road = averageColour(this.tileCanvas(key));
-          if (road) {
-            const [cr, cg, cb] = road;
-            bandQuad(ctx, toCanvas, r, BAND_HALF_WORLD, `rgb(${cr}, ${cg}, ${cb})`, `rgb(${cr * 0.6 | 0}, ${cg * 0.6 | 0}, ${cb * 0.6 | 0})`);
+        const treat = BAND_TREATMENT[r.kind];
+        if (treat) {
+          const key = groundFrame("road", 0);
+          const f = this.atlas[key];
+          if (f) {
+            const base = averageColour(this.tileCanvas(key));
+            if (base) {
+              const [cr, cg, cb] = base;
+              const dim = (v: number): number => Math.min(255, Math.round(v * treat.shade));
+              bandQuad(
+                ctx, toCanvas, r, treat.half,
+                `rgb(${dim(cr)}, ${dim(cg)}, ${dim(cb)})`,
+                // A seam has no kerb: a kerb is a made edge, and giving one to a
+                // footpath is what made it read as a street.
+                treat.kerb ? `rgb(${cr * 0.6 | 0}, ${cg * 0.6 | 0}, ${cb * 0.6 | 0})` : `rgb(${dim(cr)}, ${dim(cg)}, ${dim(cb)})`,
+              );
+              this.paintBandCaps(ctx, toCanvas, r, treat, dim);
+            }
           }
         }
         continue;
@@ -1611,6 +1627,57 @@ export class TownScene extends Phaser.Scene {
     cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));
     cam.centerOn((e.minX + e.maxX) / 2, (e.minY + e.maxY) / 2);
   }
+  /**
+   * paintBandCaps caps a band's two ends with the road tile's own edge piece.
+   *
+   * The band is already a surface by the time this runs — `bandQuad` has filled
+   * it — so this is only about the *ends*. A road that stops in open ground with
+   * a square cut is a mark, not a road: nothing says whether it ends or was
+   * simply drawn there. An edge piece says "this is where it stops", which is
+   * the same job the district roads' `onEdge` pieces already do and the reason
+   * those read as streets.
+   *
+   * Drawn from the road's own tiles rather than stroked, so a capped end is the
+   * same material as the road it caps and the kerb it brings is the tile's.
+   *
+   * Only the band's *own* ends are capped. Two different bands meeting is not
+   * handled here — that is the network-aware tier, and a band wrongly capped at a
+   * junction it should have run through would be worse than one left square.
+   */
+  private paintBandCaps(
+    ctx: CanvasRenderingContext2D,
+    toCanvas: (wx: number, wy: number) => [number, number],
+    r: Road & { ax: number; ay: number; bx: number; by: number },
+    treat: { half: number; kerb: boolean; shade: number },
+    dim: (v: number) => number,
+  ): void {
+    // A seam gets no cap: a cap piece brings a kerb, and a kerb on a footpath is
+    // what made containment roads read as streets.
+    if (!treat.kerb) return;
+
+    for (const t of bandChain(r.ax, r.ay, r.bx, r.by, treat.half, TILE, TILE)) {
+      if (!t.isEnd) continue;
+      const key = groundEdgeFrame("road", t.outward as never, tileVariant(t.wx, t.wy));
+      const f = this.atlas[key] ?? this.atlas[groundFrame("road", 0)];
+      if (!f) continue;
+      const [cx, cy] = toCanvas(t.wx, t.wy);
+      const img = this.tileCanvas(key).getContext("2d");
+      if (img) {
+        // Dim the cap with its road, so a capped end is the same value as the
+        // band it terminates rather than a bright patch at the end of a dim road.
+        const d = img.getImageData(0, 0, f.w, f.h);
+        for (let i = 0; i < d.data.length; i += 4) {
+          if (d.data[i + 3] === 0) continue;
+          d.data[i] = dim(d.data[i]);
+          d.data[i + 1] = dim(d.data[i + 1]);
+          d.data[i + 2] = dim(d.data[i + 2]);
+        }
+        img.putImageData(d, 0, 0);
+      }
+      ctx.drawImage(this.tileCanvas(key), Math.round(cx - f.ox), Math.round(cy - f.oy));
+    }
+  }
+
 }
 
 /** The name a site's picture is registered under, so a probe or a test can find

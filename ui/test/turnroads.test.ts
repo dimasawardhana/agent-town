@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { bandTiles, roadsAsLines, turnLayout } from "../src/view";
+import { bandChain, bandTiles, roadsAsLines, turnLayout } from "../src/view";
 
 // Square, because a wide town turns nearly onto itself and a fixture that
 // barely moves proves nothing about whether the roads moved with it.
@@ -271,4 +271,36 @@ test("a band is continuous across tile boundaries", () => {
     }
   }
   assert.equal(seen.size, keys.size, `the band is in ${keys.size - seen.size} pieces, not one`);
+});
+
+test("a band's chain names its two ends, and the outward faces point away", () => {
+  const chain = bandChain(0, 40, 160, 40, 5, 16, 16);
+  assert.ok(chain.length >= 8, `a 160-unit band walked ${chain.length} tiles`);
+  assert.equal(chain.filter((t) => t.isEnd).length, 2, "a straight band must have exactly two ends");
+  assert.equal(chain[0].isEnd, true, "the first tile is not marked as an end");
+  assert.equal(chain[chain.length - 1].isEnd, true, "the last tile is not marked as an end");
+  assert.equal(chain[0].outward, "west", "a band running east does not start against a west face");
+  assert.equal(chain[chain.length - 1].outward, "east", "a band running east does not end against an east face");
+});
+
+test("a band's tiles are contiguous, so the road has no gaps", () => {
+  const chain = bandChain(20, 20, 180, 100, 5, 16, 16);
+  const keys = new Set(chain.map((t) => `${t.wx},${t.wy}`));
+  const first = chain[0];
+  const start = `${first!.wx},${first!.wy}`;
+  const done = new Set<string>();
+  const stack = [start];
+  while (stack.length) {
+    const k = stack.pop()!;
+    if (done.has(k)) continue;
+    done.add(k);
+    const [wx, wy] = k.split(",").map(Number);
+    // Eight neighbours, not four: the ground tiles are a diamond lattice where
+    // (wx+16, wy+16) lands directly below (wx, wy).
+    for (const [dx, dy] of [[16, 0], [-16, 0], [0, 16], [0, -16], [16, 16], [-16, -16], [16, -16], [-16, 16]]) {
+      const n = `${wx + dx},${wy + dy}`;
+      if (keys.has(n) && !done.has(n)) stack.push(n);
+    }
+  }
+  assert.equal(done.size, keys.size, `the band is in ${keys.size - done.size} pieces, not one`);
 });
