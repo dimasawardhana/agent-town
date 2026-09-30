@@ -34,47 +34,91 @@ import type Phaser from "phaser";
 import { P } from "./art/palette";
 import type { RoadLine } from "./view";
 
-/** How long a car is, in pixels.
+/**
+ * The car, drawn once per run at 1x and rotated onto its road.
  *
- *  Sized to be *seen*. The first version was 6×2 in the metal ramp, which was
- *  the right size for a thing nobody was meant to notice: a 6-pixel body drawn
- *  in the value of a building's own wall reads as a smudge on the wall, and
- *  nine of them on nine roads produced a town that looked exactly as it did
- *  with no traffic at all. A car has to clear the building behind it, so the
- *  number here is about legibility and not about realism — see `CAR_HEIGHT`. */
-export const CAR_LENGTH = 14;
+ * Nine characters wide-ish per row, authored as text so the shape can be read
+ * in the source and diffed when it changes — a car made of `fillRect` calls is
+ * four numbers and nobody can see what it is supposed to be. The earlier
+ * version was exactly that: a 14x3 bar with an 8x2 lump on top, which at 1x is
+ * a lump.
+ *
+ *   o  ink outline          3  bonnet, the light step of the traffic ramp
+ *   d  tyre                 2  roof, the mid step
+ *   g  glass                1  boot, the dark step
+ *   .  nothing
+ *
+ * Four things do the reading, in order of how much they matter:
+ *
+ *  1. **The taper.** The nose is eight pixels wide and the middle ten. A car
+ *     whose front and back are the same width is a bar.
+ *  2. **Four wheel blocks**, at rows 3 and 5, standing two pixels proud of the
+ *     body on both sides. Rails along the whole flank read as a skirt, and
+ *     wheels are most of what says "vehicle" at this size.
+ *  3. **Two glass bands**, windscreen and rear window, with body between them
+ *     for a roof. Without them the shape is a table.
+ *  4. **The ink outline**, matching `iso.outline(P.ink)` on every building.
+ *     Unoutlined, the car floats off the road instead of sitting on it.
+ *
+ * Nine tall against fourteen wide, because a car is long and low and anything
+ * else reads as a van or a pill. The nose points at the *top* of the texture,
+ * so `update` adds a quarter turn when it lays the car on its road.
+ */
+export const CAR_ART: readonly string[] = [
+  "...oooooooo...",
+  "..o33333333o..",
+  ".o2222222222o.",
+  "ddo22222222odd",
+  "..o2gggggg2o..",
+  "ddo22222222odd",
+  ".o22gggggg22o.",
+  "..o11111111o..",
+  "...oooooooo...",
+];
 
-/** How tall a car is, in pixels.
- *
- *  A third of its length — 5 against 14 — and that ratio is the whole point:
- *  much thinner and the car vanishes into the road's own kerb, much taller and
- *  it stops being a car and becomes a block. */
-export const CAR_HEIGHT = 5;
+/** The car's plan, one string per row, transparent where the string is a dot. */
+export const CAR_W = CAR_ART[0].length;
+export const CAR_H = CAR_ART.length;
 
-/** The lower, full-width part of the car: the body.
+/** carTexture draws the car once and hands back the texture key.
  *
- *  Three of the five pixels, and it spans the car's whole length. */
-const CAR_BODY_HEIGHT = 3;
-
-/** The upper part: the cabin, sitting on the body.
- *
- *  Two pixels, narrower than the body and pushed forward, so the silhouette
- *  has a front and a back rather than being symmetric. */
-const CAR_CABIN_HEIGHT = 2;
-
-/** How far the cabin starts from the nose, and how far the tail runs past it.
- *
- *  The cabin is not centred: a centred cabin is a lozenge, which reads as a
- *  pebble. Offset, it reads as a windscreen. */
-const CAR_NOSE = 4;
-const CAR_TAIL = 2;
-
-/** The car's colour as the number `Graphics.fillStyle` takes.
- *
- *  Hoisted so the parse is not repeated for every car on every frame, and flat
- *  because a body this size has no room for a ramp — a gradient across it is a
- *  blob, not a car. */
-const CAR_TINT = Number.parseInt(P.traffic.slice(1), 16);
+ *  Generated rather than baked, so it costs the atlas nothing — the same trick
+ *  the ember and the sky use, and for the same reason. It is also what makes
+ *  rotation safe: the rasteriser paints these nine rows at whole pixels, and
+ *  Phaser's `pixelArt` carries the rotation through with nearest-neighbour
+ *  sampling, so the edges stay hard. Drawing into a `Graphics` instead would
+ *  rasterise the rectangles and *then* rotate them, which is how the half-pixel
+ *  rows arrived in the first place.
+ */
+export function carTexture(scene: Phaser.Scene, key: string): string {
+  if (scene.textures.exists(key)) return key;
+  const canvas = scene.textures.createCanvas(key, CAR_W, CAR_H);
+  if (!canvas) return key;
+  const g = canvas.getContext() as CanvasRenderingContext2D;
+  const ramp: Record<string, string> = {
+    "o": P.ink,
+    "g": P.glass[1],
+    "1": P.traffic[0],
+    "2": P.traffic[1],
+    "3": P.traffic[2],
+    // Tyres are `rubber[2]`, not `rubber[0]`. The darkest rubber step is 4.8:1
+    // against the ink outline — near enough the same value that the wheels
+    // disappear into it and the silhouette is a plain rectangle. `rubber[2]` is
+    // 34:1 from the outline and 13.8:1 from the body, so a wheel reads as a
+    // block in its own right, which is the whole job.
+    "d": P.rubber[2],
+  };
+  for (let y = 0; y < CAR_H; y++) {
+    for (let x = 0; x < CAR_W; x++) {
+      const c = ramp[CAR_ART[y][x]];
+      if (!c) continue;
+      g.fillStyle = c;
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+  canvas.refresh();
+  return key;
+}
 
 /** Milliseconds per pixel of road, and the floor under one crossing.
  *
@@ -155,7 +199,7 @@ export function drivenRoads(roads: readonly RoadLine[]): RoadLine[] {
 
 /** Traffic draws one car on every import road. */
 export class Traffic {
-  private cars = new Map<string, Phaser.GameObjects.Graphics>();
+  private cars = new Map<string, Phaser.GameObjects.Image>();
   private roads: RoadLine[] = [];
   private scene: Phaser.Scene;
 
@@ -168,6 +212,7 @@ export class Traffic {
     // A containment road is a true fact and a static one; "this sits inside
     // that" is not a dependency and a car on it would claim one that is not there.
     this.roads = drivenRoads(roads);
+    const key = carTexture(this.scene, CAR_TEX);
     const live = new Set(this.roads.map(roadId));
     for (const [id, car] of this.cars) {
       if (!live.has(id)) {
@@ -178,10 +223,15 @@ export class Traffic {
     for (const road of this.roads) {
       const id = roadId(road);
       if (this.cars.has(id)) continue;
-      // Depth is set every frame rather than once here, because it is a function
-      // of where the car is on its road. The value given at creation is only the
-      // first one, and it stops mattering as soon as the car moves.
-      this.cars.set(id, this.scene.add.graphics());
+      // Every car is the same nine rows of pixels, so they share one texture.
+      // `setOrigin` centres it on the road; without that a car sits a row and a
+      // half above the tarmac and reads as hovering.
+      //
+      // Depth is set every frame rather than once here, because it is a
+      // function of where the car is on its road. The value given at creation is
+      // only the first one, and it stops mattering as soon as the car moves.
+      const car = this.scene.add.image(0, 0, key).setOrigin(0.5, 0.5);
+      this.cars.set(id, car);
     }
   }
 
@@ -197,27 +247,11 @@ export class Traffic {
       // drawn.
       const x = road.ax + (road.bx - road.ax) * p;
       const y = road.ay + (road.by - road.ay) * p;
-      car.clear();
-      car.fillStyle(CAR_TINT, 1);
-      // Two rectangles, not one, and both on integer pixels.
-      //
-      // One rectangle is a *bar* — it reads as a lane marking, and zoomed in it
-      // is a blank amber box with nothing in it. The narrower upper half is the
-      // cabin: two steps is all it takes for the shape to say "a thing with a
-      // roof on it" rather than "a stripe", and the car is small enough that
-      // anything more is mush.
-      //
-      // Integer bounds on purpose. A centred rectangle starts at -7 x -2.5, and
-      // the half pixel lands the far edge between two pixels — which the
-      // renderer antialiases into two half-lit rows, so the car came out looking
-      // like a pair of lines. The whole town is drawn on whole pixels for the
-      // same reason.
-      car.fillRect(-CAR_LENGTH / 2, 0, CAR_LENGTH, CAR_BODY_HEIGHT);
-      car.fillRect(-CAR_LENGTH / 2 + CAR_NOSE, -CAR_CABIN_HEIGHT, CAR_LENGTH - CAR_NOSE - CAR_TAIL, CAR_CABIN_HEIGHT);
-      // Facing the way it is going. A car that pointed the same way on every
-      // road in the town would be a small lie on the vertical ones, and the
-      // angle is already known — it is the road's own direction.
-      car.setRotation(Math.atan2(road.by - road.ay, road.bx - road.ax));
+      // Facing the way it is going, plus a quarter turn because the art points
+      // its nose at the top of the texture. The angle is already known — it is
+      // the road's own direction — and a car that pointed the same way on every
+      // road in the town would be a small lie on the vertical ones.
+      car.setRotation(Math.atan2(road.by - road.ay, road.bx - road.ax) + Math.PI / 2);
       car.setPosition(x, y);
       car.setDepth(y);
     }
@@ -228,3 +262,7 @@ export class Traffic {
     this.cars.clear();
   }
 }
+
+/** The texture key every car shares. One key, one set of nine rows. */
+const CAR_TEX = "traffic:car";
+

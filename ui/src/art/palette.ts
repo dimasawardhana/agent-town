@@ -129,20 +129,24 @@ export const P = {
   accent: "#e6bb38",
   accentDim: "#8a6414",
 
-  /** Traffic: the colour a car is drawn in.
+  /** Traffic: the colour ramp a car is drawn in.
    *
    *  A car has to be *seen*, and at this scale a material colour cannot do it.
    *  `metal[2]` and `stone[3]` are both the value of a building's own wall, so
    *  a car in one reads as part of the building it is passing rather than as a
-   *  thing on the road. It is lighter than every material in the palette —
-   *  grass, wood, terracotta, plaster and stone are all darker — because that
-   *  is the only thing separating it at a handful of pixels.
+   *  thing on the road. A ramp rather than a single value because a car needs
+   *  three — bonnet, roof and boot — to have a front and a back, and one flat
+   *  fill cannot say which end is which at fourteen pixels.
    *
-   *  It is warmer than it needs to be, and deliberately not `accent`: that is
-   *  the chief's flag and the panel's live-state marks, and a car wearing it
-   *  would read as a session badge rather than as traffic. Warm is also what
-   *  separates it from the failure colour a figure is drawn in. */
-  traffic: "#f2cd63",
+   *  Hue-shifted away from `helmetChief`, which is the same family of yellow
+   *  and is load-bearing: the helmet is how a glance separates the agent
+   *  driving the session from what it spawned (ADR-0007), and a car in that
+   *  yellow would read as a session badge rather than as traffic. Three steps
+   *  and not four, because the car is generated rather than baked and pays no
+   *  atlas cell — the budget argument for four steps does not apply.
+   *
+   *  Still short of `accent`, for the same reason. */
+  traffic: ["#8f6410", "#c78f1f", "#f2cd63"] as const,
 } as const;
 
 // Deliberately absent from this palette, each for a reason worth recording:

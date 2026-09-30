@@ -8,7 +8,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { bakedCels } from "../src/art/bake";
-import { carAt, CAR_HEIGHT, CAR_LENGTH, cycleMs, drivenRoads, roadId } from "../src/traffic";
+import { CAR_ART, CAR_H, CAR_W, carAt, cycleMs, drivenRoads, roadId } from "../src/traffic";
 import type { RoadLine } from "../src/view";
 import { P } from "../src/art/palette";
 
@@ -77,7 +77,7 @@ test("a road with no importer carries no car", () => {
     ["a"],
     "a road without both ends of a dependency is being given a car",
   );
-  assert.ok(CAR_LENGTH > 0 && CAR_HEIGHT > 0, "a car with no area cannot be seen");
+  assert.ok(CAR_W > 0 && CAR_H > 0, "a car with no area cannot be seen");
 });
 
 test("only import roads carry cars, and containment roads carry none", () => {
@@ -95,12 +95,37 @@ test("only import roads carry cars, and containment roads carry none", () => {
 });
 
 test("a car is big enough to be seen", () => {
-  // The regression this exists for: at 6×2 and in the value of a building's own
-  // wall, nine cars on nine roads looked identical to no cars at all. Both
-  // halves matter — the body has to be wide enough to clear the building behind
-  // it, and it has to be tall enough not to disappear into a kerb.
-  assert.ok(CAR_LENGTH >= 10, `a ${CAR_LENGTH}px car is a smudge on a wall, not traffic`);
-  assert.ok(CAR_HEIGHT >= 4, `a ${CAR_HEIGHT}px car is a painted stripe, not traffic`);
+  // The regression this exists for: at 6×2, and in the value of a building's own
+  // wall, nine cars on nine roads looked identical to no cars at all.
+  //
+  // The bounds are also a shape check, not only a size one. A car wider than it
+  // is tall reads as a bar; a car taller than it is wide reads as a van. The
+  // ratio is the design, and these are the numbers that hold it.
+  assert.ok(CAR_W >= 10, `a ${CAR_W}px car is a smudge on a wall, not traffic`);
+  assert.ok(CAR_H >= 7, `a ${CAR_H}px car is a painted stripe, not traffic`);
+  assert.ok(CAR_W > CAR_H, `a ${CAR_W}x${CAR_H} car is taller than it is long`);
+});
+
+test("a car has a silhouette, not a rectangle", () => {
+  // What says "car" at 1x, in the order it says it: a tapered nose, four wheel
+  // blocks, and two glass bands with a roof between them. Each is falsifiable
+  // against the art, which is the point — a car drawn as one filled rectangle
+  // satisfies none of these, and that is exactly what the first one was.
+  const art = CAR_ART;
+  const rows = (ch: string): number => art.filter((r) => r.includes(ch)).length;
+  assert.ok(rows("g") >= 2, "a car with no windows is a table");
+  assert.ok(rows("d") >= 2, "a car with no tyres is a box");
+  assert.ok(art.every((r) => r.length === art[0].length), "art rows must all be the same width");
+  // The nose is narrower than the body. Measured as *occupied width* — the
+  // count of anything that is not a gap — because counting outline pixels
+  // measures the wrong thing: the top row is all outline and the middle row is
+  // all body, so an outline count says the nose is wider when it is narrower.
+  const occupied = (r: string): number => r.replace(/\./g, "").length;
+  assert.ok(
+    occupied(art[0]) < occupied(art[2]),
+    `the nose is ${occupied(art[0])}px wide and the body ${occupied(art[2])}px, so the car has no front`,
+  );
+  assert.ok(art[0].startsWith("...") && art[0].endsWith("..."), "the car has no ink outline");
 });
 
 test("a car is not painted in a colour a building is painted in", () => {
@@ -112,11 +137,11 @@ test("a car is not painted in a colour a building is painted in", () => {
       (c) => c.toLowerCase(),
     ),
   );
-  assert.ok(
-    !materialValues.has(P.traffic.toLowerCase()),
-    "the car is painted in a material colour, so it reads as part of a building",
-  );
+  for (const c of P.traffic) {
+    assert.ok(!materialValues.has(c.toLowerCase()), `the car is painted in ${c}, a material colour`);
+  }
 });
+
 
 test("a car costs the atlas nothing", () => {
   // Traffic is generated, so it must not appear in the bake. If a car ever got

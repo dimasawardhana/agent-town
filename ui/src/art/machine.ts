@@ -117,56 +117,68 @@ const H = ARM_H + BASE_H;
  * and the arm is the only part allowed to move.
  */
 const CHASSIS: Record<MachineKind, string[]> = {
-  // A crawler: wide, low, and stepped so the track reads as treads and not a bar.
+  // A crawler: a body on a continuous track. The track is one run, not two —
+  // the old pair of lumps read as two objects standing next to each other — and
+  // the tread rhythm comes from `shade()` rimming the run, not from alternating
+  // characters by hand.
+  //
+  // **The rows above the track are body, and that is the whole fix.** They used
+  // to be blank, "air for the boom", and the arms ended three to six rows above
+  // them — measured across all twenty kind/pose pairs, none of them had fewer
+  // than two blank rows and `driver` idle had six. A machine drawn as an arm
+  // floating over a pair of tracks is two objects, and the eye is right.
   excavator: [
-    "..........................",
-    "..........................",
-    "..........................",
-    "..........................",
-    "...tyyyyyyt.....tyyyyyy....",
-    "..tyyyyyyyy....tyyyyyyyy...",
-    "..tttttttttt..tttttttttt...",
+    "..yyyyyyyyyyyyyyyyyyyyyyyy..",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    ".tttttttttttttttttttttttttt..",
+    "tttttttttttttttttttttttttttt.",
+    "ttttttttttttttttttttttttttttt",
+    "..................................",
   ],
-  // Same track, but the body is a narrow tower base: the mast does the work.
+  // Same track, but a narrow base: the mast does the work, so the body has
+  // little to carry and does not pretend otherwise.
   crane: [
-    "..........................",
-    "..........................",
-    "..........................",
-    "..........................",
-    "....yyyyyy...yyyyyyyy.....",
-    "...tyyyyyyt..tyyyyyyyyt...",
-    "...ttttttt...ttttttttt...",
+    "....yyyyyyyyyyyyyyyyyyyy......",
+    "...tyyyyyyyyyyyyyyyyyyyt....",
+    "..tyyyyyyyyyyyyyyyyyyyyyt....",
+    "..tttttttttttttttttttttttttt..",
+    ".ttttttttttttttttttttttttttt.",
+    "tttttttttttttttttttttttttttttt",
+    "..................................",
   ],
-  // Rubber-tyred, so a low body with a hub on the near wheel. The roundness is
-  // the whole difference from a crawler and it is three pixels.
+  // Rubber-tyred and low, so the body sits down onto the wheels and the track
+  // band is short.
   loader: [
-    "..........................",
-    "..........................",
-    "..........................",
-    "..........................",
-    "...tyyyyyyyyyyyyyyyyyy....",
-    "..tyyyyyyyyyyyyyyyyyyyyt..",
-    "..ttttttttttttttttttttt...",
+    "..tyyyyyyyyyyyyyyyyyyyyyyy..",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    ".tttttttttttttttttttttttttt..",
+    "tttttttttttttttttttttttttttt.",
+    "ttttttttttttttttttttttttttttt",
+    "..................................",
   ],
-  // A crawler under a tall open frame: the frame needs the ground to stand on.
+  // An open frame: two posts with a gap between them, which is what a driver's
+  // cab is. The gap is the read — a solid block here would be a van.
   driver: [
-    "..........................",
-    "..........................",
-    "..........................",
-    "..........................",
-    "....yyyyyyyy....yyyyyyy...",
-    "...tyyyyyyyy....yyyyyyy...",
-    "...tttttttttt..ttttttttt...",
+    "..tyyyyyyt....tyyyyyyyyt....",
+    ".tyyyyyyyy....tyyyyyyyyy...",
+    ".tyyyyyyyy....tyyyyyyyyy...",
+    "...tttttttttt..tttttttttt...",
+    "..tttttttttttttttttttttttt..",
+    "ttttttttttttttttttttttttttttt",
+    "..................................",
   ],
-  // The widest of the fleet and the lowest: a blade pushes, so the mass is front.
+  // The widest and lowest of the fleet, and the front-heavy one: a blade
+  // pushes, so the mass sits ahead of where the arm pivots.
   dozer: [
-    "..........................",
-    "..........................",
-    "..........................",
-    "..........................",
-    "....tyyyyyyyyyyyyyyyyt....",
-    "...tyyyyyyyyyyyyyyyyyyt...",
-    "...tttttttttttttttttttt...",
+    "...tyyyyyyyyyyyyyyyyyyyyyy...",
+    "..tyyyyyyyyyyyyyyyyyyyyyyy..",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    ".ttttttttttttttttttttttttttt.",
+    "ttttttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttttttt",
+    "..................................",
   ],
 };
 
