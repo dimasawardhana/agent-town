@@ -19,9 +19,10 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { DAYLIGHT, DAY_PHASES, isDayPhase, normaliseDay, stepDay, type DayPhase } from "../src/daylight";
-import { LIGHT_PATTERNS, bandBox, buildBand, buildWindowLightCel, emptyWindowLightCel } from "../src/art/building";
+import { LIGHT_PATTERNS, bandBox, buildBand, buildWindowLightCel, emptyWindowLightCel, lightPattern } from "../src/art/building";
 import { SIZES, bakedCels, layoutAtlas, noWindowLightFrame, windowLightFrame } from "../src/art/bake";
 import { P } from "../src/art/palette";
+import { hashPath } from "../src/art/roof";
 
 /** A footprint is a baked size, and the town draws these five. */
 const SIDES = SIZES.map((s) => s.side);
@@ -42,6 +43,77 @@ test("every pattern lights at least one window, at every size", () => {
       for (let i = 0; i < light.data.length; i += 4) {
         if (light.data[i + 3] !== 0 && isLamp(light.data, i)) lit++;
       }
+
+test("a light pattern is in range for every path, including the ones that hash negative", () => {
+  // The bug that broke the town. `hashPath` ends in `| 0`, so roughly half of all
+  // paths are negative — `ui/src` is -846872599, `ui/test` is -483228883 — and
+  // `(negative) % 3` in JavaScript is -1 or -2, not 2 or 1. That made a frame
+  // name of `lit:100:-1`, which was never baked, and the missing frame was
+  // *skipped* by the container, so every child after it moved down a slot.
+  //
+  // The town did not show a missing window. It showed machine sprites drawn
+  // inside buildings and bands displaced 56 pixels sideways, because `restage`
+  // swaps frames by index and the indices no longer agreed.
+  //
+  // Asserted over the paths this repository actually has, not over synthetic
+  // ones: the failure needs a negative hash, and a made-up path would have to
+  // be unlucky to reproduce it.
+  const PATHS = [
+    "ui/src",
+    "ui/test",
+    "internal/analyzer",
+    "internal/town",
+    "internal/agent",
+    "internal/agent/extension",
+    "internal/registry",
+    "internal/web",
+    "internal/web/static",
+    "cmd/townd",
+    "cmd/analyze",
+    "ui/src/art",
+    "ui/src/art/props",
+  ];
+  let negativePaths = 0;
+  let negativeRemainders = 0;
+  for (const path of PATHS) {
+    const h = hashPath(path);
+    if (h < 0) negativePaths++;
+    for (let storey = 0; storey < 12; storey++) {
+      // The unwrapped form is what the bug actually computed, and `lightPattern`
+      // is the function that has to survive it. Calling the exported one rather
+      // than re-deriving the wrap here is the whole point: the first version of
+      // this test recomputed it, so it passed on the broken code.
+      const raw = (h + storey) % LIGHT_PATTERNS;
+      if (raw < 0) negativeRemainders++;
+      const got = lightPattern(path, storey);
+      assert.ok(
+        got >= 0 && got < LIGHT_PATTERNS,
+        `${path} storey ${storey}: lightPattern returned ${got}, out of range`,
+      );
+    }
+  }
+  // The test is only worth anything while it still covers the shape of the bug.
+  assert.ok(negativePaths > 0, "no path in the list hashes negative; the test is vacuous");
+  assert.ok(negativeRemainders > 0, "no storey produced a negative remainder; the test is vacuous");
+});
+
+test("every light frame a building can ask for is in the atlas", () => {
+  // The guard behind the guard: whatever `lightPart` composes must be something
+  // the bake registered. A frame that is not is not a missing window — it is a
+  // hole in the stack, and the hole is what tore the buildings apart.
+  for (let turn = 0; turn < 4; turn++) {
+    const byKey = new Set(bakedCels(turn).map((c) => c.key));
+    for (const side of SIDES) {
+      assert.ok(byKey.has(noWindowLightFrame(side, turn)), `no blank for side ${side} at turn ${turn}`);
+      for (let pattern = 0; pattern < LIGHT_PATTERNS; pattern++) {
+        assert.ok(
+          byKey.has(windowLightFrame(side, pattern, turn)),
+          `${windowLightFrame(side, pattern, turn)} was never baked`,
+        );
+      }
+    }
+  }
+});
       assert.ok(lit > 0, `side ${side} pattern ${pattern} lights nothing (${side >= 60 ? 3 : 2} windows per storey)`);
     }
   }

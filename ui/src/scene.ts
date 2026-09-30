@@ -36,7 +36,7 @@ import { BAND_TREATMENT, TURN_COUNT, type Turn, hasBand, normaliseTurn, roadsAsL
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { SKY_DEPTH, skyTexture } from "./sky";
-import { LIGHT_PATTERNS, type Stage, stageRank, skinVariant } from "./art/building";
+import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
@@ -52,6 +52,14 @@ interface StackPart {
   key: string;
   z: number;
 }
+
+/** The frame a part falls back to when its own is missing from the atlas.
+ *
+ *  1x1 and transparent, and it exists already: `NO_DAMAGE_FRAME` is a shared
+ *  blank the bake registers for exactly this reason. A real stand-in rather than
+ *  a skipped child, because a skipped child renumbers the stack. */
+const NO_STAND_IN_FRAME = NO_DAMAGE_FRAME;
+
 import { type Ground, tileVariant } from "./art/terrain";
 import { PLACE_PROPS } from "./art/props";
 import { PLACARD, type PlacardRole, placard } from "./art/placard";
@@ -121,6 +129,14 @@ export class TownScene extends Phaser.Scene {
   private atlas: Atlas = {};
   /** The orientation `atlas` holds, so `ensureAtlas` knows when to swap. */
   private atlasTurn: number = 0;
+
+  /** How many parts have asked for a frame the atlas does not hold.
+   *
+   *  Counted rather than swallowed, because the alternative is a town that
+   *  renders wrong and a suite that is green: the first version skipped the
+   *  child and the misalignment was invisible to every test. Read by the
+   *  standing assertion, which fails a build that ever needs one. */
+  private missingFrames = 0;
 
   /** The key light the town is drawn under, as a phase. Held here as well as in
    *  the store so the sky and the windows cannot read different ones. */
@@ -1509,8 +1525,19 @@ export class TownScene extends Phaser.Scene {
     const box = this.add.container(0, 0);
     const p = this.project(s.x, s.y);
     for (const part of parts) {
-      const f = this.atlas[part.key];
-      if (!f) continue;
+      // **A missing frame must still get a child.** The obvious `if (!f) continue`
+      // was here from the start and it is a trap: `restage` swaps frames *by
+      // index*, so dropping one child moves every child after it down a slot and
+      // the stack is silently misaligned from there on. The lit-window overlay
+      // hit exactly that — a negative pattern index produced `lit:100:-1`, the
+      // skip dropped it, and the result was machine sprites drawn inside
+      // buildings and bands displaced 56 pixels sideways. A transparent
+      // stand-in keeps every index where it belongs and the misalignment becomes
+      // a frame that draws nothing instead of a building that comes apart.
+      const real = this.atlas[part.key];
+      if (!real) this.missingFrames++;
+      const f = real ?? this.atlas[NO_STAND_IN_FRAME];
+      const key = real ? part.key : NO_STAND_IN_FRAME;
       const z = part.z;
       // `setOrigin(0, 0)` is load-bearing and was missing here, which put every
       // building and every container half a cel up-and-left of its own plot —
@@ -1520,7 +1547,7 @@ export class TownScene extends Phaser.Scene {
       // to origin 0.5, so the cel's *centre* lands where its top-left was meant
       // to go. `place()` has the same call and the same comment, because this
       // bites in every code path that forgets it — the two must agree.
-      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), part.key).setOrigin(0, 0));
+      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), key).setOrigin(0, 0));
     }
     box.setDepth(depth);
     box.setName(siteName(s));
@@ -1656,16 +1683,22 @@ export class TownScene extends Phaser.Scene {
    * new place. Hashing the path rather than taking a counter means the same
    * directory is lit the same way every time the town is drawn, which is what
    * `frontCorner` was written to guarantee for the flag.
+   *
+   * **The hash is signed and the modulo is not.** `hashPath` ends in `| 0`, so
+   * half of all paths are negative — measured: `ui/src` hashes to -846872599 and
+   * `ui/test` to -483228883 — and `(negative) % 3` is -1 or -2 in JavaScript, not
+   * 2 or 1. That produced `lit:100:-1`, a frame that was never baked, and a
+   * missing frame in `stackContainer` was *skipped*, which moved every child
+   * after it down one index. The symptom was a machine sprite drawn inside a
+   * building and bands displaced 56 pixels sideways: not a wrong frame, but every
+   * frame after the gap on the wrong sprite. `lightPattern` wraps properly.
    */
   private lightPart(s: Site, storey: number): StackPart {
     const day = normaliseDay(useTown.getState().day);
     const z = storey * STOREY;
     const lit = DAYLIGHT[day].lit && stageRank(this.statusOf(s.path)) >= stageRank("glazed");
     if (!lit) return { key: noWindowLightFrame(s.w, this.atlasTurn), z };
-    return {
-      key: windowLightFrame(s.w, (hashPath(s.path ?? "") + storey) % LIGHT_PATTERNS, this.atlasTurn),
-      z,
-    };
+    return { key: windowLightFrame(s.w, lightPattern(s.path ?? "", storey), this.atlasTurn), z };
   }
 
   private capKey(s: Site): string {

@@ -971,6 +971,27 @@ export function buildWindowLightCel(
   return iso.outline(P.ink);
 }
 
+/**
+ * lightPattern is which of a storey's lit-window patterns a building uses.
+ *
+ * **Wrapping is load-bearing, and it is here rather than at the call site so it
+ * can be tested.** `hashPath` ends in `| 0` and is therefore signed, so about
+ * half of all paths are negative — `ui/src` is -846872599, `ui/test` is
+ * -483228883 — and `(negative) % 3` in JavaScript is -1 or -2. Unwrapped, that
+ * composed a frame name of `lit:100:-1`, which was never baked; the missing
+ * frame was then skipped by the container, which moved every child after it down
+ * a slot, and the town drew machine sprites inside buildings and bands
+ * displaced 56 pixels sideways.
+ *
+ * The first version of the test for this computed the wrap itself rather than
+ * calling this, so it passed on the broken code — the same mistake as
+ * `test:flagcorner`'s first version, and the reason the function is exported.
+ */
+export function lightPattern(path: string, storey: number): number {
+  const raw = (hashPath(path) + storey) % LIGHT_PATTERNS;
+  return ((raw % LIGHT_PATTERNS) + LIGHT_PATTERNS) % LIGHT_PATTERNS;
+}
+
 /** The blank a storey carries when its windows are not lit.
  *
  *  Cut from the same box as the light it stands in for, origin included, for
