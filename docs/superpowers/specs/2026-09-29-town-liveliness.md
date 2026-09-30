@@ -1,26 +1,6 @@
 # A town that is alive when nobody is working
 
-**Status:** draft for review. Nothing here is built.
-
-> **Amended after the fact, and the amendment is the interesting part.**
->
-> Feature 1 was built and then removed. The import graph was carried as a road
-> band from one building's plot to the other, with a car on each, and neither
-> carrier survived contact with the map. A connection needs width, a surface, a
-> kerb and ends; once it has all four it collides with the buildings it passes
-> and the roads it crosses. Nine of them were nine slabs across a 600-pixel
-> town. And the cars never worked: four rounds of re-authoring the sprite and a
-> 14-pixel car on that town was never going to say "these districts are
-> coupled" — which is this document's own first paragraph, read back at me.
->
-> The fact now lives on the building. `Site.Imports` records what a building
-> imports; the map draws a hairline on the importing building's own plot, which
-> cannot cross anything; the panel lists the names, where there is room for
-> them. The *whether* is on the map and the *whom* is in the panel, and the
-> dependency graph's shape is no longer visible at a glance. That is the cost,
-> stated here so nobody re-adds a car expecting it to work.
->
-> The other four features are untouched and still open.
+**Status:** feature 1 built, then replaced. Features 2–5 open, re-scoped below.
 
 ## The problem
 
@@ -42,78 +22,107 @@ claim's clothes, and this town does not do that.
 **Every moving thing answers a question the reader can ask, from data the daemon
 already holds.** Nothing is invented to fill a frame.
 
-There are three kinds of mover, and they are told apart by direction and colour
+There are two kinds of mover, and they are told apart by direction and colour
 rather than by shape, because at the fitted zoom a 20-pixel figure is read by its
 silhouette long before it is read by its detail:
 
 | mover | direction | colour | what it says |
 |---|---|---|---|
 | **machine** | *toward* a building | its own material | an agent is working there |
-| **car** | *along* an import road, importer → imported | its own signal colour, warmer than any material | this building uses that one |
 | **figure** | *out of* a building, toward the Yard | the failure colour | this building is failing, and has been N times |
 
-Three populations, three directions, and **the machine is the only one that means
-an agent.** That is the load-bearing property: a reader who can identify the
+Two populations, two directions, and **the machine is the only one that means an
+agent.** That is the load-bearing property: a reader who can identify the
 machine can always answer "is an agent working here", which is the question the
 map exists to answer.
 
-**The car is not neutral, and that is a measured decision rather than a taste
-one.** The word above used to be "neutral", on the reasoning that a car is not a
-claim about an agent and should not look like one. Built neutral — in the
-palette's own metal — nine cars on nine roads produced a town that looked
-exactly like one with no traffic at all, because a car in the metal ramp is the
-value of a building's own windows and reads as part of the wall it passes. The
-car now has one colour of its own, lighter than every material in the palette,
-because separating it at a handful of pixels is the whole job. It stays short
-of `accent`, which is the chief's flag and the panel's live-state marks: a car
-wearing that would read as a session badge. The load-bearing property above is
-unharmed — the machine is still the only mover that means an agent.
+## What feature 1 actually became
 
-## The five features
+The plan was a car on every import road. The road was built, the car was built,
+and both were removed, because **a connection is the wrong carrier for the fact
+and a moving mark is the wrong scale for the town.**
 
-### 1. Cars on import roads — the spine
+### Why the road lost
 
-The town has real import roads: 60 on `team-builder`, each an actual dependency
-between two buildings the analyzer resolved. They are currently **static bands
-and nothing has ever travelled one.**
+An import edge was drawn as the bounding box between two building centres, trimmed
+to where the line leaves each plot. That was true — a band that crossed a
+building it did not connect was a lie, and there were three of those. It was also
+invisible, and then it was too much, and the middle of that is the whole story:
 
-A car runs a road from the importer to the imported, at a speed tied to the road's
-length, and there is **one per road** — not one per import statement, because a
-road is a deduplicated edge and 111 statements are not 111 facts.
+- The gap between two neighbouring plots is **14 world units**; the road *tile* is
+  **16**. Five of the fifteen banded roads on this repository were **shorter than
+  the tile they were painted with**, so each came out as one or two checkered
+  diamonds spilling under the buildings on either side. A road through a tunnel.
+- Widening the cell gap to 40 fixed that and left the town carrying nine slabs
+  across a 600-pixel view. Seventeen roads for fourteen buildings.
 
-This is the feature the other four hang off, and it is the only one that is
-purely an increase in what the town can already say. A car on a road is the
-dependency graph moving. A town with a lot of import traffic is a town whose
-districts are tightly coupled, and that is **true and currently invisible**.
+### Why the car lost
 
-Containment roads get no traffic. "This sits inside that" is a true fact and a
-static one; putting a car on it would claim a dependency that does not exist.
+A 14-pixel car on a 600-pixel town is not a signal, it is a speck. Four rounds of
+re-authoring it — size, colour, shape, lighting, shadow, rotation — and the thing
+that would have fixed it was not art. **A 14-pixel car was never going to say
+"these districts are coupled."** That is a scale problem, and four rounds of
+pixel work is what it costs to fail to notice that.
+
+The rotation is worth recording, because it is the mistake a reader repeats: a
+directional light baked into a sprite that turns on its road every frame points
+into shadow on the next street. Only a sprite's *own* axis survives a rotation,
+so that is the only axis it may be lit on.
+
+### What replaced it
+
+The fact moved onto the building, where it has room and cannot collide.
+
+- `Site.Imports` records what a building imports. The analyzer emits **no import
+  road at all**.
+- The map marks the importing building's **roof** — a cool tint, one colour of its
+  own, nothing like `accent`, which is the chief's flag. A mark on the plot is
+  invisible because the building covers it; a mark spilling into the gap between
+  plots is a road again. The roof is the one surface nothing is drawn on top of.
+- The panel lists the names. *Whether* is on the map, *whom* is in the panel,
+  because the panel has room for exact names and the map does not.
+
+**The cost, stated so nobody rediscovers it by wanting the graph back:** the shape
+of the dependency is no longer visible at a glance. A reader cannot see that
+`ui/src` reaches two things rather than one without selecting it. That was never
+reliably visible with a car on it either.
+
+Feature 1 is therefore **done, in a different form**, and the "spine" it was going
+to hang the others off has to be re-founded: there is no longer anything on the
+map that moves with the code's *shape*. What moves is the crew, and that is all.
+
+## The four that are open
+
+Re-scoped against what the map has become. Each is now judged by whether the town
+can carry it at fitted zoom — the test feature 1 failed.
 
 ### 2. Figures for failing tests
 
-A figure walks out of a building that is failing and crosses to the Yard, where
-ADR-0004 already puts side-wide work. **One figure per building, not one per
-problem** — the *number of problem buildings* is what the map shows, and the
-exact count stays in the panel. A swarm would read as panic; a slow walk reads as
-a fact.
+Unchanged and still the best of the four. A figure walks out of a building that is
+failing and crosses to the Yard, where ADR-0004 already puts side-wide work.
+**One figure per building, not one per problem** — the *number of problem
+buildings* is what the map shows, and the exact count stays in the panel. A swarm
+would read as panic; a slow walk reads as a fact.
 
-The data is `BuildingState.Problems`, *"the running count of failures here: history,
-never cleared."* It already exists, already travels the wire, and the panel
-already prints it. **This feature invents no data.**
+The data is `BuildingState.Problems`, *"the running count of failures here:
+history, never cleared."* It already exists, already travels the wire, and the
+panel already prints it. **This feature invents no data.**
 
-Its absence is the cost. Failure is the one thing the town renders worst: a red
-roof mark says *this is broken* and nothing on the map says *this is broken
-constantly*. A figure makes the rate visible without a number.
+**New in scope, from what feature 1 taught:** a figure is ~20 pixels and crosses
+open ground, so it is a *position*, not a tint — unlike the import mark, a figure
+cannot be hidden by the building it leaves. That is why it works where a car did
+not, and it should be stated before anyone tries the same trick twice.
 
 ### 3. A town that admits it is idle
 
-The cheapest and most honest of the five. A town with no session reports it — in
-the panel, and by the **absence** of machines rather than by an addition. A town
-with no machines and no figure on it is quiet, and the reader can tell a quiet
-town from a dead one because the Yard and the chimneys still move.
+Now the most load-bearing of the four. With feature 1 removed, **the town has
+nothing on it that moves when no agent does**, which is the problem this document
+exists to name, arriving a different way. The chimneys and the smoke still drift,
+so the distinction survives — but it is thinner than when this was written, and
+this feature is what keeps it from being a fiction.
 
-This is feature zero in the sense that it makes the other four honest: without it,
-an empty town and a populated one look alike when nothing is happening.
+A town with no session reports it — in the panel, and by the **absence** of
+machines rather than by an addition.
 
 ### 4. Ambient at rest
 
@@ -126,6 +135,12 @@ on a building tall enough to have one; the verified pennant lifting on a gust;
 rain over a district whose tests are currently failing. Each is a fact wearing
 motion. Anything that is *only* motion is out of scope by this document's first
 paragraph.
+
+**Deferred on evidence, not on taste:** the machinery pass this session went
+looking for a boom you could read and could not get one below four pixels without
+it turning into a plank. Ambient motion has the same ceiling. Whatever is chosen
+here has to survive at the size it will actually be drawn, which is the test
+feature 1 missed four times.
 
 ### 5. Time of day
 
@@ -144,24 +159,33 @@ that can make existing art worse.
 
 ## Non-goals
 
-- **Pedestrians as population.** A person who is not a claim is a costume.
+- **Pedestrians as population.** A person that is not a claim is a costume.
 - **Anything drawn per agent that the daemon does not report.** The town is a
   pure function of the analysis and the event stream (ADR-0012), and liveness that
   requires a fiction breaks that.
 - **Making a still town look busy.** The failure mode this document exists to
   prevent. A town with no session must read as *idle*, and idle is a legitimate
   state with a legitimate look.
+- **A connection drawn between two places, for any reason.** Added after feature 1.
+  Every band on this map is between districts, or inside a district and about the
+  tree. Nothing on the map says "this calls that" any more, and the reason is that
+  a connection needs width, a surface, a kerb and ends, and having all four it
+  crosses the things it passes.
 
 ## How this will be judged
 
 By the four instruments this project already has, and by the reader:
 
-- `commenttruth` — every comment must say what the code does
-- `selftest.test.ts` — no test that reimplements what it is testing
-- `test:mutate` — a car with no road, a figure that never leaves, a light that
-  does not change the palette, each must break a test
+- `commenttruth` — every comment must say what the code does. It cannot see a
+  comment that is *nearly* true, so this catches lies and misses near-misses; the
+  near-misses this session were found by reading, not by the suite.
+- `selftest.test.ts` — no test that reimplements what it is testing.
+- `test:mutate` — 7 mutations, all caught. A figure that never leaves and a light
+  that does not change the palette would have to join them; there is no longer a
+  car mutation, because there is no longer a car.
 - **and the judgement that none of those can make:** does a town with a session
-  look different from a town without one, *for a reason you can name*
+  look different from a town without one, *for a reason you can name*.
 
 That last one is why this spec exists and why the last feature on the list is the
-one that would be most impressive.
+one that would be most impressive. It is also the one feature 1 failed, and
+failing it four times is the most useful thing this document has recorded.

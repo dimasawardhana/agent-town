@@ -52,6 +52,25 @@ through four rounds of re-authoring and were still not legible at map scale.
 
 The town is quieter: nothing moves on it but the crew.
 
+### What this means for the liveliness spec
+
+`docs/superpowers/specs/2026-09-29-town-liveliness.md` was rewritten around
+this removal rather than amended a fourth time. Three amendment blocks had
+accumulated on it and left it contradicting itself — still listing a car as a
+mover, still arguing about a removed feature's colour, still saying nothing was
+built. It now records feature 1 as done in a different form, re-scopes the four
+open features against what the map has become, and carries the evidence.
+
+Two things it says that are worth repeating here:
+
+- **The "spine" feature 1 was going to hang the others off no longer exists.**
+  There is nothing on the map that moves with the code's *shape* any more, so
+  features 2–5 have to re-found whatever they were going to hang off.
+- **A figure is a position, not a tint.** It is ~20 pixels and crosses open
+  ground, so it cannot be hidden by the building it leaves. That is why feature 2
+  should work where feature 1 did not, and it is written down so nobody tries
+  the tint trick twice.
+
 ### Two cleanups this made necessary
 
 Both were found by reading the tree after the removal rather than before it, and
