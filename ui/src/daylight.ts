@@ -49,6 +49,37 @@ export interface Daylight {
    *  lighting, and at dusk the town is a town where the work has stopped for
    *  the day. At `day` the same windows read as glass, which is what they are. */
   lit: boolean;
+  /** The cloud colour, or null when this phase has no visible cloud.
+   *
+   *  `null` at night, and that is a claim rather than a mood: you cannot see
+   *  cloud at night, and drawing one there would be the sky asserting something
+   *  it knows to be false.
+   *
+   *  A palette key, like every other sky colour, for the reason
+   *  `sky.test.ts` exists. */
+  cloud: string | null;
+  /** How many birds are in the sky at this phase.
+   *
+   *  **A count, and it is the claim.** A bird in the sky is the first thing in
+   *  this town that moves without saying anything about the code, and the
+   *  liveliness spec's first rule is that a figure moving because it looks nice
+   *  is decoration wearing a claim's clothes. So the bird is tied to the hour
+   *  rather than to the repository: it is a claim about the *sky*, the same
+   *  claim a lit window makes, and it is a claim the town can actually support
+   *  because the phase is in the store.
+   *
+   *  **Dusk only, and not night.** Birds come out at dusk and roost by dark, so
+   *  a night bird would be asserting something the town knows to be untrue — the
+   *  same rule that puts no cloud in a night sky, and for the same reason. Zero
+   *  at day is the same honesty: a bird is a speck against a bright sky and
+   *  would read as dirt on the lens.
+   *
+   *  What it may never mean is *an agent is working here*. That is the machine's
+   *  claim, and it is the only one. A flock over a busy district would say
+   *  "something is happening there" and quietly take a job that belongs to a
+   *  signal the reader can act on. */
+  birds: number;
+
   /** The palette key the lit glass is drawn in, or null when this phase lights
    *  nothing.
    *
@@ -76,18 +107,28 @@ export const DAYLIGHT: Record<DayPhase, Daylight> = {
   day: {
     label: "Day",
     sky: { ground: P.skyGround, mid: P.skyHaze, void: P.skyNear },
+    // Haze for the body and the glow for its lit top edge, which is what makes
+    // a cloud read as a cloud and not as a smudge on the sky.
+    cloud: P.skyHaze,
+    birds: 0,
     lit: false,
     lamp: null,
   },
   dusk: {
     label: "Dusk",
     sky: { ground: P.skyFar, mid: P.skyGlow, void: P.void },
+    // The glow. A cloud at dusk is the one thing lit from underneath, and this
+    // palette already has the colour of light coming up off a horizon.
+    cloud: P.skyGlow,
+    birds: 6,
     lit: true,
     lamp: "lamp",
   },
   night: {
     label: "Night",
     sky: { ground: P.skyZenith, mid: P.skyMid, void: P.void },
+    cloud: null,
+    birds: 0,
     lit: true,
     lamp: "lamp",
   },

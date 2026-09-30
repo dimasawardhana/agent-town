@@ -1,0 +1,70 @@
+# 41 — Cloud in the sky, and birds at dusk
+
+**What to build:** A cloud field in the generated backdrop, and a small flock that
+crosses the sky.
+
+**Status:** done
+
+- [x] `paintClouds` — a cloud is a cluster of radial gradients, deterministic and
+      per phase
+- [x] `clouds` is a per-phase field: a palette key at day and dusk, `null` at night
+- [x] `birds.ts` — a generated seven-pixel silhouette and a drifting flock
+- [x] `birds` is a per-phase **count**, and the layer refuses to draw more
+- [x] A depth just in front of the sky, so a bird is never on a roof
+- [x] 4 cloud tests, 8 bird tests, 2 mutations
+
+## The one decision that was not mine to make quietly
+
+**A bird is the first thing in this town that moves and says nothing about the
+code.** The liveliness spec opens with "Not animation. A figure moving because it
+looks nice is decoration wearing a claim's clothes, and this town does not do
+that." A bird is the purest decoration available — no verb, no repository in it,
+nothing a reader can act on.
+
+So it was given the narrowest claim the town can actually support, which is
+**the hour**. Birds come out at dusk and roost by dark: `DAYLIGHT.birds` is 6 at
+dusk and 0 at both day and night, and `Birds.reconcile` reads that same field the
+cloud and the lamp are read from — one table, one claim, no way for a second one
+to disagree. The count is in the phase table rather than in `birds.ts` precisely
+so that it cannot be overridden.
+
+**What a bird may never mean is "something is working here."** That belongs to the
+machine, and it is the only mover in the town with that meaning. A flock over a
+busy district would say "something is happening there" and quietly take a job
+that belongs to a signal a reader can act on.
+
+Night is zero for the same reason the night sky has no cloud: you cannot see
+either one, and drawing them would be the sky asserting something it knows to be
+false.
+
+## Cloud
+
+Drawn into the backdrop rather than baked, so the atlas pays nothing — the same
+reason the ember and the smoke are generated. `BackdropContext` declares exactly
+two primitives, a fill and a gradient, so a cloud is a **cluster of radial
+gradients** rather than a shape: widening that surface would mean a backdrop
+growing an unmodelled primitive, which is how a test stops being able to see the
+picture.
+
+`CLOUD_COUNT` is 7 and the count is pinned by a test, because every loop over it
+is vacuous at zero — which is the mechanism by which a cloud silently stops
+existing. Two mutations cover both halves.
+
+## Two things this nearly got wrong
+
+**Clouds that were on the canvas and invisible.** The first alpha was a sixth of
+what it is now. The vignette is drawn *over* all of this and takes up to 82% at
+the corners, and every cloud is in the top third, so each one lost a third of its
+contrast before a reader saw it. Drawn-but-unseen costs more than not drawn and
+says nothing.
+
+**A cloud test that could not fail.** The first version rendered a day sky and a
+night sky and required them to differ — which they do, because their *ground
+colours* differ, so it passed with `CLOUD_COUNT = 0`. It is replaced by a
+measurement: inside the band the clouds are placed in, is there light genuinely
+brighter than the sky behind it? Zeroing the count now fails three tests.
+
+The unclamped fill rects are the third: a real canvas clips silently, so they
+worked, and the sky's test harness — which writes into a flat array and does not
+clip — is what caught it. Depending on the caller to clip is how a backdrop ends
+up drawing outside the frame on a surface that does not.

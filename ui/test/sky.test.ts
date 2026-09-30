@@ -4,7 +4,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { paintBackdrop, type BackdropContext } from "../src/sky";
+import { CLOUD_COUNT, cloudAt, paintBackdrop, type BackdropContext } from "../src/sky";
 import { readFileSync } from "node:fs";
 
 /**
@@ -385,4 +385,96 @@ test("the just-worked chip is the ember's colour, not merely the same family", a
     P.accentDim.toLowerCase(),
     `the chip is ${declared} but the ember is drawn in ${P.accentDim}`,
   );
+});
+
+test("the cloud field is a function of its index and nothing else", () => {
+  // The sky's own rule, at the level of the cloud field: no `Math.random`, so
+  // two clients drawing the same town draw the same sky and a redraw cannot
+  // rearrange the weather under a reader who is looking at it.
+  for (let i = 0; i < CLOUD_COUNT; i++) {
+    assert.deepEqual(cloudAt(i, 1200, 860), cloudAt(i, 1200, 860), `cloud ${i} moved between calls`);
+  }
+  // And it is laid out as a *field*, not a list: the positions are distinct.
+  const seen = new Set<string>();
+  for (let i = 0; i < CLOUD_COUNT; i++) seen.add(cloudAt(i, 1200, 860).x.toFixed(2));
+  assert.equal(seen.size, CLOUD_COUNT, `clouds overlap exactly: ${[...seen].join(" ")}`);
+});
+
+test("no cloud is placed where the town stands", () => {
+  // A cloud behind a building is a smudge on a roof, so the field is kept in the
+  // upper band. The town occupies the middle and lower of the frame, and this
+  // pins the boundary rather than trusting the comment.
+  for (let i = 0; i < CLOUD_COUNT; i++) {
+    const c = cloudAt(i, 1200, 860);
+    const y = c.y / 860;
+    assert.ok(y > 0 && y < 0.36, `cloud ${i} sits at ${(y * 100).toFixed(0)}% of the frame height`);
+  }
+});
+
+test("a night sky has no cloud, and that is a claim rather than a mood", () => {
+  // You cannot see cloud at night, and drawing one would be the sky asserting
+  // something it knows to be false — the same rule that roosts the birds.
+  const { px: night, ctx: nctx } = backdrop();
+  paintBackdrop(nctx, 200, 200, "night");
+  const { px: day, ctx: dctx } = backdrop();
+  paintBackdrop(dctx, 200, 200, "day");
+  const differs = night.filter((c, i) => c !== day[i]).length;
+  assert.ok(differs > 200, "a night sky renders the same as a day sky");
+  // And the table says so, so the layer is not the only thing that knows.
+  assert.equal(DAYLIGHT.night.cloud, null, "night has a cloud colour");
+  assert.equal(DAYLIGHT.day.cloud, P.skyHaze);
+});
+
+test("a day sky is measurably brighter in its cloud band, and a night sky is not", () => {
+  // **The strong form, and the weak test it replaces.** The previous version
+  // rendered a day sky and a night sky and required them to differ — which they
+  // do, because their *ground colours* differ, so it passed with the cloud field
+  // set to zero cels. A test that cannot fail when the thing it names is
+  // removed.
+  //
+  // What it asks now: inside the band the clouds are placed in, is there light
+  // that is genuinely brighter than the sky behind it? A cloud is a lift, and a
+  // lift is measurable.
+  const bandBrightness = (phase: "day" | "night"): { peak: number; floor: number } => {
+    const { px, ctx } = backdrop(400, 400);
+    paintBackdrop(ctx, 400, 400, phase);
+    const w = 400;
+    const y0 = Math.round(400 * 0.06);
+    const y1 = Math.round(400 * 0.30);
+    let peak = -Infinity;
+    let floor = Infinity;
+    const lum = (c: string): number => {
+      const m = c.match(/rgba?\(([^)]+)\)/);
+      if (!m) return 0;
+      const p = m[1].split(",").map((n) => Number.parseFloat(n.trim()));
+      return (p[0] || 0) + (p[1] || 0) + (p[2] || 0);
+    };
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = lum(px[y * w + x]);
+        if (v > peak) peak = v;
+        if (v < floor) floor = v;
+      }
+    }
+    return { peak, floor };
+  };
+  const day = bandBrightness("day");
+  assert.ok(
+    day.peak - day.floor > 25,
+    `the day sky's cloud band is flat: brightest ${day.peak.toFixed(0)}, darkest ${day.floor.toFixed(0)}`,
+  );
+  // And the same measurement on a night sky is the claim: no cloud, so no lift
+  // above the vignette's own falloff.
+  const night = bandBrightness("night");
+  assert.ok(
+    night.peak - night.floor <= day.peak - day.floor,
+    "a night sky is brighter in its cloud band than a day sky",
+  );
+});
+
+test("the cloud field has clouds in it", () => {
+  // Guards the guard: `CLOUD_COUNT` zeroed makes every loop above vacuous, and a
+  // vacuous loop is how a cloud silently stopped existing.
+  assert.ok(CLOUD_COUNT > 0, "CLOUD_COUNT is zero, so every cloud test below is vacuous");
+  assert.equal(CLOUD_COUNT, 7, "the cloud field's density changed; re-check how a sky reads");
 });

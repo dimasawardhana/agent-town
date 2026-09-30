@@ -35,6 +35,7 @@ import {
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
+import { Birds } from "./birds";
 import { SKY_DEPTH, skyTexture } from "./sky";
 import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
@@ -115,6 +116,13 @@ const DEPTH = {
   label: 90000,
   /** Below the labels: a name must never be half-hidden by a glow. */
   ember: 85000,
+  /** In front of the sky and behind the ground.
+   *
+   *  A bird is *in* the sky, so it is behind the island: at any other depth a
+   *  bird could be half-hidden by a roof, and a mark on a building is a claim
+   *  about the building. The one place it is ahead of the ground is a bird that
+   *  has drifted below the horizon, which is a bird the sky has already lost. */
+  bird: SKY_DEPTH + 1,
 } as const;
 
 export class TownScene extends Phaser.Scene {
@@ -179,6 +187,9 @@ export class TownScene extends Phaser.Scene {
    * off, which means it could not be an event-driven child either.
    */
   private embers: Embers | null = null;
+
+  /** The dusk flock. Rebuilt with the map, and sized by the phase alone. */
+  private birds: Birds | null = null;
   /** Cars on the import roads. Generated, so no atlas cost, and re-synced with
    *  the draw so a turn re-routes them against the turned roads. */
   /** The backdrop, pinned to the camera. Resized with the view and no further. */
@@ -211,6 +222,14 @@ export class TownScene extends Phaser.Scene {
    * cache would accumulate one canvas per resize.
    */
   private resizeSky(): void {
+    // The flock is placed against the frame, so a resize has to re-place it —
+    // the same reason the sky itself is repainted here rather than stretched.
+    this.birds?.reconcile(
+      useTown.getState().day,
+      this.time.now / 1000,
+      this.scale.width,
+      this.scale.height,
+    );
     if (!this.sky) return;
     const w = this.scale.width;
     const h = this.scale.height;
@@ -404,6 +423,8 @@ export class TownScene extends Phaser.Scene {
     this.chimneys = new Chimneys(this, this.chimneyRooftops(layout), DEPTH.smoke);
     this.embers?.destroy();
     this.embers = new Embers(this, DEPTH.ember);
+    this.birds?.destroy();
+    this.birds = new Birds(this, DEPTH.bird);
 
 
     // The sky is here for the same reason the chimneys are: the redraw calls
@@ -1340,7 +1361,15 @@ export class TownScene extends Phaser.Scene {
    * fading is the entire point — wiring this to events would leave every ember
    * lit forever, which is the claim the whole thing was built to avoid.
    */
-  override update(): void {
+  override update(time: number): void {
+    // The flock first and alone: it needs nothing from the town, so a reader who
+    // has the sky open and no layout yet still gets the sky they asked for.
+    this.birds?.reconcile(
+      useTown.getState().day,
+      time / 1000,
+      this.scale.width,
+      this.scale.height,
+    );
     if (!this.embers || !this.layout) return;
     const { live } = useTown.getState();
     const byPath = new Map(live.buildings.map((b) => [b.path, b.updated]));

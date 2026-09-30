@@ -112,9 +112,32 @@ const MUTATIONS = [
     // the whole claim of the feature would be decoration nobody could see.
     what: "dusk stops lighting anything",
     file: "src/daylight.ts",
-    from: '  dusk: {\n    label: "Dusk",\n    sky: { ground: P.skyFar, mid: P.skyGlow, void: P.void },\n    lit: true,',
-    to: '  dusk: {\n    label: "Dusk",\n    sky: { ground: P.skyFar, mid: P.skyGlow, void: P.void },\n    lit: false,',
+    from: '    cloud: P.skyGlow,\n    birds: 6,\n    lit: true,',
+    to: '    cloud: P.skyGlow,\n    birds: 6,\n    lit: false,',
     suite: "test:daylight",
+  },
+  {
+    // A bird at night. Birds roost by dark, so this is the town asserting
+    // something it knows to be untrue — the one claim this layer is allowed to
+    // make is about the hour, and a night bird makes it wrongly.
+    //
+    // The first decoration in the town that moves, and the first thing the
+    // liveliness spec's own first rule would have refused without somewhere in
+    // the phase table to hang the hour off.
+    what: "a bird flies at night",
+    file: "src/daylight.ts",
+    from: "    cloud: null,\n    birds: 0,",
+    to: "    cloud: null,\n    birds: 6,",
+    suite: "test:birds",
+  },
+  {
+    // The cloud field emptied. Every loop over CLOUD_COUNT is vacuous at zero,
+    // which is why the sky suite pins the count as well as the clouds.
+    what: "the sky loses its cloud",
+    file: "src/sky.ts",
+    from: "export const CLOUD_COUNT = 7;",
+    to: "export const CLOUD_COUNT = 0;",
+    suite: "test:sky",
   },
 ];
 
