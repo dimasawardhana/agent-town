@@ -84,6 +84,19 @@ const MUTATIONS = [
     to: "    if (false) {",
     suite: "test:turnroads",
   },
+  {
+    // The one the suite could not see for a week. The cap cel's pixels were
+    // drawn for the real turn while its frame recorded turn 0's origin, so the
+    // pennant and the roof damage — the two overlays cut from the *real* box —
+    // landed 39x20px away from the building they belong to. It floated, and
+    // every test that compared pixels passed, because both cels were
+    // individually correct and only their recorded origins disagreed.
+    what: "a cap's frame origin stops following the turn",
+    file: "src/art/bake.ts",
+    from: "const topBox = capBox(side, roof, turn);",
+    to: "const topBox = capBox(side, roof);",
+    suite: "test:flagcorner",
+  },
 ];
 
 const run = (cmd, cwd) => {

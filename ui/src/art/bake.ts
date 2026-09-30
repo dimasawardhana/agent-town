@@ -364,8 +364,8 @@ export function bakedCels(turn = 0): BakedCel[] {
     // both one storey and therefore the same size; neither reserves the roof's
     // headroom any more, which is what lowers the sheet's cell height — and the
     // cell height applies to every cel on the sheet, not just the tall ones.
-    const footBox = baseBox(side);
-    const storeyBox = bandBox(side);
+    const footBox = baseBox(side, turn);
+    const storeyBox = bandBox(side, turn);
 
     // Over the five material families rather than the two skins this used to
     // carry. A band is one storey of wall, so a whole tower is one cel per
@@ -425,7 +425,7 @@ export function bakedCels(turn = 0): BakedCel[] {
     // ceiling. It is the reason a twelve-archetype vocabulary fits at all.
     for (const stage of STAGE_ORDER) {
       if (stageRank(stage) < stageRank("roofed")) {
-        const box = capBox(side, ARCHETYPES[0]);
+        const box = capBox(side, ARCHETYPES[0], turn);
         cels.push({
           key: capFrame(side, ARCHETYPES[0], stage, turn),
           pix: buildCap(side, ARCHETYPES[0], stage, turn),
@@ -435,7 +435,7 @@ export function bakedCels(turn = 0): BakedCel[] {
         continue;
       }
       for (const roof of ARCHETYPES) {
-        const topBox = capBox(side, roof);
+        const topBox = capBox(side, roof, turn);
         cels.push({
           key: capFrame(side, roof, stage, turn),
           pix: buildCap(side, roof, stage, turn),
@@ -479,7 +479,7 @@ export function bakedCels(turn = 0): BakedCel[] {
     // The ground shadow, baked once per footprint. A building without a contact
     // shadow reads as pasted onto the map rather than standing on it — which is
     // visible precisely because the workers do have one.
-    const footShadowBox = shadowBox(side);
+    const footShadowBox = shadowBox(side, turn);
     cels.push({ key: shadowFrame(side, turn), pix: buildShadow(side, files, "b", turn), ox: footShadowBox.ox, oy: footShadowBox.oy });
   }
 

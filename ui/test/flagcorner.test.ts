@@ -105,3 +105,93 @@ test("the pennant's pixels touch the roof's, at every turn", () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// The test above is not enough, and the reason it is not enough is the whole
+// point of this block.
+//
+// It compares `buildCap` with `buildRoofFlagCel`, and **both of those build
+// their own box correctly** — each calls `capBox(side, roof, turn)` internally.
+// So it measures two pictures that are each individually right, and says
+// nothing about what the bake *records* about them.
+//
+// The floating flag lived in exactly that gap. The bake gave the cap
+// `capBox(side, roof)` — no turn, so the origin for turn 0 — while giving the
+// pennant `capBox(side, roof, turn)`. Both cels' pixels were correct; the frame
+// origins differed by 39x20px on a side-78 building, and the scene lays a sprite
+// down using the frame's origin rather than the box its pixels were drawn in. So
+// the flag was drawn correctly, onto the wrong roof, and every test that looked
+// at pixels passed.
+//
+// So this asserts the contract directly, on the recorded origins: **a mark cut
+// from another cel's box carries that box's origin.** It is the same sentence
+// `building.ts` already writes on every overlay, and it is checkable.
+import { SIZES, bakedCels, capFrame, verifiedFrame, baseFrame, baseDamageFrame } from "../src/art/bake";
+import { STAGE_ORDER, capBox, stageRank } from "../src/art/building";
+import { MATERIALS } from "../src/art/roof";
+
+test("a mark cut from the cap's box carries the cap's origin, at every turn", () => {
+  for (let t = 0; t < TURN_COUNT; t++) {
+    const byKey = new Map(bakedCels(t).map((c) => [c.key, c]));
+    for (const { side } of SIZES) {
+      for (const roof of ARCHETYPES) {
+        const cap = byKey.get(capFrame(side, roof, "roofed", t));
+        const flag = byKey.get(verifiedFrame(side, roof, t));
+        assert.ok(cap && flag, `turn ${t}: a roofed cap or pennant was not baked`);
+        assert.equal(
+          flag!.ox,
+          cap!.ox,
+          `turn ${t}, ${roof} at side ${side}: pennant origin x is ${flag!.ox}, the roof's is ${cap!.ox}`,
+        );
+        assert.equal(
+          flag!.oy,
+          cap!.oy,
+          `turn ${t}, ${roof} at side ${side}: pennant origin y is ${flag!.oy}, the roof's is ${cap!.oy}`,
+        );
+      }
+    }
+  }
+});
+
+test("a mark cut from the base's box carries the base's origin, at every turn", () => {
+  for (let t = 0; t < TURN_COUNT; t++) {
+    const byKey = new Map(bakedCels(t).map((c) => [c.key, c]));
+    for (const { side } of SIZES) {
+      for (const m of MATERIALS) {
+        const base = byKey.get(baseFrame(side, m, "roofed", t));
+        const rubble = byKey.get(baseDamageFrame(side, m, t));
+        assert.ok(base && rubble, `turn ${t}: a base or its rubble was not baked`);
+        assert.equal(rubble!.ox, base!.ox, `turn ${t}: rubble origin x differs from its base`);
+        assert.equal(rubble!.oy, base!.oy, `turn ${t}: rubble origin y differs from its base`);
+      }
+    }
+  }
+});
+
+test("a cel's recorded origin is the box its own pixels were drawn in", () => {
+  // The general form, and the one that actually caught it: not "these two agree"
+  // but "each cel's origin is the box its own builder used". A cap baked with
+  // turn 0's origin while its pixels were drawn for turn 3 is the same bug with
+  // nothing to disagree with, and the pair test above would pass it.
+  for (let t = 0; t < TURN_COUNT; t++) {
+    const byKey = new Map(bakedCels(t).map((c) => [c.key, c]));
+    for (const { side } of SIZES) {
+      for (const roof of ARCHETYPES) {
+        for (const stage of STAGE_ORDER) {
+          // Below `roofed` a cap draws nothing, and the bake deliberately
+          // collapses every pre-roof stage onto ONE shared blank cut from the
+          // first archetype's box - 320 blank cels become 16, which is what
+          // makes twelve archetypes affordable at all. That blank is empty, so
+          // its origin is not load-bearing, and there is no per-roof box to
+          // agree with. The caps that carry a roof are the ones that must.
+          if (stageRank(stage) < stageRank("roofed")) continue;
+          const cel = byKey.get(capFrame(side, roof, stage, t));
+          if (!cel) continue;
+          const box = capBox(side, roof, t);
+          assert.equal(cel.ox, box.ox, `turn ${t}: ${roof}/${stage} cap origin x is not its own box`);
+          assert.equal(cel.oy, box.oy, `turn ${t}: ${roof}/${stage} cap origin y is not its own box`);
+        }
+      }
+    }
+  }
+});
