@@ -741,26 +741,48 @@ export class TownScene extends Phaser.Scene {
    */
   private drawImportMark(s: Site): void {
     if (!s.imports || s.imports.length === 0) return;
-    const near = this.project(s.x + s.w, s.y + s.h);
-    const far = this.project(s.x, s.y);
-    const left = this.project(s.x + s.w, s.y);
-    const right = this.project(s.x, s.y + s.h);
+    const cap = this.atlas[this.capKey(s)];
+    if (!cap) return;
+    // On the **cap**, at the building's own height, not on its plot.
+    //
+    // The plot is the obvious place and it does not work: a building covers its
+    // own plot, so a mark there shows only a sliver of its edge — invisible at
+    // map zoom however bright it is. And with `cellGap` back at 14 there is no
+    // room between two plots either, so a fringe that spilled outward would fill
+    // the gap and be a road again.
+    //
+    // The roof is the one surface of a building nothing is standing on. This is
+    // also where the archetype's ornament already lives, so the mark is read
+    // against a face the reader is already looking at.
+    const z = towerTop(clampFloors(s.floors));
+    const at = (x: number, y: number) => this.project(x, y, z);
+    const near = at(s.x + s.w, s.y + s.h);
+    const left = at(s.x + s.w, s.y);
+    const right = at(s.x, s.y + s.h);
+    const far = at(s.x, s.y);
+    // The cap cel's own origin offsets the top face, so the quad starts where
+    // the sprite does rather than at the footprint.
+    const dy = cap.oy;
+
     const g = this.add.graphics();
-    g.lineStyle(1, Number.parseInt(P.imports.slice(1), 16), 0.85);
-    // The path is traced by hand rather than through `strokePoints`: Phaser is
-    // imported as a type only in this module, so there is no runtime `Phaser.Geom`
-    // to reach for, and four `lineBetween` calls would draw the plot's edges as
-    // doubled strokes at the corners.
+    const colour = Number.parseInt(P.imports.slice(1), 16);
+    g.fillStyle(colour, 0.5);
     g.beginPath();
-    g.moveTo(left.x, left.y);
-    g.lineTo(near.x, near.y);
-    g.lineTo(right.x, right.y);
-    g.lineTo(far.x, far.y);
+    g.moveTo(left.x, left.y + dy);
+    g.lineTo(near.x, near.y + dy);
+    g.lineTo(right.x, right.y + dy);
+    g.lineTo(far.x, far.y + dy);
     g.closePath();
+    g.fillPath();
+    g.lineStyle(1, colour, 0.95);
     g.strokePath();
-    // Under the building, so the mark reads as the plot's ground being marked
-    // rather than as something drawn over the building.
-    g.setDepth(near.y - 1);
+    // Depth is the *ground* near-corner the building's own container uses, plus
+    // a hair. The mark's own `near` is projected at roof height and so is tens
+    // of pixels higher on screen than the container's — sorting on it put the
+    // mark behind the very roof it was drawn on, which is how the first two
+    // attempts came out invisible.
+    const groundNear = this.project(s.x + s.w, s.y + s.h);
+    g.setDepth(groundNear.y + 0.5);
   }
 
 
