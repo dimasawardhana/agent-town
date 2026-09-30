@@ -13,7 +13,7 @@ const SIDES = SIZES.map((s) => s.side);
 import { test } from "node:test";
 
 import { ARCHETYPES, archetypeFor, archetypeHeight, MATERIALS, type Archetype } from "../src/art/roof";
-import { capBox, buildCap, STAGE_ORDER, stageRank } from "../src/art/building";
+import { LIGHT_PATTERNS, capBox, buildCap, STAGE_ORDER, stageRank } from "../src/art/building";
 import { capFrame, damageFrame, verifiedFrame, bakedCels, layoutAtlas, SIZES } from "../src/art/bake";
 import { ALL_PROP_KINDS } from "../src/art/props";
 import { EDGES, GROUND_KINDS } from "../src/art/terrain";
@@ -112,6 +112,7 @@ test("the atlas still fits after the cutover", () => {
     (stages - preRoof) * ARCHETYPES.length /* cap, per archetype */ +
     ARCHETYPES.length /* a damage mark, per archetype */ +
     ARCHETYPES.length /* the pennant, per archetype */ +
+    LIGHT_PATTERNS + 1 /* the lit windows: one cel per pattern, plus the shared blank */ +
     1 /* one contact shadow per footprint */;
   const ground = GROUND_KINDS.length * 4 * (1 + EDGES.length);
   const props = ALL_PROP_KINDS.length * 2;

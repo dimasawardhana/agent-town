@@ -88,6 +88,17 @@ export const P = {
   // had to fake it by reusing the midtone.
   glass: ["#1e2a33", "#2f4048", "#4a6270", "#7191a4"] as Ramp,
 
+  // A lit window, and only a lit window. The one warm emissive in the town, and
+  // the reason it is safe: `glass` is the only cool blue on a facade, so warm is
+  // unambiguous against it, and nothing else in the palette is allowed to be
+  // this bright and this warm at once. `accent` is gold and is the chief's flag
+  // and the panel's live marks — a lamp the same gold would read as a session
+  // badge, which is the exact confusion the pennant's colour was moved off to
+  // avoid. So this is amber where that is yellow, and a step deeper for the
+  // night phase, where the sky is dark enough for the warm thing to be the only
+  // warm thing.
+  lamp: "#e8a94a",
+
   // --- Plant and equipment -----------------------------------------------
   // The Yard and the Workshop hold things that are neither timber nor bright
   // steel: tarpaulins, hoses, aged iron. One ramp per material, and each is

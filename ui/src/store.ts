@@ -8,6 +8,8 @@
 
 import { create } from "zustand";
 
+import { type DayPhase, normaliseDay, stepDay } from "./daylight";
+
 // SITE_ID_BUILDING_PREFIX mirrors analyzer.SiteIDBuildingPrefix.
 //
 // It is the join key between a worker's resolved Place and the building's
@@ -262,6 +264,17 @@ interface State {
    */
   turn: number;
 
+  /**
+   * The town's one key light: a phase, not a clock.
+   *
+   * A view preference like `depth` and `turn`, and never sent to the daemon.
+   * Nothing in the analysis or the event stream says what time it is, so a
+   * clock would be a value the town invented; a phase is a fact it can hold —
+   * and at dusk the lit windows are the only thing on the map that says the
+   * work has stopped for the day.
+   */
+  day: DayPhase;
+
   setProjects: (p: ProjectRef[], current: string) => void;
   setCurrent: (path: string) => void;
   setTown: (t: Town | null, l: Layout | null, live?: Live) => void;
@@ -280,6 +293,10 @@ interface State {
   turnBy: (delta: number) => void;
   /** setTurn selects an orientation outright, for resetting to the default. */
   setTurn: (t: number) => void;
+  /** dayBy steps the key light through its phases, wrapping. */
+  dayBy: (delta: number) => void;
+  /** setDay selects a phase outright, for a control that names all three. */
+  setDay: (d: DayPhase) => void;
 }
 
 // A bounded event log. The town is the point; the feed is supporting detail,
@@ -306,6 +323,7 @@ export const useTown = create<State>((set) => ({
   // Upright, which is the orientation the art was authored at and the one that
   // shows the daemon's own idea of the town.
   turn: 0,
+  day: "dusk" as DayPhase,
   setTown: (town, layout, live) =>
     set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
   setProjects: (projects, current) => set({ projects, current }),
@@ -336,4 +354,6 @@ export const useTown = create<State>((set) => ({
   setDepth: (depth) => set({ depth }),
   turnBy: (delta) => set((s) => ({ turn: (((s.turn + delta) % 4) + 4) % 4 })),
   setTurn: (turn) => set({ turn: (((turn % 4) + 4) % 4) }),
+  dayBy: (delta) => set((s) => ({ day: stepDay(s.day, delta) })),
+  setDay: (day) => set({ day: normaliseDay(day) }),
 }));

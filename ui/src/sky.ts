@@ -16,7 +16,7 @@
 // rearrange the treeline under a reader who is looking at it.
 
 import Phaser from "phaser";
-import { P } from "./art/palette";
+import { DAYLIGHT, normaliseDay, type DayPhase } from "./daylight";
 
 const SKY_TEX = "sky";
 export const SKY_DEPTH = -1_000_000;
@@ -45,26 +45,32 @@ export const SKY_DEPTH = -1_000_000;
  * constants and never touched the canvas, which is how a backdrop that painted
  * no vignette at all passed as one that did.
  */
-export function paintBackdrop(g: BackdropContext, w: number, h: number): void {
+export function paintBackdrop(
+  g: BackdropContext,
+  w: number,
+  h: number,
+  phase: DayPhase = "dusk",
+): void {
+  const { sky } = DAYLIGHT[normaliseDay(phase)];
   const cx = w / 2;
   const cy = h * 0.55;
   const maxR = Math.hypot(cx, cy);
 
-  g.fillStyle = P.skyGround;
+  g.fillStyle = sky.ground;
   g.fillRect(0, 0, w, h);
 
   // The seat: a soft lift under the town, radial so it can never become a line.
   const seat = g.createRadialGradient(cx, h * 0.6, 0, cx, h * 0.6, maxR * 0.75);
-  seat.addColorStop(0, hexA(P.skyMid, 0.22));
-  seat.addColorStop(1, hexA(P.skyMid, 0));
+  seat.addColorStop(0, hexA(sky.mid, 0.22));
+  seat.addColorStop(1, hexA(sky.mid, 0));
   g.fillStyle = seat;
   g.fillRect(0, 0, w, h);
 
   // And the vignette, last, darkening the corners of the frame. It says *this is
   // where you are looking* without saying *and there is somewhere else*.
   const vig = g.createRadialGradient(cx, cy, maxR * 0.32, cx, cy, maxR);
-  vig.addColorStop(0, hexA(P.void, 0));
-  vig.addColorStop(1, hexA(P.void, 0.82));
+  vig.addColorStop(0, hexA(sky.void, 0));
+  vig.addColorStop(1, hexA(sky.void, 0.82));
   g.fillStyle = vig;
   g.fillRect(0, 0, w, h);
 
@@ -84,8 +90,13 @@ export interface BackdropContext {
   createLinearGradient(a: number, b: number, c: number, d: number): { addColorStop(o: number, c: string): void };
 }
 
-export function skyTexture(scene: Phaser.Scene, w: number, h: number): string {
-  const key = `${SKY_TEX}:${w}x${h}`;
+export function skyTexture(
+  scene: Phaser.Scene,
+  w: number,
+  h: number,
+  phase: DayPhase = "dusk",
+): string {
+  const key = `${SKY_TEX}:${w}x${h}:${phase}`;
   if (scene.textures.exists(key)) return key;
 
   const canvas = scene.textures.createCanvas(key, w, h);
@@ -103,7 +114,7 @@ export function skyTexture(scene: Phaser.Scene, w: number, h: number): string {
   //
   // The vignette is drawn **last**, over everything, because that is the only
   // order in which a vignette is a vignette.
-  paintBackdrop(canvas.getContext() as unknown as BackdropContext, w, h);
+  paintBackdrop(canvas.getContext() as unknown as BackdropContext, w, h, phase);
 
   canvas.refresh();
   return key;

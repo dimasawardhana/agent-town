@@ -1,7 +1,7 @@
 # A town that is alive when nobody is working
 
 **Status:** feature 1 built three times and removed twice; the third removal was
-of the mark itself. Features 2–5 open, re-scoped below.
+of the mark itself. Feature 5 built, and not as specified. Features 2–4 open.
 
 ## The problem
 
@@ -121,7 +121,7 @@ Feature 1 is therefore **done**, in the form of having removed itself, and the
 nothing on the map that moves with the code's *shape*. What moves is the crew,
 and that is all.
 
-## The four that are open
+## The four that were open, and what they became
 
 Re-scoped against what the map has become. Each is now judged by whether the town
 can carry it at fitted zoom — the test feature 1 failed.
@@ -172,20 +172,42 @@ it turning into a plank. Ambient motion has the same ceiling. Whatever is chosen
 here has to survive at the size it will actually be drawn, which is the test
 feature 1 missed four times.
 
-### 5. Time of day
+### 5. Time of day — built, and not as specified
 
-One key light for the whole town, not a light per building. The buildings already
-have top / lit / shadow faces and `visibleFaces` already picks two of them per
-turn; a time of day changes the **palette** those faces draw from and nothing
-else.
+One key light for the whole town, not a light per building. Explicitly **not**
+per-building lighting, for the two reasons above: a real light per building is
+1,237 new cels, and the pixel-art rules forbid the soft gradient it wants.
 
-Explicitly **not** per-building lighting, for two reasons: a real light per
-building is 1,237 new cels, and the pixel-art rules forbid the soft gradient it
-wants — the honest version is a whole-town key, and the honest version is also
-the cheap one.
+What shipped is three phases — day, dusk, night — and it changes two things:
 
-This is last because it touches every baked cel's palette and is the one feature
-that can make existing art worse.
+- **the backdrop**, repainted from three of the seven validated sky keys, and
+- **the glass**, which is lit warm in some windows and dark in others at dusk
+  and at night, and is plain glass at day.
+
+Three patterns per storey, so no two storeys of one building are lit the same
+way twice running, and no two buildings are lit alike. The pattern comes from
+the building's own path, so it is stable across redraws and across turns — the
+`frontCorner` property, applied to a mark that did not exist when it was written.
+
+**The facades do not change value with the phase, and the reason is the atlas.**
+This section originally said a time of day "changes the palette those faces draw
+from", and that is the honest description of a simulated key light. It is also
+not affordable here: a second axis on the base and the band is 400 cels against
+187 free, and a re-bake per phase is twelve atlases at 2048x8192 each. So the
+light is the sky and the emissive, and a wall is the same colour at night as at
+noon. The town reads as *a dark sky over a lit town*, which is a look and not a
+simulation, and saying so is cheaper than pretending otherwise.
+
+**A phase, not a clock.** Nothing in the analysis or the event stream says what
+time it is, so any value would be invented. What the town *can* hold is the one
+fact a reader is already reading the map in. Dusk is the default for the same
+reason it is the middle of the list: it is the only phase that says anything.
+
+The cost of that reading, stated: a lit window is a fact about the *hour* and
+nothing else. It does not say an agent is inside, and it must not be read that
+way — the machine is still the only mover that means an agent. If features 2 to 4
+ever light a window for a reason, the two signals collide and one of them has to
+go.
 
 ## Non-goals
 

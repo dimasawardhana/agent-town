@@ -29,15 +29,29 @@ import {
   groundFrame,
   groundEdgeFrame,
   propFrame,
+  windowLightFrame,
+  noWindowLightFrame,
 } from "./art/bake";
 import { BAND_TREATMENT, TURN_COUNT, type Turn, hasBand, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { SKY_DEPTH, skyTexture } from "./sky";
-import { type Stage, skinVariant } from "./art/building";
-import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, type Archetype } from "./art/roof";
+import { LIGHT_PATTERNS, type Stage, stageRank, skinVariant } from "./art/building";
+import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
+import { DAYLIGHT, normaliseDay, type DayPhase } from "./daylight";
+
+/**
+ * One child of a building's container: the atlas frame, and the height it sits
+ * at. Height is carried rather than inferred, because an overlay belongs *on*
+ * the storey it belongs to rather than wherever its position in the stack puts
+ * it.
+ */
+interface StackPart {
+  key: string;
+  z: number;
+}
 import { type Ground, tileVariant } from "./art/terrain";
 import { PLACE_PROPS } from "./art/props";
 import { PLACARD, type PlacardRole, placard } from "./art/placard";
@@ -107,6 +121,10 @@ export class TownScene extends Phaser.Scene {
   private atlas: Atlas = {};
   /** The orientation `atlas` holds, so `ensureAtlas` knows when to swap. */
   private atlasTurn: number = 0;
+
+  /** The key light the town is drawn under, as a phase. Held here as well as in
+   *  the store so the sky and the windows cannot read different ones. */
+  private day: DayPhase = "dusk";
   /**
    * Every orientation baked so far, by turn.
    *
@@ -161,7 +179,7 @@ export class TownScene extends Phaser.Scene {
   private ensureSky(): void {
     this.sky?.destroy();
     this.sky = this.add
-      .image(0, 0, skyTexture(this, this.scale.width, this.scale.height))
+      .image(0, 0, skyTexture(this, this.scale.width, this.scale.height, this.day))
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(SKY_DEPTH);
@@ -181,7 +199,7 @@ export class TownScene extends Phaser.Scene {
     const w = this.scale.width;
     const h = this.scale.height;
     const old = this.sky.texture.key;
-    this.sky.setTexture(skyTexture(this, w, h));
+    this.sky.setTexture(skyTexture(this, w, h, this.day));
     this.sky.setDisplaySize(w, h).setPosition(0, 0);
     if (old !== this.sky.texture.key) this.textures.remove(old);
   }
@@ -282,6 +300,16 @@ export class TownScene extends Phaser.Scene {
       if (s.turn !== prev.turn && this.sourceLayout) {
         this.turn = normaliseTurn(s.turn);
         this.draw(this.sourceLayout);
+        return;
+      }
+      // A phase change is the one redraw that is not about the layout at all.
+      // The sky is repainted and the storeys are restaged, which is cheaper than
+      // a full draw and — more to the point — a full draw would re-derive the
+      // camera framing for a change that cannot move anything.
+      if (s.day !== prev.day && this.sourceLayout) {
+        this.day = normaliseDay(s.day);
+        this.resizeSky();
+        this.restage();
         return;
       }
       if (s.live !== prev.live && this.layout) this.syncLive();
@@ -896,9 +924,9 @@ export class TownScene extends Phaser.Scene {
       const labelAt = this.project(s.x, s.y);
       this.register(s.id, this.label(s.label, labelAt.x + s.w / 2, labelAt.y + 22, "name"));
 
-      const keys = this.containerKeys(s);
-      const base = this.atlas[keys[0]];
-      const cap = this.atlas[keys[keys.length - 1]];
+      const parts = this.containerKeys(s);
+      const base = this.atlas[parts[0].key];
+      const cap = this.atlas[parts[parts.length - 1].key];
       const p = this.project(s.x, s.y);
       const top = p.y - towerTop(clampFloors(s.floors)) - cap.oy;
       this.hitZone(p.x - base.ox, top, base.w, p.y + base.h - base.oy - top, s, near.y + 2);
@@ -1372,17 +1400,19 @@ export class TownScene extends Phaser.Scene {
       if (s.kind !== "building") continue;
       const box = this.buildingSprites.get(s.id);
       if (!box) continue;
-      const keys = this.stackKeys(s);
+      const parts = this.stackParts(s);
       box.list.forEach((child, i) => {
         const img = child as Phaser.GameObjects.Image;
-        if (img.frame.name !== keys[i]) img.setFrame(keys[i]);
+        const want = parts[i]?.key;
+        if (want && img.frame.name !== want) img.setFrame(want);
       });
     }
   }
 
   /**
-   * stackKeys is the atlas frame of every child of a building's container, in
-   * draw order: one base, one band per storey above the first, then the cap.
+   * stackParts is every child of a building's container, in draw order, each
+   * with the height it sits at: the base, then a band and its lit windows per
+   * storey above the first, the ground storey's own light, then the cap.
    *
    * The floor count comes from the daemon's measurement, not from anything the
    * renderer derives, and it is clamped here as well as in the daemon — the
@@ -1393,25 +1423,40 @@ export class TownScene extends Phaser.Scene {
    * wall: base + (floors - 1) bands + cap is exactly `floors` storeys of wall.
    * An off-by-one here is invisible at one floor and wrong at every other.
    */
-  private stackKeys(s: Site): string[] {
+  private stackParts(s: Site): StackPart[] {
     const floors = clampFloors(s.floors);
-    const keys = [this.baseKey(s)];
-    for (let i = 1; i < floors; i++) keys.push(this.bandKey(s));
-    keys.push(this.capKey(s));
+    const roof = towerTop(floors);
+    // Every part carries its own height rather than having it read off its
+    // index. That rule — `i * STOREY` for the first `floors` children and the
+    // roof for everything after — was true while every part above the base was a
+    // storey, and the lit-window overlay is the first part that is not: an
+    // overlay belongs *on* its storey's band, so it has to sit at that storey's
+    // height while being drawn after it. Inferring height from position is what
+    // made that impossible, and it would have made the next overlay impossible
+    // too.
+    const keys: StackPart[] = [{ key: this.baseKey(s), z: 0 }];
+    for (let i = 1; i < floors; i++) {
+      keys.push({ key: this.bandKey(s), z: i * STOREY });
+      keys.push(this.lightPart(s, i));
+    }
+    // The ground storey carries its own, because the base is a storey too and
+    // the windows in it are lit on the same terms as every other storey's.
+    keys.push(this.lightPart(s, 0));
+    keys.push({ key: this.capKey(s), z: roof });
     // The damage mark is a child like any other, present whether or not the
     // building is damaged. Dropping it when the condition clears would change
     // this array's length, and restaging swaps frames *by index* — every storey
     // above the cap would slide onto the wrong frame. A blank frame is the only
     // way to have no damage without having no child.
-    keys.push(this.damageKey(s));
+    keys.push({ key: this.damageKey(s), z: roof });
     // The ground storey's rubble, on the same terms: a child whether or not the
     // building is damaged, because the child count must not move when a
     // condition does.
-    keys.push(this.baseDamageKey(s));
+    keys.push({ key: this.baseDamageKey(s), z: roof });
     // The pennant, on the same terms as the two damage marks: a child whether
     // or not the building is verified, because the child count must not move
     // when a condition does.
-    keys.push(this.verifiedKey(s));
+    keys.push({ key: this.verifiedKey(s), z: roof });
     return keys;
   }
 
@@ -1430,7 +1475,7 @@ export class TownScene extends Phaser.Scene {
    * the join between two floors is seamless.
    */
   private placeBuilding(s: Site, depth: number): Phaser.GameObjects.Container {
-    return this.stackContainer(this.stackKeys(s), s, depth);
+    return this.stackContainer(this.stackParts(s), s, depth);
   }
 
   /**
@@ -1453,24 +1498,20 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
-   * stackContainer places one cel per storey at `i * STOREY`.
+   * stackContainer draws a building's or a container's parts where they were
+   * told to be.
    *
-   * The single place the stacking arithmetic lives, so a building and a
-   * container cannot disagree about how tall a storey is or where the roof goes.
-   * The caller supplies the keys; this decides only where each one lands.
+   * The single place a cel meets the screen, so a building and a container
+   * cannot disagree about where a part lands. The caller supplies each part's
+   * frame *and* its height; this decides only the anchor.
    */
-  private stackContainer(keys: string[], s: Site, depth: number): Phaser.GameObjects.Container {
+  private stackContainer(parts: StackPart[], s: Site, depth: number): Phaser.GameObjects.Container {
     const box = this.add.container(0, 0);
     const p = this.project(s.x, s.y);
-    const floors = clampFloors(s.floors);
-    for (let i = 0; i < keys.length; i++) {
-      const f = this.atlas[keys[i]];
+    for (const part of parts) {
+      const f = this.atlas[part.key];
       if (!f) continue;
-      // The cap is the last child and sits above the topmost band, not at
-      // `i * STOREY` — at one floor those coincide, which is exactly why a
-      // tower's roof would float one storey too high if this were spelled that
-      // way.
-      const z = i < floors ? i * STOREY : towerTop(floors);
+      const z = part.z;
       // `setOrigin(0, 0)` is load-bearing and was missing here, which put every
       // building and every container half a cel up-and-left of its own plot —
       // measured at 36 pixels left and 48 up on a 73x85 cel, and 56/54 on a
@@ -1479,7 +1520,7 @@ export class TownScene extends Phaser.Scene {
       // to origin 0.5, so the cel's *centre* lands where its top-left was meant
       // to go. `place()` has the same call and the same comment, because this
       // bites in every code path that forgets it — the two must agree.
-      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), keys[i]).setOrigin(0, 0));
+      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), part.key).setOrigin(0, 0));
     }
     box.setDepth(depth);
     box.setName(siteName(s));
@@ -1499,7 +1540,7 @@ export class TownScene extends Phaser.Scene {
    * is deliberate rather than incidental (ADR-0021 rule 5): containers are most of
    * the shallowest, most-read view, so that view is the one that gains the variety.
    */
-  private containerKeys(s: Site): string[] {
+  private containerKeys(s: Site): StackPart[] {
     const floors = clampFloors(s.floors);
     const v = skinVariant(s.path ?? "");
     // `s.w` is a baked footprint — the daemon sends one of the atlas's own four
@@ -1507,9 +1548,20 @@ export class TownScene extends Phaser.Scene {
     // which art a site wants.
     const size = s.w;
     const m = materialFor(this.archetypeOf(s));
-    const keys = [baseFrame(size, m, "completed", this.atlasTurn)];
-    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, m, "completed", this.atlasTurn));
-    keys.push(capFrame(size, this.archetypeOf(s), "completed", this.atlasTurn));
+    // A container is *completed* by definition — it stands in for a subtree of
+    // finished buildings — so it carries no light. Its windows are the blank,
+    // and that is the honest reading: nothing inside a container is being worked
+    // on, and lighting it would be the one lit window on the map claiming
+    // something untrue.
+    const keys: StackPart[] = [
+      { key: baseFrame(size, m, "completed", this.atlasTurn), z: 0 },
+      { key: noWindowLightFrame(size, this.atlasTurn), z: 0 },
+    ];
+    for (let i = 1; i < floors; i++) {
+      keys.push({ key: bandFrame(size, m, "completed", this.atlasTurn), z: i * STOREY });
+      keys.push({ key: noWindowLightFrame(size, this.atlasTurn), z: i * STOREY });
+    }
+    keys.push({ key: capFrame(size, this.archetypeOf(s), "completed", this.atlasTurn), z: towerTop(floors) });
     return keys;
   }
 
@@ -1588,6 +1640,32 @@ export class TownScene extends Phaser.Scene {
   private verifiedKey(s: Site): string {
     if (!this.verifiedOf(s.path)) return NO_VERIFIED_FRAME;
     return verifiedFrame(s.w, this.archetypeOf(s), this.atlasTurn);
+  }
+
+  /**
+   * lightPart is one storey's lit-window overlay: a lit frame when the key
+   * light is on and this storey has glass in it, and the shared blank otherwise.
+   *
+   * **A child always, like the damage marks and the pennant.** The child count
+   * must not move when the *day* changes, and a reader stepping from dusk to day
+   * must not see a storey above the one that changed slide onto the wrong frame.
+   *
+   * The pattern is derived from the building's own path and the storey's index,
+   * so it is stable across redraws and across turns — a lit window that hopped
+   * patterns when the town turned would be the pennant's bug of issue 37 in a
+   * new place. Hashing the path rather than taking a counter means the same
+   * directory is lit the same way every time the town is drawn, which is what
+   * `frontCorner` was written to guarantee for the flag.
+   */
+  private lightPart(s: Site, storey: number): StackPart {
+    const day = normaliseDay(useTown.getState().day);
+    const z = storey * STOREY;
+    const lit = DAYLIGHT[day].lit && stageRank(this.statusOf(s.path)) >= stageRank("glazed");
+    if (!lit) return { key: noWindowLightFrame(s.w, this.atlasTurn), z };
+    return {
+      key: windowLightFrame(s.w, (hashPath(s.path ?? "") + storey) % LIGHT_PATTERNS, this.atlasTurn),
+      z,
+    };
   }
 
   private capKey(s: Site): string {

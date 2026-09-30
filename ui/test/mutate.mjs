@@ -49,8 +49,8 @@ const MUTATIONS = [
   {
     what: "the sky gains a horizon again",
     file: "src/sky.ts",
-    from: "  g.fillStyle = P.skyGround;",
-    to: "  g.fillStyle = P.skyMid;",
+    from: "  g.fillStyle = sky.ground;",
+    to: "  g.fillStyle = sky.mid;",
     suite: "test:sky",
   },
   {
@@ -96,6 +96,17 @@ const MUTATIONS = [
     from: "const topBox = capBox(side, roof, turn);",
     to: "const topBox = capBox(side, roof);",
     suite: "test:flagcorner",
+  },
+  {
+    // A phase that says `lit: true` while drawing nothing. The feature is a
+    // table of three rows and a table is exactly the thing that can be correct
+    // and unread — the sky would repaint and every window would stay glass, and
+    // the whole claim of the feature would be decoration nobody could see.
+    what: "dusk stops lighting anything",
+    file: "src/daylight.ts",
+    from: '  dusk: {\n    label: "Dusk",\n    sky: { ground: P.skyFar, mid: P.skyGlow, void: P.void },\n    lit: true,',
+    to: '  dusk: {\n    label: "Dusk",\n    sky: { ground: P.skyFar, mid: P.skyGlow, void: P.void },\n    lit: false,',
+    suite: "test:daylight",
   },
 ];
 

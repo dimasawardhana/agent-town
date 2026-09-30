@@ -30,7 +30,8 @@ import { type Turn, normaliseTurn, turnPoint } from "../view";
  * how its pixels overwrite a neighbour's — are both single numbers derived from
  * its midpoint, and a corner pair would invite comparing the wrong two.
  */
-interface Face {
+/** A wall of a box's footprint, as the two visible ones are resolved for a turn. */
+export interface Face {
   /** 0 for a face fixed in world x, 1 for one fixed in world y. */
   axis: 0 | 1;
   fixed: number;

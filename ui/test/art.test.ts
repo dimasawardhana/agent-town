@@ -37,6 +37,7 @@ import { TURNS, WorldView, normaliseTurn, turnPoint } from "../src/view";
 import { IsoPix } from "../src/art/iso";
 import { FRAME_MS, type WorkerState } from "../src/art/worker";
 import { MACHINES, MACHINE_POSES } from "../src/art/machine";
+import { LIGHT_PATTERNS } from "../src/art/building";
 import { bakedCels, layoutAtlas, SIZES, NO_DAMAGE_FRAME, NO_VERIFIED_FRAME } from "../src/art/bake";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, MATERIALS } from "../src/art/roof";
 import {
@@ -149,6 +150,7 @@ test("the bake and its invariants enumerate the same cels", () => {
     (stages - preRoof) * ARCHETYPES.length /* cap from roofed up, per archetype */ +
     ARCHETYPES.length /* a damage mark, per archetype */ +
     ARCHETYPES.length /* the pennant, per archetype */ +
+    LIGHT_PATTERNS + 1 /* the lit windows: one cel per pattern, plus the blank */ +
     1 /* one contact shadow per footprint */;
   // The two shared condition blanks are once for the *whole town*, not per
   // footprint, which is the third time that trick has paid: a blank is a blank,
@@ -232,14 +234,34 @@ test("only the band and the cap may be blank, and only before their feature exis
   // that stopped drawing at some stage — the shape of bug that a green cel
   // vanishing at `roofed` would be — fails here rather than hiding.
   const familyOf = (name: string) => name.split(":")[0];
+  const parts2 = (name: string) => name.split(":");
   const stageOf = (name: string) => name.split(":")[2];
-  const blanks = new Set(["band", "cap", "dmg", "bdmg", "vf"]);
+  // `lit` is here for the same reason `vf`, `dmg` and `bdmg` are: the blank a
+  // mark swaps from is a cel like any other and draws nothing on purpose, and it
+  // has to be *baked* rather than absent because `restage` swaps frames by index
+  // and a tower's child count must not move when the day changes.
+  //
+  // It is the only family here with **no stage axis at all** — a lit window is
+  // about the key light, not the construction ladder — so the rank check below
+  // does not apply to it, and says so rather than being skipped silently.
+  const blanks = new Set(["band", "cap", "dmg", "bdmg", "vf", "lit"]);
   for (const { name, pix } of everyCel()) {
     if (!pix.empty()) continue;
     assert.ok(
       blanks.has(familyOf(name)),
       `${name} draws nothing, but only the band and the cap may be blank`,
     );
+    if (familyOf(name) === "lit") {
+      // The only blank a `lit` cel may be is the shared one, and the lit
+      // patterns themselves must always draw — a pattern that lit nothing would
+      // be a storey the town claims is dark when it is not.
+      assert.equal(
+        parts2(name)[1],
+        "none",
+        `${name} is blank, and only the shared light blank may be`,
+      );
+      continue;
+    }
     const rank = stageRank(stageOf(name) as Stage);
     // The feature's own rank: a band is framed from `framed`, a cap is roofed
     // from `roofed`. Before that rank the part genuinely does not exist yet.

@@ -11,6 +11,7 @@ import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { STAGE_ORDER, type Stage } from "./art/building";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
+import { DAYLIGHT, DAY_PHASES } from "./daylight";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { TownCanvas } from "./TownCanvas";
 
@@ -210,6 +211,8 @@ export function App() {
   const turn = useTown((s) => s.turn);
   const turnBy = useTown((s) => s.turnBy);
   const setTurn = useTown((s) => s.setTurn);
+  const day = useTown((s) => s.day);
+  const setDay = useTown((s) => s.setDay);
 
 
   // The selected site's building state, if it is a building the town knows
@@ -348,11 +351,17 @@ export function App() {
           </section>
         )}
 
-        {/* The view controls. Both are preferences over how the *same* town is
-            shown: neither is sent anywhere, and neither can change what the map
+        {/* The view controls. All three are preferences over how the *same* town
+            is shown: none is sent anywhere, and none can change what the map
             says. Turning is offered only when there is a town to turn, and the
             reset appears only once the view is off its default, so the panel
-            does not carry a control that would do nothing. */}
+            does not carry a control that would do nothing.
+
+            The light is a *phase* and not a clock, and the control names all
+            three rather than stepping through them: a reader who wants night
+            should not have to press a button twice to find out which way the
+            cycle runs, and a control that could show a value nobody chose is a
+            control that lies about the town's one key light. */}
         {town && (
           <section className="view-control">
             <h2>View</h2>
@@ -374,6 +383,26 @@ export function App() {
                   </button>
                 </>
               )}
+            </p>
+            <div className="turn-row" role="group" aria-label="Time of day">
+              {DAY_PHASES.map((p) => (
+                <button
+                  key={p}
+                  className="bevel"
+                  aria-pressed={day === p}
+                  onClick={() => setDay(p)}
+                  title={`${DAYLIGHT[p].label} — ${
+                    DAYLIGHT[p].lit ? "windows lit" : "no lights"
+                  }`}
+                >
+                  {DAYLIGHT[p].label}
+                </button>
+              ))}
+            </div>
+            <p className="muted">
+              {day === "day"
+                ? "Full light. Every window is glass."
+                : "The light is going. A lit window is the one warm thing left."}
             </p>
           </section>
         )}

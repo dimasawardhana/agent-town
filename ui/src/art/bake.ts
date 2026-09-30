@@ -25,7 +25,8 @@ import { P, paletteSet } from "./palette";
 import { Pix } from "./surface";
 import type { Tier, WorkerState } from "./worker";
 import {
-  STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
+  LIGHT_PATTERNS, STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow,
+  buildWindowLightCel, capBox, emptyWindowLightCel, shadowBox,
   buildBaseDamageCel, buildRoofDamageCel, buildRoofFlagCel, emptyDamageCel, emptyVerifiedCel,
   stageRank, type Stage,
 } from "./building";
@@ -160,6 +161,25 @@ export function baseDamageFrame(side: number, material: MaterialName, turn = 0):
  *  the same box so `setFrame` cannot move the rubble when it swaps. */
 export function noBaseDamageFrame(side: number, material: MaterialName): string {
   return `bdmg:none:${side}:${material}`;
+}
+
+/** The lit-window overlay for a storey, by footprint, pattern and turn.
+ *
+ *  `lit:` rather than a stage or a material, because it is neither: the same
+ *  picture lands on a storey of any material and at any stage that has glass
+ *  in it, and naming the axis it actually varies on is what keeps the key from
+ *  growing a component nothing reads. */
+export function windowLightFrame(side: number, pattern: number, turn = 0): string {
+  const base = `lit:${side}:${pattern}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/** The blank a storey carries when the light is off, or the building is not
+ *  glazed. Per turn, because the origin is per turn and a shared blank would
+ *  not sit on its own box. */
+export function noWindowLightFrame(side: number, turn = 0): string {
+  const base = `lit:none:${side}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
 }
 
 /** Frame name for a building's base: the ground works, the ground storey's
@@ -475,6 +495,35 @@ export function bakedCels(turn = 0): BakedCel[] {
           oy: dmgBox.oy,
         });
       }
+
+      // The lit windows, three patterns per storey, cut from the band's own box.
+      //
+      // An overlay rather than a second axis on the base and band, and the
+      // budget is why: `baseBox` and `bandBox` are the same box, so one family
+      // covers the ground storey and every storey above it, and 3 patterns x 5
+      // footprints x 4 turns is 60 cels. A second axis on the base and band
+      // themselves is 400, which is over the ceiling with 187 free — so the
+      // choice was an overlay or nothing, and an overlay also means a lit
+      // window costs no extra draw on a building in daylight.
+      for (let pattern = 0; pattern < LIGHT_PATTERNS; pattern++) {
+        const lightBox = bandBox(side, turn);
+        cels.push({
+          key: windowLightFrame(side, pattern, turn),
+          pix: buildWindowLightCel(side, pattern, turn),
+          ox: lightBox.ox,
+          oy: lightBox.oy,
+        });
+      }
+      // And the blank, cut from the same box with the same origin, for the
+      // reason every overlay here is: `setFrame` moves textures without moving
+      // sprites, so a blank from a different box would leave every window a
+      // storey out of place the moment the light came on.
+      cels.push({
+        key: noWindowLightFrame(side, turn),
+        pix: emptyWindowLightCel(side, turn),
+        ox: bandBox(side, turn).ox,
+        oy: bandBox(side, turn).oy,
+      });
 
     // The ground shadow, baked once per footprint. A building without a contact
     // shadow reads as pasted onto the map rather than standing on it — which is

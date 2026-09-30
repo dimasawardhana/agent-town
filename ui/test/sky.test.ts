@@ -103,6 +103,7 @@ function backdrop(w = 200, h = 200) {
  * the centre — and it is coarse in a way that could not hide that property.
  */
 import { P } from "../src/art/palette";
+import { DAYLIGHT, DAY_PHASES } from "../src/daylight";
 
 test("there is no horizon, because a horizon is the diorama", () => {
   // Asserted by *absence*, not by a constant exported to be nil. The previous
@@ -114,26 +115,88 @@ test("there is no horizon, because a horizon is the diorama", () => {
     !/HORIZON|horizon\s*=\s*[0-9.]/.test(sky),
     "a horizon is back in the backdrop; the town reads as a diorama on a table again",
   );
-  // The plain's colour, checked at the source because it is not checkable on the
-  // canvas. This is the fourth phrasing, and the first that is a *different
-  // instrument* rather than another way of asking the same question.
+  // The plain is now the *phase's* plain rather than a fixed palette key, so the
+  // literal has moved. It is still read from the source and not from the canvas,
+  // and it still has to be: the seat and the vignette both cover the plain
+  // everywhere, so there is no pixel on the image that is the plain. That was
+  // true before this change and is still true; what changed is which symbol
+  // holds it.
   assert.ok(
-    /fillStyle\s*=\s*P\.skyGround/.test(sky),
-    "the backdrop is not painting P.skyGround as its plain; a substituted colour is uncaught by every canvas check",
+    /fillStyle\s*=\s*sky\.ground/.test(sky),
+    "the backdrop is not painting the phase's ground as its plain; a substituted colour is uncaught by every canvas check",
   );
+
   // And the composition it replaced is what is actually painted: a plain, a
   // seat, and a vignette last.
   const lastFill = sky.lastIndexOf("g.fillStyle = vig");
-  const plainFill = sky.indexOf("g.fillStyle = P.skyGround");
+  const plainFill = sky.indexOf("g.fillStyle = sky.ground");
+  assert.ok(plainFill > 0, "the backdrop is not painting sky.ground as its plain");
   assert.ok(
     lastFill > plainFill,
     "the vignette is drawn before the opaque plain, so the plain paints over it",
   );
 });
 
+test("every phase's sky is made of palette keys, not invented colours", () => {
+  // The invariant this change was nearly wrong about. The first version of the
+  // dusk phase wrote its own `#4a4450` triple, which looked like it belonged to
+  // the town and sat outside every relationship `sky.test.ts` checks between
+  // the seven sky keys — a plain darker than the void, lighter than the haze,
+  // less saturated than the grass behind it. A phase therefore *selects* from
+  // the palette; if one ever stops doing that, the harmony is unearned.
+  // Ramps count too: a phase is free to take any colour the town already has.
+  const palette = new Set<string>(
+    Object.values(P).flatMap((v) => (typeof v === "string" ? [v] : Array.isArray(v) ? [...v] : [])),
+  );
+  for (const phase of DAY_PHASES) {
+    for (const [role, colour] of Object.entries(DAYLIGHT[phase].sky)) {
+      assert.ok(
+        palette.has(colour),
+        `${phase}'s ${role} is ${colour}, which is not a palette key`,
+      );
+    }
+  }
+});
+
+test("each phase is a different plain, and dusk is the one that carries the claim", () => {
+  const grounds = DAY_PHASES.map((p) => DAYLIGHT[p].sky.ground);
+  assert.equal(new Set(grounds).size, DAY_PHASES.length, `two phases share a plain: ${grounds.join(" ")}`);
+  assert.equal(DAYLIGHT.day.lit, false, "daylight lights windows, which is the one thing it must not do");
+  assert.equal(DAYLIGHT.dusk.lit, true);
+  assert.equal(DAYLIGHT.dusk.lamp, "lamp");
+  assert.equal(DAYLIGHT.day.lamp, null, "day carries a lamp ramp it never draws");
+});
+
+test("a phase actually changes the picture, on the canvas", () => {
+  // The one check about time of day that is a property of the *image* rather
+  // than of the code, and so the one that cannot be satisfied by a phase table
+  // that is correct and never read. Two backdrops, same size, same everything
+  // but the phase — and if they came out identical, every colour in
+  // `DAYLIGHT` would be decoration.
+  const seen = new Map<string, string[]>();
+  for (const phase of DAY_PHASES) {
+    const { px, ctx } = backdrop();
+    paintBackdrop(ctx, 200, 200, phase);
+    seen.set(phase, [...px]);
+  }
+  const images = [...seen.values()];
+  for (let i = 0; i < images.length; i++) {
+    for (let j = i + 1; j < images.length; j++) {
+      const a = images[i];
+      const b = images[j];
+      const differing = a.filter((c, k) => c !== b[k]).length;
+      assert.ok(
+        differing > 200,
+        `${DAY_PHASES[i]} and ${DAY_PHASES[j]} render the same backdrop (${differing} pixels differ)`,
+      );
+    }
+  }
+});
+
 test("the vignette is on the canvas, not merely described", () => {
   // The bug this exists for: the backdrop drew the vignette and *then* filled the
   // frame with opaque `skyGround`, so it survived nowhere — and the previous test
+
   // asserted a delta between two palette constants and never touched a canvas.
   //
   // A vignette is a property of the *rendered image*: it darkens the corners

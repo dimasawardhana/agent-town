@@ -26,7 +26,7 @@
 // buildings by file count at all.
 
 import { P, type Ramp } from "./palette";
-import { IsoPix } from "./iso";
+import { IsoPix, type Face } from "./iso";
 import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight, towerTop } from "./stack";
 import { Pix } from "./surface";
@@ -398,7 +398,7 @@ function storeyShell(iso: IsoPix, side: number, skin: BuildingSkin, stage: Stage
   // from the ladder's "one part per rank" reading of a facade: a tower with a
   // single row of windows at the top reads as a mistake, and the band is the
   // only part that repeats, so a per-storey window has to live in it.
-  if (want >= stageRank("glazed")) windows(iso, side, STOREY, side >= 60 ? 3 : 2);
+  if (want >= stageRank("glazed")) windows(iso, side, STOREY, windowsPerStorey(side));
   if (want >= stageRank("completed")) cornerBoards(iso, side, skin);
   if (hasScaffold(stage)) scaffold(iso, side, STOREY + 8);
 }
@@ -708,6 +708,47 @@ function plinth(iso: IsoPix, side: number, skin: BuildingSkin): void {
  * the two faces of one building do not read as a printed pattern.
  */
 function windows(iso: IsoPix, side: number, height: number, count: number): void {
+  const litWall = iso.litWall(side);
+  eachWindow(iso, side, height, count, (wall, at, z, part) => {
+    if (part === "frame") {
+      iso.wallPlot(wall, at, z, P.wood[0]);
+      return;
+    }
+    // One ramp step brighter on the wall that catches the light, because glass
+    // on that wall catches it too; the shadow wall's glass is a step darker
+    // because it faces away from it, like the wall it sits in.
+    iso.wallPlot(wall, at, z, wall === litWall ? P.glass[2] : P.glass[1]);
+  });
+}
+
+/** Which part of a window a pixel belongs to. `frame` is the one-unit edge
+ *  above and below the glass run, and it is what gives the glass an edge
+ *  without a second outline pass. */
+export type WindowPart = "glass" | "frame";
+
+/**
+ * eachWindow walks every window on both visible walls and hands each pixel to
+ * `paint`, with its **absolute** z already resolved.
+ *
+ * **This is the only place a window's position is decided.** `windows` draws
+ * them in glass and the dusk overlay lights a subset of them in lamp. If those
+ * two disagreed by a single unit the light would paint over the wall *beside*
+ * the glass — a warm smear rather than a lit window, which reads as a mistake
+ * at 1x and takes an hour to find. So the placement lives here once, and both
+ * callers walk it. `index` is the window's own number, 1-based, which is what
+ * lets the dusk overlay light a subset without re-deriving where they are.
+ *
+ * The count is per storey and is 2 or 3, so "a subset" is a subset of two or
+ * three: that is the whole variation budget, and it is why three patterns per
+ * storey already read as a different building each.
+ */
+function eachWindow(
+  iso: IsoPix,
+  side: number,
+  height: number,
+  count: number,
+  paint: (wall: Face, at: number, z: number, part: WindowPart, index: number) => void,
+): void {
   const h = Math.max(3, Math.round(height / 5));
   const span = Math.max(2, Math.round(side / 16));
   const y = Math.round(height * 0.45);
@@ -723,21 +764,15 @@ function windows(iso: IsoPix, side: number, height: number, count: number): void
 
   for (let i = 1; i <= count; i++) {
     const at = Math.round(gap * i);
-    // The lit wall, stepped along its own run. One ramp step brighter, because
-    // glass on the wall that catches the light catches it too.
     for (let dx = -span; dx <= span; dx++) {
-      for (let z = 0; z < h; z++) iso.wallPlot(lit, at + dx, y + z, P.glass[2]);
-      // Frame: one darker step above and below, which is what gives the glass
-      // an edge without a second outline pass.
-      iso.wallPlot(lit, at + dx, y - 1, P.wood[0]);
-      iso.wallPlot(lit, at + dx, y + h, P.wood[0]);
+      for (let z = 0; z < h; z++) paint(lit, at + dx, y + z, "glass", i);
+      paint(lit, at + dx, y - 1, "frame", i);
+      paint(lit, at + dx, y + h, "frame", i);
     }
-    // The shadow wall, one ramp step darker because it faces away from the
-    // light, like the wall it sits in.
     for (let dy = -span; dy <= span; dy++) {
-      for (let z = 0; z < h; z++) iso.wallPlot(shadow, at + dy, y + z, P.glass[1]);
-      iso.wallPlot(shadow, at + dy, y - 1, P.wood[0]);
-      iso.wallPlot(shadow, at + dy, y + h, P.wood[0]);
+      for (let z = 0; z < h; z++) paint(shadow, at + dy, y + z, "glass", i);
+      paint(shadow, at + dy, y - 1, "frame", i);
+      paint(shadow, at + dy, y + h, "frame", i);
     }
   }
 }
@@ -868,6 +903,81 @@ export function emptyVerifiedCel(side: number, roof: Archetype, turn = 0): Pix {
 
 export function emptyDamageCel(side: number, roof: Archetype, turn = 0): Pix {
   const box = capBox(side, roof, turn);
+  return new Pix(box.w, box.h);
+}
+
+/** How many lit-window patterns a storey can be in.
+ *
+ *  Three, and the number is the variation budget rather than a choice: a
+ *  storey carries two windows on a small building and three on a large one, so
+ *  three patterns already give every storey a distinguishable arrangement, and
+ *  a fourth would be a pattern no storey could distinguish from one of the
+ *  first three. Patterns are per *storey*, so a tower walks them as it rises
+ *  and no two storeys of one building are lit the same way twice running. */
+export const LIGHT_PATTERNS = 3;
+
+/** Which of a storey's windows each pattern lights, indexed by window count and
+ *  then by pattern. Window numbers are 1-based, matching `eachWindow`'s loop.
+ *
+ *  **Every pattern lights at least one window at every count the town draws.**
+ *  That is the whole reason this is a table and not a modulo: a single-storey
+ *  building is the common case — most directories hold one file — and it has
+ *  exactly one pattern to show, so a pattern that lit nothing would read as a
+ *  building with no glass rather than a building with no light in. */
+const LIT_WINDOWS: Record<number, readonly (readonly number[])[]> = {
+  2: [[1], [2], [1, 2]],
+  3: [[1], [2], [3]],
+};
+
+/** windowsPerStorey is how many windows a footprint carries, per storey. */
+function windowsPerStorey(side: number): number {
+  return side >= 60 ? 3 : 2;
+}
+
+/**
+ * buildWindowLightCel is one storey's lit windows, as an overlay.
+ *
+ * Cut from the *band's* box, which `baseBox` and `bandBox` turn out to be the
+ * same box — measured identical at every footprint and every turn, so one family
+ * of cels serves the ground storey and every storey above it. That is what keeps
+ * this affordable: 3 patterns x 5 footprints x 4 turns is 60 cels, where a second
+ * axis on the base and band themselves would be 400 and would not fit under the
+ * atlas ceiling at all.
+ *
+ * **It is an overlay rather than a variant for the reason the damage marks and
+ * the pennant are.** `setFrame` moves textures without moving sprites, so a mark
+ * and the blank that replaces it must be cut from the same box and agree about
+ * their origin — which is also the exact bug that floated the pennant for a week
+ * (issue 37). One family of origins, one place to be right.
+ *
+ * Only the *glass* is painted. The frame is left alone, so a lit window keeps
+ * its edge instead of becoming a warm rectangle with a hole in the middle of it.
+ */
+export function buildWindowLightCel(
+  side: number,
+  pattern: number,
+  turn = 0,
+  lamp: "lamp" = "lamp",
+): Pix {
+  const box = bandBox(side, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  const count = windowsPerStorey(side);
+  const lit = (LIT_WINDOWS[count] ?? LIT_WINDOWS[2])[pattern % LIGHT_PATTERNS];
+  eachWindow(iso, side, STOREY, count, (wall, at, z, part, index) => {
+    if (part !== "glass") return;
+    if (!lit.includes(index)) return;
+    iso.wallPlot(wall, at, z, P[lamp]);
+  });
+  return iso.outline(P.ink);
+}
+
+/** The blank a storey carries when its windows are not lit.
+ *
+ *  Cut from the same box as the light it stands in for, origin included, for
+ *  the reason every overlay in this project is: a blank with a different origin
+ *  would leave every window a storey out of place the moment the light came on. */
+export function emptyWindowLightCel(side: number, turn = 0): Pix {
+  const box = bandBox(side, turn);
   return new Pix(box.w, box.h);
 }
 
