@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { bandChain, bandTiles, roadsAsLines, turnLayout } from "../src/view";
+import { roadsAsLines, turnLayout } from "../src/view";
 
 // Square, because a wide town turns nearly onto itself and a fixture that
 // barely moves proves nothing about whether the roads moved with it.
@@ -173,117 +173,8 @@ test("a road with no band still comes from its rectangle", () => {
   assert.equal(row.halfWidth, 12, "a row road's width is its thickness");
 });
 
-test("a band paints the tiles it passes through, not the box around it", () => {
-  // A band from (20,20) to (100,100) with a half-width of 4 runs down the
-  // diagonal; the box it came from is 122x122 and covers the whole corner.
-  const tiles = bandTiles(20, 20, 100, 100, 4, 24, 24);
-  const xs = tiles.map((t) => t.wx);
-  const ys = tiles.map((t) => t.wy);
-  const spanX = Math.max(...xs) - Math.min(...xs);
-  const spanY = Math.max(...ys) - Math.min(...ys);
-  assert.ok(spanX < 100 && spanY < 100, `the band reached ${spanX}x${spanY} of tiles`);
-  // And it must be continuous: a road with gaps in it is not a road.
-  tiles.sort((a, b) => a.wy - b.wy || a.wx - b.wx);
-  for (let i = 1; i < tiles.length; i++) {
-    const dx = Math.abs(tiles[i].wx - tiles[i - 1].wx);
-    const dy = Math.abs(tiles[i].wy - tiles[i - 1].wy);
-    assert.ok(dx <= 24 && dy <= 24, `tiles ${tiles[i - 1].wx},${tiles[i - 1].wy} and ${tiles[i].wx},${tiles[i].wy} are not adjacent`);
-  }
-});
 
-test("a band of zero length still terminates", () => {
-  // The degenerate case is the one an unbounded walk hangs on, and it is
-  // reachable: two plots at the same centre cannot happen, but a band whose
-  // endpoints round to the same tile can.
-  //
-  // `tiles.length >= 0` used to stand here. It could not fail, and a test that
-  // cannot fail is a comment with asserts in it — the failure `mutate.mjs`'s
-  // header says must be fixed or written down, not left in the suite.
-  const tiles = bandTiles(50, 50, 50, 50, 4, 16, 16);
-  // Four, not one: (50, 50) sits on the corner where four tiles meet, and a
-  // half-width of 4 genuinely reaches all of them. Asserting one would be
-  // asserting a number I had not checked.
-  //
-  // What is being held is that the walk *terminates* and that it covers the
-  // point it was given. `>= 0` could not fail; both of these can.
-  assert.ok(tiles.length <= 4, `a zero-length band walked ${tiles.length} tiles; the bound is the 2x2 block around the point`);
-  assert.ok(
-    tiles.some((t) => 50 >= t.wx && 50 < t.wx + 16 && 50 >= t.wy && 50 < t.wy + 16),
-    "the band painted no tile containing its own point",
-  );
-});
 
-test("a band shorter than one tile is still a road", () => {
-  // The gap between two plots on this repository is 14 world units and a tile
-  // is 16. Testing whether a tile's *centre* lies within the band paints
-  // nothing here whenever the band straddles a tile boundary — which is most of
-  // the time, and always for the four axis-aligned roads.
-  const tiles = bandTiles(220, 330, 234, 330, 4, 16, 16);
-  assert.ok(tiles.length > 0, "a 14-unit band painted no tiles at all; it is not a road");
-});
 
-test("a band is continuous across tile boundaries", () => {
-  // Every tile the walk returns must touch its neighbour in the chain. A dotted
-  // road is worse than a wide one: a reader sees a dashed line and concludes
-  // there is no connection.
-  // Every tile the walk returns must touch one already reached.
-  //
-  // Eight neighbours, not four. The ground tiles are an isometric diamond
-  // lattice: under the projection a tile at (wx, wy) and one at (wx+16, wy+16)
-  // land directly above one another, so a diagonal band advances by a
-  // diagonal step and a four-neighbour flood fill reports a perfectly
-  // continuous road as forty pieces.
-  const tiles = bandTiles(100, 100, 500, 180, 4, 16, 16);
-  const keys = new Set(tiles.map((t) => `${t.wx},${t.wy}`));
-  const seen = new Set<string>();
-  const queue = [`${tiles[0].wx},${tiles[0].wy}`];
-  const STEPS: [number, number][] = [];
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      if (dx !== 0 || dy !== 0) STEPS.push([dx * 16, dy * 16]);
-    }
-  }
-  while (queue.length > 0) {
-    const key = queue.pop()!;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const [wx, wy] = key.split(",").map(Number);
-    for (const [dx, dy] of STEPS) {
-      const n = `${wx + dx},${wy + dy}`;
-      if (keys.has(n) && !seen.has(n)) queue.push(n);
-    }
-  }
-  assert.equal(seen.size, keys.size, `the band is in ${keys.size - seen.size} pieces, not one`);
-});
 
-test("a band's chain names its two ends, and the outward faces point away", () => {
-  const chain = bandChain(0, 40, 160, 40, 5, 16, 16);
-  assert.ok(chain.length >= 8, `a 160-unit band walked ${chain.length} tiles`);
-  assert.equal(chain.filter((t) => t.isEnd).length, 2, "a straight band must have exactly two ends");
-  assert.equal(chain[0].isEnd, true, "the first tile is not marked as an end");
-  assert.equal(chain[chain.length - 1].isEnd, true, "the last tile is not marked as an end");
-  assert.equal(chain[0].outward, "west", "a band running east does not start against a west face");
-  assert.equal(chain[chain.length - 1].outward, "east", "a band running east does not end against an east face");
-});
 
-test("a band's tiles are contiguous, so the road has no gaps", () => {
-  const chain = bandChain(20, 20, 180, 100, 5, 16, 16);
-  const keys = new Set(chain.map((t) => `${t.wx},${t.wy}`));
-  const first = chain[0];
-  const start = `${first!.wx},${first!.wy}`;
-  const done = new Set<string>();
-  const stack = [start];
-  while (stack.length) {
-    const k = stack.pop()!;
-    if (done.has(k)) continue;
-    done.add(k);
-    const [wx, wy] = k.split(",").map(Number);
-    // Eight neighbours, not four: the ground tiles are a diamond lattice where
-    // (wx+16, wy+16) lands directly below (wx, wy).
-    for (const [dx, dy] of [[16, 0], [-16, 0], [0, 16], [0, -16], [16, 16], [-16, -16], [16, -16], [-16, 16]]) {
-      const n = `${wx + dx},${wy + dy}`;
-      if (keys.has(n) && !done.has(n)) stack.push(n);
-    }
-  }
-  assert.equal(done.size, keys.size, `the band is in ${keys.size - done.size} pieces, not one`);
-});

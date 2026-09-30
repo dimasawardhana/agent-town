@@ -1,5 +1,12 @@
 # Traffic on Import Roads Implementation Plan
 
+> **Superseded.** Executed in full on `feature/liveliness`, then **reverted in
+> `a8c80e8`**: the cars and the import road bands were removed and the import
+> fact moved onto the building as `Site.Imports`. Nothing in this plan ships.
+> The plan is kept because it records what was tried and why it failed, and
+> because the traffic tests it grew are the ones that caught the sprite being
+> unreadable. Do not execute it.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Put a car on every import road, travelling from the importing building to the imported one, so a reader can see which districts are coupled by watching the traffic.

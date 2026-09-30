@@ -17,23 +17,8 @@ const SiteIDBuildingPrefix = "building:"
 // positions, so the layout stays the single source of truth (ADR-0012).
 const (
 	cellPad    = 20.0 // padding inside a district block
-	cellGap    = 14.0 // gap between buildings that do not import each other
+	cellGap    = 14.0 // gap between buildings
 	labelSpace = 30.0 // room for a district label above its buildings
-	// importGap is the gap inside a district that *does* have an import between
-	// two of its own buildings.
-	//
-	// **14 is a seam, not a street, and that is why roads vanished.** A
-	// building's isometric sprite overhangs its own footprint, so at 14 it covered
-	// the seam completely: the band was drawn and then hidden by the buildings on
-	// both sides, and a car read as standing on the corner of a building with no
-	// road under it. At 40 there is a real gap the band is visible in.
-	//
-	// Only districts that need a road pay for it. Widening *every* cell made the
-	// whole town sparser to fix a problem two districts had, and it spread test
-	// districts far enough to trip the inversion guard. Per-district, a town that
-	// imports nothing between its own buildings stays tight — which is what a
-	// 14-unit gap was for.
-	importGap = 40.0
 	// rowGap is the space between one district and the next, in either
 	// direction, and it is what a road is drawn in.
 	//
@@ -384,28 +369,13 @@ func LayoutTown(t *Town) Layout {
 		gaps = gaps[:0]
 	}
 
-	// --- Which districts carry an import ---
-	//
-	// The import edges are resolved *before* any cell is placed, because whether
-	// a district needs a road between its buildings decides how far apart its
-	// buildings stand, and a decision made after placement cannot be applied to
-	// it. Only a district with an edge between two of its own buildings gets the
-	// wide gap; every other district stays tight.
-	//
-	// This is the one place the layout reads the import graph. It reads it to
-	// decide *how much ground a district takes*, not to say anything about what
-	// the import is — the roads themselves are built from the same edge set in
-	// `linkRoads`, so the two cannot disagree.
-	imports, unresolved := importEdges(t)
-
 	for _, d := range t.Districts {
 		buildings := buildingsIn(t, d.Name)
 		if len(buildings) == 0 {
 			continue
 		}
 
-		gap := districtGap(d, imports)
-		w := districtWidth(d, buildings, gap)
+		w := districtWidth(d, buildings)
 
 		// Wrap before placing, not after. Testing the fit after the block has
 		// been emitted would leave a straddling block sitting past the row
@@ -436,9 +406,9 @@ func LayoutTown(t *Town) Layout {
 			gaps = append(gaps, x)
 		}
 
-		blk := placeDistrict(&l, d, buildings, containersIn(t, d.Name), x, y, gap)
+		blk := placeDistrict(&l, d, buildings, containersIn(t, d.Name), x, y)
 
-		x += blk.W + rowGap
+		x += blk.W
 		if blk.H > rowH {
 			rowH = blk.H
 		}
@@ -459,7 +429,7 @@ func LayoutTown(t *Town) Layout {
 	// Import dependency would say far more — "this calls that" rather than
 	// "this sits inside that" — and is out of scope: it is a real analysis the
 	// daemon does not perform. See the spec.
-	linkRoads(imports, unresolved, &l)
+	linkRoads(t, &l)
 
 	// --- Bounds ---
 	//
@@ -494,8 +464,8 @@ func LayoutTown(t *Town) Layout {
 //
 // It exists separately from placeDistrict because the wrap decision has to be
 // made before anything is placed.
-func districtWidth(d District, buildings []Building, gap float64) float64 {
-	_, _, _, _, w, _ := districtBox(d, buildings, gap)
+func districtWidth(d District, buildings []Building) float64 {
+	_, _, _, _, w, _ := districtBox(d, buildings)
 	return w
 }
 
@@ -507,7 +477,7 @@ func districtWidth(d District, buildings []Building, gap float64) float64 {
 // files against src's 9 across 65). Test territory stays visible, because
 // hiding it would be its own lie, but it cannot dominate the site. This is the
 // correction ADR-0012 records.
-func districtBox(d District, buildings []Building, gap float64) (cols, rows int, cellW, cellH, blockW, blockH float64) {
+func districtBox(d District, buildings []Building) (cols, rows int, cellW, cellH, blockW, blockH float64) {
 	n := len(buildings)
 
 	cols = int(math.Ceil(math.Sqrt(float64(n))))
@@ -525,7 +495,7 @@ func districtBox(d District, buildings []Building, gap float64) (cols, rows int,
 			maxH = h
 		}
 	}
-	cellW, cellH = maxW+gap, maxH+gap
+	cellW, cellH = maxW+cellGap, maxH+cellGap
 	rows = int(math.Ceil(float64(n) / float64(cols)))
 
 	// A test district holds many small directories and few files. Sizing it by
@@ -557,8 +527,8 @@ func districtBox(d District, buildings []Building, gap float64) (cols, rows int,
 	//
 	// This changes no building's position within its own cell — the cell grid is
 	// untouched — so the stability property this layout is built on holds.
-	blockW = float64(cols)*cellW - gap*pitch + 2*cellPad
-	blockH = float64(rows)*cellH - gap*pitch + 2*cellPad + labelSpace
+	blockW = float64(cols)*cellW - cellGap*pitch + 2*cellPad
+	blockH = float64(rows)*cellH - cellGap*pitch + 2*cellPad + labelSpace
 	if blockW < maxBuildingFootprint+2*cellPad {
 		blockW = maxBuildingFootprint + 2*cellPad
 	}
@@ -578,8 +548,8 @@ func districtBox(d District, buildings []Building, gap float64) (cols, rows int,
 // given filter value, invisible. With 12 of 18 buildings moving the last time
 // this layout was re-derived for a subset (issue 09), that is the mistake this
 // avoids making twice.
-func placeDistrict(l *Layout, d District, buildings []Building, containers []Container, x, y float64, gap float64) PlacedDistrict {
-	cols, _, cellW, cellH, blockW, blockH := districtBox(d, buildings, gap)
+func placeDistrict(l *Layout, d District, buildings []Building, containers []Container, x, y float64) PlacedDistrict {
+	cols, _, cellW, cellH, blockW, blockH := districtBox(d, buildings)
 
 	pd := PlacedDistrict{Name: d.Name, Kind: d.Kind, X: x, Y: y, W: blockW, H: blockH}
 	l.Districts = append(l.Districts, pd)
@@ -590,8 +560,8 @@ func placeDistrict(l *Layout, d District, buildings []Building, containers []Con
 
 		// Centre each building in its cell so a row of mixed sizes still
 		// reads as a row.
-		bx := x + cellPad + float64(c)*cellW + (cellW-gap-w)/2
-		by := y + labelSpace + cellPad + float64(r)*cellH + (cellH-gap-h)/2
+		bx := x + cellPad + float64(c)*cellW + (cellW-cellGap-w)/2
+		by := y + labelSpace + cellPad + float64(r)*cellH + (cellH-cellGap-h)/2
 
 		l.Sites = append(l.Sites, Site{
 			ID:           "building:" + b.Path,
@@ -701,9 +671,9 @@ func buildingsIn(t *Town, district string) []Building {
 //
 // Both are emitted here rather than in the browser because the layout is the
 // single source of truth for geometry (ADR-0012), and a road the renderer worked
-func linkRoads(imports map[[2]string]bool, unresolved int, l *Layout) {
+func linkRoads(t *Town, l *Layout) {
 	containmentRoads(l)
-	annotateImports(imports, unresolved, l)
+	annotateImports(t, l)
 }
 
 // importEdges resolves which building imports which, once.
@@ -711,30 +681,15 @@ func linkRoads(imports map[[2]string]bool, unresolved int, l *Layout) {
 // Resolved up front and handed to both the placer and the road builder, because
 // the two must not disagree: a district laid out with a road-sized gap and a
 // road that never arrives would be a map claiming a connection it did not draw.
-func importEdges(t *Town) (map[[2]string]bool, int) {
+// importable is the set of building paths the import scanner may resolve to.
+func importable(t *Town) map[string]bool {
 	buildings := map[string]bool{}
 	for _, b := range t.Buildings {
 		if b.Path != "" {
 			buildings[b.Path] = true
 		}
 	}
-	return importEdgesCounting(t.Root, buildings)
-}
-
-// districtGap is the space between a district's own buildings.
-//
-// The wide one for a district that has an import between two of its buildings,
-// because a narrow seam there means the road between them is drawn and then
-// hidden by the isometric sprites on both sides — a road that appears to go under
-// a building. Every other district keeps the tight gap, because buildings that
-// import nothing are neighbours, and neighbours should stand close.
-func districtGap(d District, imports map[[2]string]bool) float64 {
-	for e := range imports {
-		if districtOfPath(e[0]) == d.Name && districtOfPath(e[1]) == d.Name {
-			return importGap
-		}
-	}
-	return cellGap
+	return buildings
 }
 
 // districtOfPath is the district a building path belongs to: its own directory,
@@ -775,7 +730,8 @@ func districtOfPath(path string) string {
 // The edges are still resolved before placement — `districtGap` needs them — and
 // `UnresolvedImports` still counts what the scanner could not resolve, because
 // the absence of a road no longer reports it and something must.
-func annotateImports(edges map[[2]string]bool, unresolved int, l *Layout) {
+func annotateImports(t *Town, l *Layout) {
+	edges, unresolved := importEdgesCounting(t.Root, importable(t))
 	l.UnresolvedImports = unresolved
 
 	// Sorted so the list is the same on every machine, for the same reason the

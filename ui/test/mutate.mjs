@@ -84,13 +84,6 @@ const MUTATIONS = [
     to: "    if (false) {",
     suite: "test:turnroads",
   },
-  {
-    what: "a band paints every tile in the box around it",
-    file: "src/view.ts",
-    from: "      if (segmentRectDistance(ax, ay, bx, by, wx, wy, wx + tileW, wy + tileH) <= half) {",
-    to: "      if (true) {",
-    suite: "test:turnroads",
-  },
 ];
 
 const run = (cmd, cwd) => {

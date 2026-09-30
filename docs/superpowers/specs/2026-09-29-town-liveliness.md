@@ -2,6 +2,26 @@
 
 **Status:** draft for review. Nothing here is built.
 
+> **Amended after the fact, and the amendment is the interesting part.**
+>
+> Feature 1 was built and then removed. The import graph was carried as a road
+> band from one building's plot to the other, with a car on each, and neither
+> carrier survived contact with the map. A connection needs width, a surface, a
+> kerb and ends; once it has all four it collides with the buildings it passes
+> and the roads it crosses. Nine of them were nine slabs across a 600-pixel
+> town. And the cars never worked: four rounds of re-authoring the sprite and a
+> 14-pixel car on that town was never going to say "these districts are
+> coupled" — which is this document's own first paragraph, read back at me.
+>
+> The fact now lives on the building. `Site.Imports` records what a building
+> imports; the map draws a hairline on the importing building's own plot, which
+> cannot cross anything; the panel lists the names, where there is room for
+> them. The *whether* is on the map and the *whom* is in the panel, and the
+> dependency graph's shape is no longer visible at a glance. That is the cost,
+> stated here so nobody re-adds a car expecting it to work.
+>
+> The other four features are untouched and still open.
+
 ## The problem
 
 The town is a good map and a quiet one. Every mark on it is a fact about the

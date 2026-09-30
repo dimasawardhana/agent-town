@@ -1,5 +1,17 @@
 # Roads Are Pieces, Not Lines
 
+> **Partly superseded by `a8c80e8`.** Tier 1 (the per-kind hierarchy) shipped.
+> Tier 2 and Tier 3 were never needed for import roads, because import roads
+> were removed in the same decision: the import fact moved onto the building
+> (`Site.Imports`, a hairline on its plot, a list in the panel). Only containment
+> roads remain, they are quiet seams, and the cap machinery built for them was
+> dead on arrival and has since been deleted.
+>
+> Tier 3 — a network-wide neighbour mask — is still the right answer for
+> *containment* roads if they are ever given a kerb, which they currently are
+> not. Read this as the argument for why a connection is the wrong carrier, not
+> as a plan to execute.
+
 > A plan, written after looking at what we draw and comparing it against how a road
 > is actually drawn. Not for execution yet — the tiers are costed and the call on
 > which to build is the reader's.
