@@ -159,63 +159,65 @@ const H = ARM_H + BASE_H;
  * objects standing next to each other, and the tread rhythm comes from `shade()`
  * rimming the run rather than from alternating characters by hand.
  */
+// Every row is exactly W. They were not: five ran to 34 columns against a
+// 30-wide grid, so the right edge of the machine was being clipped away — the
+// same defect the arm rows had, found again in the place it had been fixed.
+// The cab is a *block*, two rows deep, set to one side and clear of where the
+// arm's foot lands. It used to be a single row of glass along the body's far
+// edge, which in an isometric view is a line seen edge-on — it could not read at
+// any size, and one row of `P.glass` against a rust body is not a window.
+//
+// Under the cab: an engine deck two rows of `y` the full width of the machine,
+// which is what gives the body its top face. Under that: three rows of track,
+// with the middle one a tread so the track reads as wheels rather than a bar.
 const CHASSIS: Record<MachineKind, string[]> = {
-  // A crawler: wide, low, and cab-forward because the boom needs the room.
   excavator: [
-    "..gggggggggggggggggggggggg..",
-    ".tyyyyyyyyyyyyyyyyyyyyyyyyyt.",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "..yyyyyyygggggggggggggggggg...",
+    ".tyyyyyyyyggggggggggggggggggt.",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
     "..tttttttttttttttttttttttttt..",
-    ".ttttttttttttttttttttttttttt.",
-    "..................................",
+    ".utututututututututututututut.",
+    "..tttttttttttttttttttttttttt..",
   ],
-  // Same track, narrower still: the mast does the work, so the body is little
-  // more than a collar around it and does not pretend otherwise.
   crane: [
-    "....gggggggggggggggggg......",
-    "...tyyyyyyyyyyyyyyyyyyyyt....",
-    "..tyyyyyyyyyyyyyyyyyyyyyyt...",
-    "..tttttttttttttttttttttttttt..",
-    "..tututututututututututututu..",
-    "..tttttttttttttttttttttttttt..",
-    "..................................",
+    ".....yyyyyygggggggggggg.......",
+    "....tyyyyyyyggggggggggggt.....",
+    "...tyyyyyyyyyyyyyyyyyyyyyyt...",
+    "...tyyyyyyyyyyyyyyyyyyyyyyt...",
+    "....tttttttttttttttttttttt....",
+    "....ututututututututututut....",
+    "....tttttttttttttttttttttt....",
   ],
-  // Rubber-tyred and low, so the body sits down onto the wheels: the track band
-  // is barely wider than the body and the shoulder almost disappears.
   loader: [
-    "..gggggggggggggggggggggggg..",
-    ".tyyyyyyyyyyyyyyyyyyyyyyyyyt.",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    "..tttttttttttttttttttttttttt..",
-    "..tttttttttttttttttttttttttt..",
-    "..................................",
+    ".yyyyyyygggggggggggggggggg....",
+    "yyyyyyyyyggggggggggggggggggt..",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
+    ".tttttttttttttttttttttttttttt.",
+    ".utututututututututututututut.",
+    ".tttttttttttttttttttttttttttt.",
   ],
-  // An open frame: two posts with a gap between them, which is what a driver's
-  // cab is. The gap is the read — a solid block here would be a van.
   driver: [
-    "..gggggggg....gggggggggg....",
-    ".tyyyyyyyy....tyyyyyyyyyyy...",
-    "tyyyyyyyyy....tyyyyyyyyyyyy..",
-    "tyyyyyyyyy....tyyyyyyyyyyyy..",
-    "...tttttttttt..tttttttttttt...",
-    "...tttttttttt..tttttttttttt...",
-    "..................................",
+    ".yyyyyyyyggggtyyyyyyyygggg....",
+    "tyyyyyyyyyggggtyyyyyyyyyyggggt",
+    "tyyyyyyyyy....tyyyyyyyyyy....t",
+    "tyyyyyyyyy....tyyyyyyyyyy....t",
+    "..tttttttt.....tttttttt.......",
+    "..utututut.....utututut.......",
+    "..tttttttt.....tttttttt.......",
   ],
-  // The widest and lowest of the fleet, and the front-heavy one: a blade
-  // pushes, so the mass sits ahead of where the arm pivots and the track runs
-  // the whole length underneath it.
   dozer: [
-    "..gggggggggggggggggggggggg..",
-    ".tyyyyyyyyyyyyyyyyyyyyyyyyyt.",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    ".ttttttttttttttttttttttttttt.",
-    ".ttttttttttttttttttttttttttt.",
-    "..................................",
+    "..yyyyyyyygggggggggggggg......",
+    ".tyyyyyyyyyggggggggggggggt....",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
+    ".tttttttttttttttttttttttttttt.",
+    ".utututututututututututututut.",
+    ".tttttttttttttttttttttttttttt.",
   ],
 };
+
 /**
  * The arm, per kind per pose. Thirteen rows of the whole drawing.
  *
