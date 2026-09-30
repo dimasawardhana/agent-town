@@ -17,18 +17,28 @@ const SiteIDBuildingPrefix = "building:"
 // positions, so the layout stays the single source of truth (ADR-0012).
 const (
 	cellPad    = 20.0 // padding inside a district block
-	cellGap    = 14.0 // gap between buildings
+	cellGap    = 40.0 // gap between buildings
 	labelSpace = 30.0 // room for a district label above its buildings
 	// rowGap is the space between one district and the next, in either
 	// direction, and it is what a road is drawn in.
 	//
-	// It was 28 against a cellGap of 14 — a 2:1 ratio, which does not read as
-	// a section boundary. At that separation the districts were a field of
-	// buildings with slightly wider seams, and a reader could not tell where one
-	// district ended and the next began without reading the labels. The ratio is
-	// what carries the hierarchy, so it is now 64 against 14: buildings stay
+	// It was 28 against a cellGap of 14 — a 2:1 ratio, which did not read as
+	// a section boundary. The ratio carries the hierarchy: buildings stay
 	// neighbours, districts become quarters, and the road has room to be a road
 	// rather than a stripe.
+	//
+	// **cellGap was 14, and that is why roads vanished.** 14 units is a seam, not
+	// a street: a building's isometric sprite overhangs its own footprint and
+	// covers the seam completely, so an import band drawn across it was never
+	// visible — the car read as standing on the corner of a building with no road
+	// under it. At 40 there is a real gap, the band is visible threading between
+	// two plots, and a car has somewhere to drive.
+	//
+	// Widening the cell also spreads a test district further, which let it
+	// outrank the code it covers: the worst inversion went 3.0 → 4.32 and tripped
+	// `TestTestDistrictInversionIsBoundedAndKnown`. `testPitch` is the
+	// compensating knob and it takes the ratio back to 2.92. The two constants are
+	// coupled, and moving one without the other is exactly what that guard is for.
 	rowGap   = 64.0   // gap between districts, and the width of the road
 	maxRowW  = 1400.0 // target row width; a busy row may exceed it
 	rowStart = 40.0   // left margin, and where each new row begins
@@ -36,7 +46,13 @@ const (
 	// testPitch tightens a test district's cell spacing. Below 1 so a sprawl
 	// of one-file spec directories reads as a compact cluster rather than
 	// outranking the code it covers.
-	testPitch = 0.7
+	//
+	// It was 0.7, and it came down to 0.55 because `cellGap` went up. The two
+	// are one knob seen from two sides: a wider cell spreads every district, and
+	// a test district spread too far outranks the source it covers. Widening the
+	// cell without tightening this is exactly the regression the inversion guard
+	// is there to catch.
+	testPitch = 0.55
 )
 
 // maxBuildingFootprint is the largest cel the atlas bakes, and therefore the
