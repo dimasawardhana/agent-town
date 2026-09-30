@@ -51,7 +51,7 @@ A car cannot be placed until the road says which end is the importer. Today `Roa
   }
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `internal/analyzer/layout_test.go`:
 
@@ -107,12 +107,12 @@ func TestImportRoadsCarryTheirDirection(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/analyzer/ -run TestImportRoadsCarryTheirDirection -v -count=1`
 Expected: FAIL — `r.From undefined (type Road has no field or method From)`.
 
-- [ ] **Step 3: Add the fields to `Road`**
+- [x] **Step 3: Add the fields to `Road`**
 
 In `internal/analyzer/layout.go`, replace the `Roads` field's struct with the struct shown in the Interfaces block. Use this doc comment verbatim:
 
@@ -132,7 +132,7 @@ In `internal/analyzer/layout.go`, replace the `Roads` field's struct with the st
 	To   string `json:"to,omitempty"`
 ```
 
-- [ ] **Step 4: Emit the direction where import roads are built**
+- [x] **Step 4: Emit the direction where import roads are built**
 
 The import road is built in **`internal/analyzer/layout.go`**, not in `imports.go`, inside the function `importRoads(root string, l *Layout)` (declared at `layout.go:651`). Its loop is already over ordered pairs, and the ordering is already the direction:
 
@@ -160,17 +160,17 @@ The import road is built in **`internal/analyzer/layout.go`**, not in `imports.g
 
 `pairs` is sorted before the loop (`sort.Slice` on `[0]` then `[1]`), so the direction is deterministic and adding these fields cannot reorder anything. **This is the only place a `Kind: "import"` road is constructed** — `grep -rn '"import"' internal/analyzer/` returns this literal and four test assertions, and no other production site.
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `go test ./internal/analyzer/ -run TestImportRoadsCarryTheirDirection -v -count=1`
 Expected: PASS.
 
-- [ ] **Step 6: Run the whole Go suite**
+- [x] **Step 6: Run the whole Go suite**
 
 Run: `go test ./... -count=1 && gofmt -l ./internal/`
 Expected: all packages `ok`, gofmt prints nothing.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/analyzer/layout.go internal/analyzer/layout_test.go
@@ -207,7 +207,7 @@ The wire type gains a field, and the thing that turns a `Road` into a `RoadLine`
   }
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `ui/test/turnroads.test.ts`:
 
@@ -234,12 +234,12 @@ Add at the top of the file if not already present:
 import { roadsAsLines } from "../src/view";
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: FAIL — `lines[0].from` is `undefined`, `expected 'ui/src'`.
 
-- [ ] **Step 3: Add the fields to the types and pass them through**
+- [x] **Step 3: Add the fields to the types and pass them through**
 
 In `ui/src/view.ts`, extend `RoadLine` with the optional `from`/`to` shown in Interfaces, and change the signature of `roadsAsLines` to accept the fields:
 
@@ -269,17 +269,17 @@ In `ui/src/store.ts`, add to the `Road` interface:
   to?: string;
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: PASS.
 
-- [ ] **Step 5: Run the whole UI suite**
+- [x] **Step 5: Run the whole UI suite**
 
 Run: `cd ui && npm test`
 Expected: every suite green, `ℹ fail 0` for each.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ui/src/view.ts ui/src/store.ts ui/test/turnroads.test.ts
@@ -320,7 +320,7 @@ every reload, and two clients watching the same town would draw different traffi
   }
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `ui/test/traffic.test.ts`:
 
@@ -367,7 +367,7 @@ test("a road with no importer carries no car", () => {
 });
 ```
 
-- [ ] **Step 2: Register the suite and run it to verify it fails**
+- [x] **Step 2: Register the suite and run it to verify it fails**
 
 Add to `ui/package.json` scripts:
 ```json
@@ -380,7 +380,7 @@ Add `ui-traffic.test.mjs` to `.gitignore`.
 Run: `cd ui && npm run test:traffic`
 Expected: FAIL — `Cannot find module '../src/traffic'`.
 
-- [ ] **Step 3: Write `ui/src/traffic.ts`**
+- [x] **Step 3: Write `ui/src/traffic.ts`**
 
 ```ts
 // Cars on import roads.
@@ -503,12 +503,12 @@ export class Traffic {
 > nothing, which is a silent failure and the reason the conversion is spelled out
 > rather than left to the reader.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd ui && npm run test:traffic`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ui/src/traffic.ts ui/test/traffic.test.ts ui/package.json .gitignore
@@ -535,7 +535,7 @@ to the chimneys and the embers, and makes it survive a turn.
 - Consumes: `Traffic` from task 3; `roadsAsLines(...)` and `this.project` already present in `scene.ts`.
 - Produces: a `private traffic: Traffic | null` field on the town scene.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 This cannot be asserted headlessly — it is a renderer wiring change. Assert the
 *invariant* instead, in `ui/test/traffic.test.ts`:
@@ -556,14 +556,14 @@ test("a car costs the atlas nothing", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails or passes honestly**
+- [x] **Step 2: Run it to verify it fails or passes honestly**
 
 Run: `cd ui && npm run test:traffic`
 Expected: PASS — and that is the correct outcome, because the assertion is about
 the *absence* of a regression that has not happened. **If it fails, a car has been
 baked; stop and find out where.**
 
-- [ ] **Step 3: Wire the layer into the scene**
+- [x] **Step 3: Wire the layer into the scene**
 
 In `ui/src/scene.ts`:
 
@@ -588,7 +588,7 @@ In `ui/src/scene.ts`:
    this.traffic?.update(this.time.now);
    ```
 
-- [ ] **Step 4: Verify the whole UI suite and the type check**
+- [x] **Step 4: Verify the whole UI suite and the type check**
 
 Run:
 ```bash
@@ -596,7 +596,7 @@ cd ui && ./node_modules/.bin/tsc --noEmit -p tsconfig.json && npm test
 ```
 Expected: clean, every suite green.
 
-- [ ] **Step 5: Look at it**
+- [x] **Step 5: Look at it**
 
 ```bash
 cd ui && ./node_modules/.bin/vite build && cd .. && go install ./cmd/townd
@@ -627,7 +627,7 @@ every car removed.
 > jq '.projects[].layout.roads[] | select(.kind=="import")'` will show whether the
 > daemon is emitting them at all.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ui/src/scene.ts ui/test/traffic.test.ts
@@ -651,7 +651,7 @@ by a car that does not move. This breaks it deliberately.
 - Consumes: the runner's existing shape — an array of `{ what, file, from, to, suite }`.
 - Produces: two new entries in that array.
 
-- [ ] **Step 1: Add the mutations**
+- [x] **Step 1: Add the mutations**
 
 Append to the `MUTATIONS` array in `ui/test/mutate.mjs`:
 
@@ -672,7 +672,7 @@ Append to the `MUTATIONS` array in `ui/test/mutate.mjs`:
   },
 ```
 
-- [ ] **Step 2: Run the mutation runner**
+- [x] **Step 2: Run the mutation runner**
 
 Run: `cd ui && npm run test:mutate`
 Expected: **8 mutations · 8 caught · 0 unaccounted for.**
@@ -682,13 +682,13 @@ missing — add it to `ui/test/traffic.test.ts` and run again. Do not add
 `survives: true` to make the runner green; that escape hatch exists for a
 *recorded* limit, and this is a defect.
 
-- [ ] **Step 3: Confirm the tree is unchanged after the run**
+- [x] **Step 3: Confirm the tree is unchanged after the run**
 
 Run: `git status --porcelain`
 Expected: no output. The runner restores every file it mutates; a modified file
 here means a mutation's anchor text did not match and it was skipped as `STALE`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ui/test/mutate.mjs
@@ -734,3 +734,41 @@ a claim against the tree rather than by re-reading it:
 4. **A duplicated `fillStyle` line was documented as a wart to remove in task 4,
    and task 4 had no such step.** Rather than leave a promise the plan does not
    keep, the duplicate is gone and the reason the body is flat is a comment.
+
+## What actually differed, executing this
+
+Every box above is ticked, but six steps did not run as written. Recorded here
+because ticking a box that does not describe what happened is the same defect
+this repository's `commenttruth` exists to catch, applied to a plan.
+
+1. **`RoadLine` is `{ax, ay, bx, by, halfWidth}`**, not the `{a: Point, b: Point}`
+   the Interfaces block shows. Every fixture in task 3 was corrected.
+2. **`Phaser.Display.Color.HexStringToColor` cannot be used.** Every other
+   `src/` module lets Phaser tree-shake away, which is *why* these suites run
+   under `node --test`; reaching for it for one value drags in the browser build,
+   which touches `window` while initialising. Used
+   `Number.parseInt(hex.slice(1), 16)`, the form `scene.ts` and `workers.ts`
+   already use.
+3. **Task 4's depth is per-car, not a `DEPTH.traffic` constant.** The plan says
+   to find the value by looking; looking showed road bands are painted into the
+   *ground texture*, so a car is a ground-plane object and has to sort among the
+   buildings by screen position. The town spans thousands of pixels of y, so no
+   constant can be right.
+4. **Task 5's car is 14×5 in a new `P.traffic`, not 6×2 in `P.metal[2]`.** At
+   6×2 in the metal ramp — the value of a building's own windows — nine cars
+   looked identical to no cars at all. Measured: 32 visible pixels per frame
+   before, 154 after.
+5. **`drivenRoads` was extracted out of `sync`.** The plan's own containment
+   mutation *survived* as written, because the filter was only reachable through
+   a constructor needing a live scene. The plan said a survivor is a defect to
+   be fixed, not recorded.
+6. **`CYCLE_MS` was a fixed 9000 under a comment claiming the opposite.** The
+   liveliness spec asks for "a speed tied to the road's length"; a later review
+   found the constant never was. Now proportional, with a 1500ms floor.
+
+Two further defects were found only by looking at the rendered town, which is
+the check the plan asked for and the one most easily skipped: the car's centred
+rectangle started at a half-pixel and antialiased into something that literally
+looked like two lines, and `roadsAsLines` took `b` as the midpoint of the near
+edge, which made the line's length a function of the road's *thickness* — a
+53px road produced a 2.2px line.

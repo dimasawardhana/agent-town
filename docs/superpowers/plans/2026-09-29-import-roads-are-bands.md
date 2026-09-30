@@ -108,7 +108,7 @@ which is not a thing this analyzer knows.
   func bandBetween(from, to Site) (ax, ay, bx, by float64)
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `internal/analyzer/layout_test.go`. `TestRowRoadsDoNotRunOverAPlacing`-style precedent exists at line 1056; this is the same invariant for import roads.
 
@@ -195,16 +195,16 @@ func bandCrosses(r Road, s Site, half float64) bool {
 
 Add `"math"` to the test file's import block if it is not already there.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/analyzer/ -run TestImportRoadsCrossNoOtherBuilding -v -count=1`
 Expected: FAIL — `r.Ax undefined (type Road has no field or method Ax)`.
 
-- [ ] **Step 3: Add the four fields to `Road`**
+- [x] **Step 3: Add the four fields to `Road`**
 
 Replace the struct at `layout.go:148-172` with the one in the Interfaces block. Use the doc comment verbatim. **`X/Y/W/H` keep their existing meaning** — the road's extent — and are still what `turnLayout` and the camera bounds read.
 
-- [ ] **Step 4: Write `bandBetween`**
+- [x] **Step 4: Write `bandBetween`**
 
 Place it immediately above `importRoads` in `layout.go`:
 
@@ -260,7 +260,7 @@ func bandBetween(from, to Site) (ax, ay, bx, by float64) {
 }
 ```
 
-- [ ] **Step 5: Emit the band and derive the extent from it**
+- [x] **Step 5: Emit the band and derive the extent from it**
 
 In `importRoads`, replace the literal at `layout.go:699-706` with:
 
@@ -285,7 +285,7 @@ In `importRoads`, replace the literal at `layout.go:699-706` with:
 
 The extent is now the **band's** bounding box rather than the centre-to-centre box, so every downstream rect consumer shrinks along with it. The road gets narrower and shorter at the same time, which is the point.
 
-- [ ] **Step 6: Add the test that keeps the extent honest**
+- [x] **Step 6: Add the test that keeps the extent honest**
 
 Append to `internal/analyzer/layout_test.go`:
 
@@ -321,17 +321,17 @@ func TestARoadsExtentIsItsBand(t *testing.T) {
 
 `Analyze("..")` is the repository root, which is what `TestImportRoadsOnThisRepository` (line 1201) already does — copy its exact argument if it differs.
 
-- [ ] **Step 7: Run the analyzer suite**
+- [x] **Step 7: Run the analyzer suite**
 
 Run: `go test ./internal/analyzer/ -count=1`
 Expected: all `ok`. `TestImportRoadsOnThisRepository` counts roads and asserts extents are positive; both still hold.
 
-- [ ] **Step 8: Run the whole Go suite and gofmt**
+- [x] **Step 8: Run the whole Go suite and gofmt**
 
 Run: `go test ./... -count=1 && gofmt -l ./internal/`
 Expected: all packages `ok`, gofmt prints nothing.
 
-- [ ] **Step 9: Measure the change, and record it**
+- [x] **Step 9: Measure the change, and record it**
 
 Run:
 ```bash
@@ -339,7 +339,7 @@ go run ./cmd/analyze --dir . > /tmp/after.txt
 ```
 Expected: the nine import roads' painted area drops from 102,920 to about 3,813 square units. Put the number in the commit body. A change to every road on the map that is not measured is a guess.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add internal/analyzer/layout.go internal/analyzer/layout_test.go
@@ -367,7 +367,7 @@ the two it connects."
 - Consumes: `ax/ay/bx/by` from task 1.
 - Produces: a turned layout whose bands are turned and shifted exactly as the rects are.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `ui/test/turnroads.test.ts`:
 
@@ -391,12 +391,12 @@ test("a turn carries the road's band with it", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: FAIL — `after.ax` is `undefined`.
 
-- [ ] **Step 3: Turn the band**
+- [x] **Step 3: Turn the band**
 
 In `ui/src/view.ts`, add a helper beside `turnRect`:
 
@@ -437,17 +437,17 @@ const move = <R extends WorldRect & { ax?: number; ay?: number; bx?: number; by?
 
 **The shift must be applied to the band as well as the rect.** A band left unshifted is a road drawn 400 pixels from where the layout says it is — visible, plausible, and wrong.
 
-- [ ] **Step 4: Run the turnroads suite**
+- [x] **Step 4: Run the turnroads suite**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: PASS.
 
-- [ ] **Step 5: Run the UI suite and typecheck**
+- [x] **Step 5: Run the UI suite and typecheck**
 
 Run: `cd ui && ./node_modules/.bin/tsc --noEmit -p tsconfig.json && npm test`
 Expected: clean, every suite green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ui/src/view.ts ui/test/turnroads.test.ts
@@ -478,7 +478,7 @@ and nothing says so."
   }
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `ui/test/turnroads.test.ts`:
 
@@ -506,12 +506,12 @@ test("a road line follows the band, not the rectangle around it", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: FAIL — the line still spans the rectangle.
 
-- [ ] **Step 3: Project the band when there is one**
+- [x] **Step 3: Project the band when there is one**
 
 In `roadsAsLines`, change the parameter type to accept the band, and branch:
 
@@ -555,17 +555,17 @@ const CONTAINMENT_BAND = 8.0;
 
 If the analyzer's two band widths are in fact the same constant, say so in the comment and use one.
 
-- [ ] **Step 4: Run the turnroads suite**
+- [x] **Step 4: Run the turnroads suite**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: PASS.
 
-- [ ] **Step 5: Run the routing suite**
+- [x] **Step 5: Run the routing suite**
 
 Run: `cd ui && npm run test:routing`
 Expected: PASS. `routing.test.ts` builds its own fixtures through `roadsAsLines`, so this is where a wrong `halfWidth` shows up.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ui/src/view.ts ui/test/turnroads.test.ts
@@ -587,7 +587,7 @@ joins — and everything else is drawn as the line the daemon sent."
 - Consumes: `ax/ay/bx/by` on `Layout["roads"]`, projected by `toCanvas`.
 - Produces: the same ground texture, with bands painted along their line.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `paintRoads` is private and needs a scene, so test the pure part: which tiles a band covers. Add to `ui/src/view.ts` an exported helper, and test that.
 
@@ -613,12 +613,12 @@ test("a band paints the tiles it passes through, not the box around it", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cd ui && npm run test:turnroads`
 Expected: FAIL — `bandTiles` is not exported.
 
-- [ ] **Step 3: Write `bandTiles` in `view.ts`**
+- [x] **Step 3: Write `bandTiles` in `view.ts`**
 
 ```ts
 /** bandTiles is every ground tile a band of the given half-width passes through.
@@ -671,7 +671,7 @@ the block is valid TypeScript as written.
 
 **The `x0/x1/y0/y1` bound is load-bearing.** Without it a band with `len2 === 0` loops once and a band with a tiny extent still walks its whole box — which is the cost this plan exists to remove.
 
-- [ ] **Step 4: Use it in `paintRoads`**
+- [x] **Step 4: Use it in `paintRoads`**
 
 In `scene.ts`, inside the `for (const r of l.roads ?? [])` loop at `scene.ts:647`, branch before the tile grid:
 
@@ -694,12 +694,12 @@ In `scene.ts`, inside the `for (const r of l.roads ?? [])` loop at `scene.ts:647
 
 **No kerb piece for a band.** `onEdge` picks a frame by comparing against a rectangle's faces, and a line has no faces. A band whose end tile got a kerb would show a kerb across its middle. The band's ends are inside the gaps between plots, where the surrounding tile already reads as an edge.
 
-- [ ] **Step 5: Run the UI suite and typecheck**
+- [x] **Step 5: Run the UI suite and typecheck**
 
 Run: `cd ui && ./node_modules/.bin/tsc --noEmit -p tsconfig.json && npm test`
 Expected: clean, every suite green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ui/src/view.ts ui/src/scene.ts ui/test/turnroads.test.ts
@@ -719,7 +719,7 @@ and lets the surrounding tile read as the edge."
 - Modify: none expected. `traffic.ts` already reads `RoadLine.ax/ay/bx/by` and needs no change.
 - Test: `ui/test/traffic.test.ts` (unchanged unless a name moved)
 
-- [ ] **Step 1: Build and run, then look**
+- [x] **Step 1: Build and run, then look**
 
 ```bash
 cd ui && ./node_modules/.bin/vite build && cd .. && go install ./cmd/townd
@@ -733,7 +733,7 @@ Open `http://127.0.0.1:7851` and confirm:
 - cars move along the bands;
 - cars are **visible** — the whole reason this plan exists.
 
-- [ ] **Step 2: Measure the visibility, because "look at it" is not a number**
+- [x] **Step 2: Measure the visibility, because "look at it" is not a number**
 
 In the page console, with the town's scene reachable as the traffic layer holds:
 
@@ -756,7 +756,7 @@ console.log('mean visible car pixels:', (total / samples).toFixed(0));
 
 **Before this plan: 80. A result at or below 80 means the band is trimmed but the cars are still hidden — stop and find out why rather than recording a win.**
 
-- [ ] **Step 3: Commit anything this task changed**
+- [x] **Step 3: Commit anything this task changed**
 
 If nothing changed, there is nothing to commit. Do not manufacture a commit.
 
@@ -767,7 +767,7 @@ If nothing changed, there is nothing to commit. Do not manufacture a commit.
 **Files:**
 - Modify: `ui/test/mutate.mjs`
 
-- [ ] **Step 1: Add the mutations**
+- [x] **Step 1: Add the mutations**
 
 Append to the `MUTATIONS` array in `ui/test/mutate.mjs`:
 
@@ -790,19 +790,19 @@ Append to the `MUTATIONS` array in `ui/test/mutate.mjs`:
 
 The first mutates the branch in `roadsAsLines` back to the rectangle; the second makes `bandTiles` accept every tile in the box.
 
-- [ ] **Step 2: Run the mutation runner**
+- [x] **Step 2: Run the mutation runner**
 
 Run: `cd ui && npm run test:mutate`
 Expected: **10 mutations · 10 caught · 0 unaccounted for.**
 
 If either reports `SURVIVES`, the assertion it should have broken is missing — add it to `ui/test/turnroads.test.ts` and run again. Do not add `survives: true` to make the runner green; that escape hatch exists for a *recorded* limit, and this is a defect.
 
-- [ ] **Step 3: Confirm the tree is unchanged after the run**
+- [x] **Step 3: Confirm the tree is unchanged after the run**
 
 Run: `git status --porcelain`
 Expected: no output. A modified file means a mutation's anchor text did not match and it was skipped as `STALE`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ui/test/mutate.mjs
@@ -827,3 +827,46 @@ remove."
 - **No new atlas cels.** Road tiles are reused.
 
 **The one number this plan could not pre-compute** is task 5 step 2's visible-car-pixel count. Everything else in this document was measured against this repository before the plan was written; that one depends on the renderer, so it is specified as a threshold with a stop condition rather than an expected value.
+
+## What actually differed, executing this
+
+Every box above is ticked. Five steps did not run as written, and one piece of
+work was finished outside this plan.
+
+1. **`bandTiles` does not test a tile's centre.** The plan's version walks the
+   tiles whose centre lies within `half` of the line. A band is 8 world units
+   and a tile is 16, so most tiles along it are skipped and a 14-unit band — the
+   real gap between two plots — paints nothing half the time. Replaced with an
+   exact segment-to-rectangle distance, which is also the only way to get the
+   *crossing* case: measuring only corners and endpoints leaves a hole wherever
+   the line runs straight through a tile, and the first fix did exactly that,
+   producing one band in five disconnected pieces.
+2. **Liang-Barsky clipping was not anticipated.** `segmentRectDistance` needs
+   it, and its absence is what point 1's first fix got wrong.
+3. **Two band constants, not one derived number.** `BAND_HALF_WORLD` (4 world
+   units) and `BAND_HALF_PX` (4 picture pixels) are written out separately. They
+   are equal today and deliberately not computed from one another: the browser
+   may not re-derive geometry from the layout (ADR-0012), and a number that
+   looks computed but is really a constant is one that gets computed differently
+   somewhere else.
+4. **The connectivity test uses eight neighbours, not four.** The ground tiles
+   are an isometric diamond lattice where `(wx+16, wy+16)` lands directly below
+   `(wx, wy)`, so a four-neighbour flood fill reports a continuous road as forty
+   pieces.
+5. **The headline figure was wrong and was corrected before execution.** This
+   document first said 3,044 square units and 33.8×; the measured values are
+   **3,813** and **27×**. The first `bandBetween` written — picking the exit face
+   by endpoint — returns a plot's *centre* for half the roads and gives 13,163,
+   which is how the error surfaced. The slab-exit form in this plan is correct.
+
+**Containment roads were not converted by this plan.** It deferred them as "its
+own ticket", and that ticket — `a66176a` — took containment from 71,568 square
+units to 4,081 and removed the last bounding box from the layout. The whole
+town's road area is now 53,462 against 174,488.
+
+**Task 5's stop condition fired and was passed.** The plan says a visible-car
+measurement at or below 80 means stop and find out why; it measured 113. A later
+question — whether the remaining third of a car's path over unpainted ground was
+a defect — turned out to be a measurement artefact: the exact centre line lands
+on road 64% of the time, and road is present within 10px **100%** of the time,
+because the ground tiles are diamonds with transparent corners.

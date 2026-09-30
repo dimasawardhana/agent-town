@@ -29,13 +29,25 @@ silhouette long before it is read by its detail:
 | mover | direction | colour | what it says |
 |---|---|---|---|
 | **machine** | *toward* a building | its own material | an agent is working there |
-| **car** | *along* an import road, importer → imported | neutral | this building uses that one |
+| **car** | *along* an import road, importer → imported | its own signal colour, warmer than any material | this building uses that one |
 | **figure** | *out of* a building, toward the Yard | the failure colour | this building is failing, and has been N times |
 
 Three populations, three directions, and **the machine is the only one that means
 an agent.** That is the load-bearing property: a reader who can identify the
 machine can always answer "is an agent working here", which is the question the
 map exists to answer.
+
+**The car is not neutral, and that is a measured decision rather than a taste
+one.** The word above used to be "neutral", on the reasoning that a car is not a
+claim about an agent and should not look like one. Built neutral — in the
+palette's own metal — nine cars on nine roads produced a town that looked
+exactly like one with no traffic at all, because a car in the metal ramp is the
+value of a building's own windows and reads as part of the wall it passes. The
+car now has one colour of its own, lighter than every material in the palette,
+because separating it at a handful of pixels is the whole job. It stays short
+of `accent`, which is the chief's flag and the panel's live-state marks: a car
+wearing that would read as a session badge. The load-bearing property above is
+unharmed — the machine is still the only mover that means an agent.
 
 ## The five features
 
