@@ -119,13 +119,17 @@ test("a car is not painted in a colour a building is painted in", () => {
 });
 
 test("a car costs the atlas nothing", () => {
-  // Traffic is generated, so it must not appear in the bake. If a car ever gets
-  // baked it comes out of a budget with 135 spare, and this is the assertion
-  // that says so before anyone notices the count.
+  // Traffic is generated, so it must not appear in the bake. If a car ever got
+  // baked it would come out of a budget with 135 spare.
+  //
+  // Asserted as a *count*, not as `startsWith("car:")`. The bake's prefixes are
+  // g, ge, m, p, s44…s100, band, base, cap, bdmg, dmg and vf — a baked car
+  // would be `p:car:0` or `c:car:0`, neither of which starts with "car:", so
+  // the filter version could never match anything and could never fail. A
+  // recorded total is falsifiable in both directions: a new cel of any kind
+  // fails here, and that is the point — the atlas is budgeted, and a car
+  // sneaking into it is a budget change that has to be argued for.
   const keys = bakedCels(0).map((c) => c.key);
-  assert.equal(
-    keys.filter((k) => k.startsWith("car:")).length,
-    0,
-    "a car was baked into the atlas; traffic is generated and must not cost cels",
-  );
+  assert.equal(keys.length, 1125, `the atlas holds ${keys.length} cels; a car has been baked into it`);
+  assert.equal(keys.filter((k) => k.includes("car")).length, 0, "a baked key mentions a car");
 });

@@ -771,8 +771,8 @@ func importRoads(root string, l *Layout) {
 // which buildings import which, not how traffic would go. A straight band
 // between two plot edges is the one thing it can say without inventing.
 func bandBetween(from, to Site) (ax, ay, bx, by float64) {
-	fx, fy := from.X+from.W/2, from.Y+from.H/2
-	tx, ty := to.X+to.W/2, to.Y+to.H/2
+	fx, fy := siteCentre(from)
+	tx, ty := siteCentre(to)
 	dx, dy := tx-fx, ty-fy
 	d := math.Hypot(dx, dy)
 	if d < 1e-9 {
@@ -789,7 +789,7 @@ func bandBetween(from, to Site) (ax, ay, bx, by float64) {
 	//
 	// dir is +1 for the plot the ray leaves and -1 for the plot it enters.
 	exit := func(s Site, dir float64) (float64, float64) {
-		cx, cy := s.X+s.W/2, s.Y+s.H/2
+		cx, cy := siteCentre(s)
 		t := math.Inf(1)
 		if math.Abs(ux) > 1e-9 {
 			t = math.Min(t, (s.W/2)/math.Abs(ux))
@@ -805,6 +805,15 @@ func bandBetween(from, to Site) (ax, ay, bx, by float64) {
 	aX, aY := exit(from, 1)
 	bX, bY := exit(to, -1)
 	return aX, aY, bX, bY
+}
+
+// siteCentre is the middle of a plot's footprint.
+//
+// Named because a band is computed from two centres and the slab exit needs one
+// of them again per end, and writing `s.X + s.W/2` in three places is how the
+// same expression ends up meaning two things.
+func siteCentre(s Site) (x, y float64) {
+	return s.X + s.W/2, s.Y + s.H/2
 }
 
 // containmentRoads adds a band from every nested building to the building that
