@@ -1139,7 +1139,23 @@ func TestContainmentRoadsUseTheNearestAncestor(t *testing.T) {
 
 // An import road is a claim, so the test is about what the scanner refuses to
 // claim as much as what it draws.
-func TestImportRoadsOnlyBetweenRealBuildings(t *testing.T) {
+// importEdgesOf is the import graph as the layout now carries it: one entry per
+// (importer, imported) pair, read off the sites rather than off drawn roads.
+//
+// The tests below used to count roads of Kind "import". They now count this,
+// which is the same fact — a road between two buildings *was* an import edge —
+// stated on the building that owns it.
+func importEdgesOf(l Layout) [][2]string {
+	var out [][2]string
+	for _, s := range l.Sites {
+		for _, to := range s.Imports {
+			out = append(out, [2]string{s.Path, to})
+		}
+	}
+	return out
+}
+
+func TestImportsOnlyNameRealBuildings(t *testing.T) {
 	root := t.TempDir()
 	mk := func(rel, body string) {
 		full := filepath.Join(root, rel)
@@ -1174,32 +1190,22 @@ func TestImportRoadsOnlyBetweenRealBuildings(t *testing.T) {
 		known[s.Path] = s.Kind == PlaceBuilding
 	}
 
-	var imports [][2]bool
-	for _, r := range l.Roads {
-		if r.Kind == "import" {
-			imports = append(imports, [2]bool{r.W > 0, r.H > 0})
-		}
-	}
+	imports := importEdgesOf(l)
 	// web -> store and ui/src -> ui/shared are the only two that resolve.
 	if len(imports) != 2 {
-		var kinds []string
-		for _, r := range l.Roads {
-			kinds = append(kinds, r.Kind)
-		}
-		t.Errorf("import roads = %d, want 2; every road was %v", len(imports), kinds)
+		t.Errorf("import edges = %v, want 2: web->store and ui/src->ui/shared", imports)
 	}
-	// And every one must be a real, positive band.
-	for _, i := range imports {
-		if !i[0] || !i[1] {
-			t.Errorf("an import road has no extent: %+v", i)
+	// And every one must name a building that exists.
+	for _, e := range imports {
+		if !known[e[0]] || !known[e[1]] {
+			t.Errorf("an import names something that is not a building: %v", e)
 		}
 	}
-	_ = known
 }
 
 // The repository this is written in imports across buildings, so the rule has to
 // hold on a real tree and not only on a fixture.
-func TestImportRoadsOnThisRepository(t *testing.T) {
+func TestImportEdgesOnThisRepository(t *testing.T) {
 	town, err := Analyze("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -1210,18 +1216,16 @@ func TestImportRoadsOnThisRepository(t *testing.T) {
 		byPath[s.Path] = s.Kind == PlaceBuilding
 	}
 	n := 0
-	for _, r := range l.Roads {
-		if r.Kind == "import" {
-			n++
-			if r.W <= 0 || r.H <= 0 {
-				t.Errorf("an import road has no extent: %+v", r)
-			}
+	for _, e := range importEdgesOf(l) {
+		n++
+		if e[0] == "" || e[1] == "" {
+			t.Errorf("an import edge has an empty end: %v", e)
 		}
 	}
 	if n == 0 {
-		t.Error("this repository imports across buildings and drew no import roads")
+		t.Error("this repository imports across buildings and recorded no import edges")
 	}
-	t.Logf("IMPORT roads on this repo: %d (of %d total)", n, len(l.Roads))
+	t.Logf("IMPORT edges on this repo: %d (of %d roads)", n, len(l.Roads))
 }
 
 // A multi-line import is an import.
@@ -1231,7 +1235,7 @@ func TestImportRoadsOnThisRepository(t *testing.T) {
 // and name their specifier on a closing line four rows later. A scanner that
 // reads one line at a time never sees the specifier, so those dependencies were
 // simply not in the map.
-func TestMultiLineImportStillMakesARoad(t *testing.T) {
+func TestMultiLineImportStillCounts(t *testing.T) {
 	root := t.TempDir()
 	mk := func(rel, body string) {
 		full := filepath.Join(root, rel)
@@ -1251,14 +1255,9 @@ func TestMultiLineImportStillMakesARoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var importRoads int
-	for _, r := range LayoutTown(town).Roads {
-		if r.Kind == "import" {
-			importRoads++
-		}
-	}
-	if importRoads == 0 {
-		t.Error("no import road for a multi-line import — the specifier is on a closing line and was never read")
+	n := len(importEdgesOf(LayoutTown(town)))
+	if n == 0 {
+		t.Error("no import edge for a multi-line import — the specifier is on a closing line and was never read")
 	}
 }
 
@@ -1268,7 +1267,7 @@ func TestMultiLineImportStillMakesARoad(t *testing.T) {
 // `import "../store"` inside a Go comment describing this very case. A scanner
 // that reads comments draws a road to a dependency that does not exist, which is
 // the confident lie the whole design refuses to produce.
-func TestCommentedImportIsNotARoad(t *testing.T) {
+func TestCommentedImportDoesNotCount(t *testing.T) {
 	root := t.TempDir()
 	mk := func(rel, body string) {
 		full := filepath.Join(root, rel)
@@ -1297,17 +1296,12 @@ func TestCommentedImportIsNotARoad(t *testing.T) {
 	// Zero roads is the whole assertion. A real `import "../store"` sits in the
 	// same file as a commented one in `main.go` before this change, so a test that
 	// merely counted a road would pass with the stripper completely broken.
-	var n int
-	for _, r := range LayoutTown(town).Roads {
-		if r.Kind == "import" {
-			n++
-		}
-	}
+	n := len(importEdgesOf(LayoutTown(town)))
 	// Exactly one: the real TypeScript import. Three commented Go imports sit in
 	// this fixture and none of them may contribute, so a stripper that did
 	// nothing would produce four and fail here.
 	if n != 1 {
-		t.Errorf("import roads = %d, want 1 (the real TypeScript import only); a commented-out import was read as a dependency", n)
+		t.Errorf("import edges = %d, want 1 (the real TypeScript import only); a commented-out import was read as a dependency", n)
 	}
 }
 
@@ -1422,7 +1416,7 @@ func TestStripCommentsRespectsEveryQuote(t *testing.T) {
 }
 
 // `export * from "./x"` re-exports the whole module and names no braces.
-func TestExportStarMakesARoad(t *testing.T) {
+func TestExportStarCounts(t *testing.T) {
 	root := t.TempDir()
 	mk := func(rel, body string) {
 		full := filepath.Join(root, rel)
@@ -1439,14 +1433,9 @@ func TestExportStarMakesARoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var n int
-	for _, r := range LayoutTown(town).Roads {
-		if r.Kind == "import" {
-			n++
-		}
-	}
+	n := len(importEdgesOf(LayoutTown(town)))
 	if n == 0 {
-		t.Error("`export * from \"./x\"` is a dependency and drew no road")
+		t.Error("`export * from \"./x\"` is a dependency and was not counted")
 	}
 }
 
@@ -1483,8 +1472,8 @@ func TestRoadCountsOnThisRepositoryAreRecorded(t *testing.T) {
 	if byKind["district"] == 0 {
 		t.Error("no district roads: the gap between districts is not a road any more")
 	}
-	if byKind["import"] == 0 {
-		t.Error("no import roads: the scanner is finding nothing on its own repository")
+	if len(importEdgesOf(LayoutTown(town))) == 0 {
+		t.Error("no import edges: the scanner is finding nothing on its own repository")
 	}
 }
 
@@ -1595,107 +1584,9 @@ func TestDistrictRoadsDoNotRunOverADistrict(t *testing.T) {
 // An import road says which building imports which, and says nothing when it
 // is not an import road.
 //
-// A car cannot be placed without it, and a car placed by guessing the direction
-// would draw "this building uses that one" backwards — a false claim about a
-// dependency, on a map whose entire claim is that it only says true things.
-func TestImportRoadsCarryTheirDirection(t *testing.T) {
-	root := t.TempDir()
-	mk := func(rel, body string) {
-		full := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mk("ui/src/a.ts", "import { x } from \"../shared\";\n")
-	mk("ui/shared/b.ts", "export const x = 1;\n")
-	mk("ui/src/contained.ts", "export const y = 2;\n")
-
-	town, err := Analyze(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l := LayoutTown(town)
-
-	var found bool
-	for _, r := range l.Roads {
-		switch r.Kind {
-		case "import":
-			found = true
-			if r.From == "" || r.To == "" {
-				t.Errorf("an import road has no direction: %+v", r)
-			}
-			// ui/src imports ui/shared, and the order is the whole claim.
-			if r.From == "ui/shared" || r.To == "ui/src" {
-				t.Errorf("import road points the wrong way: %s -> %s", r.From, r.To)
-			}
-		default:
-			if r.From != "" || r.To != "" {
-				t.Errorf("a %s road claims a direction: %+v", r.Kind, r)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("no import road was emitted at all")
-	}
-}
 
 // An import road crosses no building other than the two it connects.
 //
-// This is the invariant a bounding box cannot hold. The box between two
-// building centres is axis-aligned, so a diagonal import paints a square, and
-// the square lands on whatever is inside it — on this repository
-// `ui/src -> ui/src/art/props` drew road over `ui` and `ui/test`, which are
-// not part of that import at all. A map that draws a connection across
-// buildings it is not connected to is asserting something false about the
-// repository, which is the one thing this map is not allowed to do.
-func TestImportRoadsCrossNoOtherBuilding(t *testing.T) {
-	root := t.TempDir()
-	mk := func(rel, body string) {
-		full := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mk("ui/src/a.ts", "import { x } from \"../art\";\n")
-	mk("ui/src/art/b.ts", "import { y } from \"../props\";\n")
-	mk("ui/src/art/props/c.ts", "export const z = 1;\n")
-	mk("ui/test/d.ts", "import { x } from \"../src/a\";\n")
-
-	town, err := Analyze(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l := LayoutTown(town)
-
-	seen := 0
-	for _, r := range l.Roads {
-		if r.Kind != "import" {
-			continue
-		}
-		seen++
-		if r.Ax == 0 && r.Ay == 0 && r.Bx == 0 && r.By == 0 {
-			t.Fatalf("an import road carries no band: %+v", r)
-		}
-		for _, s := range l.Sites {
-			if s.Kind != PlaceBuilding || s.Path == r.From || s.Path == r.To {
-				continue
-			}
-			if bandCrosses(r, s, importBandHalf) {
-				t.Errorf("import %s -> %s runs across the %s plot at %v,%v %vx%v",
-					r.From, r.To, s.Path, s.X, s.Y, s.W, s.H)
-			}
-		}
-	}
-	if seen == 0 {
-		t.Fatal("no import road was emitted; the fixture does not exercise this")
-	}
-}
 
 // bandCrosses is whether a band of the given half-width touches a plot.
 //
@@ -1720,35 +1611,6 @@ func bandCrosses(r Road, s Site, half float64) bool {
 
 // A road's rectangle is the band it actually carries, not a second opinion.
 //
-// They are two fields describing one thing, and the only defence against them
-// drifting is a test that says they agree. The renderer draws the band; the
-// extent is what the camera bounds and the turn read. If they disagree, the map
-// shows one road and measures another.
-func TestARoadsExtentIsItsBand(t *testing.T) {
-	town, err := Analyze("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := 0
-	for _, r := range LayoutTown(town).Roads {
-		if r.Kind != "import" {
-			continue
-		}
-		seen++
-		wantX := math.Min(r.Ax, r.Bx) - importBand/2
-		wantY := math.Min(r.Ay, r.By) - importBand/2
-		wantW := math.Abs(r.Bx-r.Ax) + importBand
-		wantH := math.Abs(r.By-r.Ay) + importBand
-		if math.Abs(r.X-wantX) > 0.01 || math.Abs(r.Y-wantY) > 0.01 ||
-			math.Abs(r.W-wantW) > 0.01 || math.Abs(r.H-wantH) > 0.01 {
-			t.Errorf("import %s -> %s: extent %.1f,%.1f %.1fx%.1f but band gives %.1f,%.1f %.1fx%.1f",
-				r.From, r.To, r.X, r.Y, r.W, r.H, wantX, wantY, wantW, wantH)
-		}
-	}
-	if seen == 0 {
-		t.Fatal("no import roads on this repository; the test proves nothing")
-	}
-}
 
 // A containment road is the band between two plots, not the box around them.
 //

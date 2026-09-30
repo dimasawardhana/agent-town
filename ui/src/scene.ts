@@ -33,7 +33,6 @@ import {
 import { BAND_TREATMENT, TURN_COUNT, type Turn, bandChain, bandTiles, hasBand, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
-import { Traffic } from "./traffic";
 import { SKY_DEPTH, skyTexture } from "./sky";
 import { type Stage, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, materialFor, type Archetype } from "./art/roof";
@@ -148,7 +147,6 @@ export class TownScene extends Phaser.Scene {
   private embers: Embers | null = null;
   /** Cars on the import roads. Generated, so no atlas cost, and re-synced with
    *  the draw so a turn re-routes them against the turned roads. */
-  private traffic: Traffic | null = null;
   /** The backdrop, pinned to the camera. Resized with the view and no further. */
   private sky: Phaser.GameObjects.Image | null = null;
 
@@ -345,7 +343,10 @@ export class TownScene extends Phaser.Scene {
     // move anything: every site still drawn keeps the coordinates it was given.
     const shown = layout.sites.filter((s) => visibleAt(s, this.depth));
     const ordered = [...shown].sort((a, b) => a.x + a.y - (b.x + b.y));
-    for (const s of ordered) this.drawSite(s);
+    for (const s of ordered) {
+      this.drawSite(s);
+      this.drawImportMark(s);
+    }
 
     // The labels were created hidden, so the rule is applied once here rather
     // than trusted to have been applied at each call site. Without this a
@@ -361,12 +362,6 @@ export class TownScene extends Phaser.Scene {
     this.embers?.destroy();
     this.embers = new Embers(this, DEPTH.ember);
 
-    // Traffic, for the same reason as the chimneys: the redraw calls `removeAll`,
-    // so a layer not re-added here is simply gone. Synced after construction
-    // because `sync` is what puts a car on each road.
-    this.traffic?.destroy();
-    this.traffic = new Traffic(this);
-    this.traffic.sync(roadsAsLines(layout.roads ?? [], (x, y) => this.project(x, y)));
 
     // The sky is here for the same reason the chimneys are: the redraw calls
     // `removeAll`, so anything not re-added here is simply gone. Created in
@@ -727,6 +722,49 @@ export class TownScene extends Phaser.Scene {
       }
     }
   }
+  /**
+   * drawImportMark outlines the plot of a building that imports other buildings.
+   *
+   * One hairline, in that building's own plot, saying *whether* rather than
+   * *whom*. The panel answers "whom" for the building you have selected, because
+   * the panel has room for exact names and the map does not.
+   *
+   * **A property of the building, not a shape between two.** That is the whole
+   * point: an import used to be carried as a road band from one plot to the
+   * other, with a car on it. A connection needs width, a surface, a kerb and
+   * ends, and once it has all four it collides with the buildings it passes and
+   * the roads it crosses. A hairline inside one plot cannot cross anything.
+   *
+   * **Drawn as the plot's own projected quad**, tight to the plot and nothing
+   * larger. A ring sized generously around the building looks like a road again
+   * — it spilled onto the grass, overlapped its neighbours and became the
+   * loudest thing on a map whose whole complaint was that it was too loud.
+   */
+  private drawImportMark(s: Site): void {
+    if (!s.imports || s.imports.length === 0) return;
+    const near = this.project(s.x + s.w, s.y + s.h);
+    const far = this.project(s.x, s.y);
+    const left = this.project(s.x + s.w, s.y);
+    const right = this.project(s.x, s.y + s.h);
+    const g = this.add.graphics();
+    g.lineStyle(1, Number.parseInt(P.imports.slice(1), 16), 0.85);
+    // The path is traced by hand rather than through `strokePoints`: Phaser is
+    // imported as a type only in this module, so there is no runtime `Phaser.Geom`
+    // to reach for, and four `lineBetween` calls would draw the plot's edges as
+    // doubled strokes at the corners.
+    g.beginPath();
+    g.moveTo(left.x, left.y);
+    g.lineTo(near.x, near.y);
+    g.lineTo(right.x, right.y);
+    g.lineTo(far.x, far.y);
+    g.closePath();
+    g.strokePath();
+    // Under the building, so the mark reads as the plot's ground being marked
+    // rather than as something drawn over the building.
+    g.setDepth(near.y - 1);
+  }
+
+
   private paintKerb(
     ctx: CanvasRenderingContext2D,
     toCanvas: (wx: number, wy: number) => [number, number],
@@ -1357,7 +1395,6 @@ export class TownScene extends Phaser.Scene {
       if (w.place) working.add(w.place);
     }
     this.embers.reconcile(touched, working);
-    this.traffic?.update(this.time.now);
   }
 
   /**

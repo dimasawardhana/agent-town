@@ -20,11 +20,6 @@ export interface Road {
   /** "row", "district", "containment" or "import" — which rule produced the
    *  band. */
   kind: string;
-  /** The building paths an import road runs between, importer first. Absent on
-   *  every other kind of road, and absent on any payload serialized before this
-   *  field existed. */
-  from?: string;
-  to?: string;
   /** The two ends of a band's centre line, in world units, for the road kinds
    *  that join two places.
    *
@@ -46,6 +41,11 @@ export interface Site {
   districtKind?: "source" | "test";
   path?: string;
   files: number;
+  /** The buildings whose source this one names, sorted. The count is what the
+   *  map reads — a building that imports anything is marked — and the list is
+   *  what the panel reads, because the panel has room for exact names and the
+   *  map does not. Absent when the building imports nothing. */
+  imports?: string[];
   /** Path segments below the repo root: 1 for `internal`, 3 for
    *  `internal/web/static`. The three special places carry 0, so a filter
    *  keyed on depth can never hide the Yard.

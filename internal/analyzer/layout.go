@@ -75,6 +75,14 @@ type Site struct {
 	DistrictKind Place  `json:"districtKind,omitempty"`
 	Path         string `json:"path,omitempty"`
 	Files        int    `json:"files"`
+	// Imports is the buildings whose source this one names, sorted. The count is
+	// what the map reads — a building that imports anything is marked, and the
+	// list is what the panel reads, because the panel has room for exact names
+	// and the map does not.
+	//
+	// A property of the building rather than a shape drawn between two, which is
+	// what this replaced; see `annotateImports`.
+	Imports []string `json:"imports,omitempty"`
 	// Bytes is the building's total source size and Floors the height derived
 	// from it. Both travel rather than being recomputed in the browser: the
 	// layout is the single source of truth for geometry (ADR-0012), and a
@@ -177,19 +185,6 @@ type Road struct {
 	// All four are paved with the same road tile. The kinds are not four
 	// materials; they are four claims, and `Kind` says which one is being made.
 	Kind string `json:"kind"`
-	// From and To are the building paths an import road runs between, in that
-	// order: the importer, then the imported.
-	//
-	// They are empty for every other kind of road, and they are *omitted* rather
-	// than sent empty, because a reader that has to distinguish "no direction"
-	// from "an empty direction" is a reader that will get it wrong eventually.
-	//
-	// This travels the wire rather than being recomputed in the browser for the
-	// same reason roads do: the layout is the single source of truth (ADR-0012),
-	// and a renderer that worked out the direction for itself would be a second
-	// implementation of the dependency graph.
-	From string `json:"from,omitempty"`
-	To   string `json:"to,omitempty"`
 	// Ax, Ay, Bx, By are the two ends of a band's centre line, in the same
 	// world units as X/Y, for the road kinds that join two places.
 	//
@@ -708,7 +703,7 @@ func buildingsIn(t *Town, district string) []Building {
 // single source of truth for geometry (ADR-0012), and a road the renderer worked
 func linkRoads(imports map[[2]string]bool, unresolved int, l *Layout) {
 	containmentRoads(l)
-	importRoads(imports, unresolved, l)
+	annotateImports(imports, unresolved, l)
 }
 
 // importEdges resolves which building imports which, once.
@@ -751,24 +746,6 @@ func districtOfPath(path string) string {
 	return path
 }
 
-// importBand is the width of an import road, in world units, and
-// importBandHalf is the same number halved for the tests that ask how close
-// something may come to a band.
-//
-// One constant for both, because a band drawn 8 wide and a band the tests
-// measure as 6 wide are two different roads and no assertion would notice.
-const (
-	importBand     = 8.0
-	importBandHalf = importBand / 2
-	// containmentBand is a footpath, and a footpath is wider than a street
-	// because nobody drives on it: 10 units against the import road's 8.
-	//
-	// Package-level, not local to `containmentRoads`, for the reason
-	// `importBand` is: the tests that ask how close something may come to a band
-	// have to measure against the same number the road was drawn with.
-	containmentBand = 10.0
-)
-
 // importRoads draws a band from a building to each building it imports.
 //
 // Only edges whose *both* ends are buildings this analyzer found are drawn. A
@@ -776,56 +753,49 @@ const (
 // something outside the town, and a road to it would be a confident line drawn
 // to a place the map does not contain. No road is the correct answer there, and
 // it is why a repository this scanner cannot read simply has no import roads.
-func importRoads(edges map[[2]string]bool, unresolved int, l *Layout) {
-	buildings := map[string]bool{}
-	for _, s := range l.Sites {
-		if s.Kind == PlaceBuilding && s.Path != "" {
-			buildings[s.Path] = true
-		}
-	}
+// annotateImports records, on each building, the buildings whose source it
+// names — and stops there.
+//
+// **It used to draw a road.** The import graph was carried as nine bands between
+// building plots, with a car on each. That was the wrong carrier for the fact,
+// and not for want of trying: a connection needs width, a surface, a kerb and
+// ends, and then it collides with everything else on the map. At the gap a band
+// was 14 world units and the road *tile* is 16, so five of the fifteen bands
+// were shorter than the tile they were painted with and rendered as checkered
+// diamonds under the buildings. Widening the gap to 40 fixed that and left the
+// town visibly sparser to carry nine slabs — and the cars, the thing they
+// existed for, were still not legible at map scale after four rounds of
+// re-authoring. A moving mark on a 600-pixel town does not say "these districts
+// are coupled". The band already said it, statically, at every zoom.
+//
+// So the fact moved onto the building, where it has room and cannot collide:
+// `Site.Imports` is what this building imports. The marker says *whether*, the
+// panel says *whom*, and nothing crosses anything.
+//
+// The edges are still resolved before placement — `districtGap` needs them — and
+// `UnresolvedImports` still counts what the scanner could not resolve, because
+// the absence of a road no longer reports it and something must.
+func annotateImports(edges map[[2]string]bool, unresolved int, l *Layout) {
 	l.UnresolvedImports = unresolved
 
-	byPath := map[string]Site{}
-	for _, s := range l.Sites {
-		if buildings[s.Path] {
-			byPath[s.Path] = s
-		}
+	// Sorted so the list is the same on every machine, for the same reason the
+	// site list is: map iteration order is not, and ADR-0012 requires the layout
+	// to be a pure function of the tree.
+	byFrom := map[string][]string{}
+	for e := range edges {
+		byFrom[e[0]] = append(byFrom[e[0]], e[1])
+	}
+	for k := range byFrom {
+		sort.Strings(byFrom[k])
 	}
 
-	// Sorted so the band's order is the same on every machine, for the same
-	// reason the site list is.
-	pairs := make([][2]string, 0, len(edges))
-	for e := range edges {
-		pairs = append(pairs, e)
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i][0] != pairs[j][0] {
-			return pairs[i][0] < pairs[j][0]
+	for i, site := range l.Sites {
+		if site.Kind != PlaceBuilding || site.Path == "" {
+			continue
 		}
-		return pairs[i][1] < pairs[j][1]
-	})
-	for _, e := range pairs {
-		c, p := byPath[e[0]], byPath[e[1]]
-		ax, ay, bx, by := bandBetween(c, p)
-		l.Roads = append(l.Roads, Road{
-			// The extent is the band's own box, derived from the line. Deriving
-			// it the other way round is how the two fields would come to
-			// disagree, and a road the renderer draws one way and the camera
-			// measures another is a road that is in two places.
-			X:    math.Min(ax, bx) - importBand/2,
-			Y:    math.Min(ay, by) - importBand/2,
-			W:    math.Abs(bx-ax) + importBand,
-			H:    math.Abs(by-ay) + importBand,
-			Kind: "import",
-			// e[0] imports e[1]. The ordering is already the direction, so this
-			// records a fact the layout had rather than computing a new one.
-			From: e[0],
-			To:   e[1],
-			Ax:   ax,
-			Ay:   ay,
-			Bx:   bx,
-			By:   by,
-		})
+		if outs := byFrom[site.Path]; len(outs) > 0 {
+			l.Sites[i].Imports = outs
+		}
 	}
 }
 
@@ -896,6 +866,14 @@ func siteCentre(s Site) (x, y float64) {
 // inside the repo would be true and useless. The band is a plain rectangle
 // spanning the two plots, which is honest about what it is — a link, not a
 // street — and needs no path-walking in the browser.
+// containmentBand is the width of a containment road, in world units: 10
+// against nothing, because an import road is no longer drawn.
+//
+// Package-level, and was the local `band` before, so the tests that ask how
+// close something may come to a band measure against the number the road was
+// drawn with.
+const containmentBand = 10.0
+
 func containmentRoads(l *Layout) {
 	// Buildings only. A container is a *summary* of the directories beneath it,
 	// so linking one to its child would draw a road between a district and its

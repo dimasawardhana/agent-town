@@ -227,6 +227,10 @@ export function App() {
   // cannot disagree about which building got which name.
   const drawnName = selected && selected.kind === "building" ? archetypeForSite(selected) : null;
   const declaredName = selected && selected.kind === "building" ? declaredArchetypeName(selected) : null;
+  // What this building imports, if anything. The map marks *whether* with a ring
+  // inside the building's own plot; this is where the *which* is answered,
+  // because the panel has room for exact names and the map does not.
+  const imports = selected?.imports ?? [];
 
   // The deepest building the daemon reported, so the detail control's range
   // reflects the town rather than a guessed ceiling. A town whose buildings are
@@ -467,6 +471,22 @@ export function App() {
             >
               Close
             </button>
+          </section>
+        )}
+
+        {imports.length > 0 && (
+          /* The map rings a building that imports anything; this says to whom.
+             Kept to a count plus the list because a town where every building
+             imports nine others should not turn the panel into a second map. */
+          <section className="crew">
+            <h2>Imports</h2>
+            <ul>
+              {imports.map((to) => (
+                <li key={to}>
+                  <span className="at">{to}</span>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
 

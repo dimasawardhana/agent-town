@@ -468,8 +468,6 @@ export interface RoadLine {
    *  Sent rather than re-derived from the geometry: the two ends of the line
    *  are already ordered by the projection, and which of them is the importer is
    *  a fact only the analyzer knows (ADR-0012). */
-  from?: string;
-  to?: string;
 }
 
 /** The half-width of a band road, in *picture* pixels.
@@ -525,7 +523,6 @@ export const BAND_TREATMENT: Record<
   string,
   { half: number; kerb: boolean; shade: number }
 > = {
-  import: { half: 4, kerb: true, shade: 1 },
   containment: { half: 5, kerb: false, shade: 0.82 },
 };
 
@@ -572,7 +569,7 @@ export function roadsAsLines(
     if (hasBand(r)) {
       const a = project(r.ax, r.ay);
       const b = project(r.bx, r.by);
-      out.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, halfWidth: BAND_HALF_PX, from: r.from, to: r.to });
+      out.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, halfWidth: BAND_HALF_PX });
       continue;
     }
     const y1 = r.y + r.h;
@@ -596,7 +593,7 @@ export function roadsAsLines(
     // how far the road runs, and dividing that by two gave a 122-unit street a
     // 61-pixel half-width: "am I on the road" was true almost everywhere, which
     // is the same long/short confusion that made the line itself two pixels long.
-    out.push({ ax: start.x, ay: start.y, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.h : r.w) / 2), from: r.from, to: r.to });
+    out.push({ ax: start.x, ay: start.y, bx: end.x, by: end.y, halfWidth: Math.max(3, (horizontal ? r.h : r.w) / 2) });
   }
   return out;
 }

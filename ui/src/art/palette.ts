@@ -129,6 +129,19 @@ export const P = {
   accent: "#e6bb38",
   accentDim: "#8a6414",
 
+  /** The glow under a building that imports other buildings.
+   *
+   *  A property of the building rather than a shape drawn between two, which is
+   *  what this replaced. A connection needs width, a surface, a kerb and ends,
+   *  and then it collides with everything else on the map; nine of them were
+   *  nine slabs across a 600-pixel town. A mark inside one building's own plot
+   *  cannot cross anything.
+   *
+   *  Deliberately not `accent`: that is the chief's flag and the panel's
+   *  live-state marks, and this is a static structural fact about code — like
+   *  floors, not like work. Cool, so it cannot be mistaken for a session. */
+  imports: "#4c7f9c",
+
   /** Traffic: the colour ramp a car is drawn in.
    *
    *  A car has to be *seen*, and at this scale a material colour cannot do it.
