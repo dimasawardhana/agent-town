@@ -30,7 +30,7 @@ import {
   groundEdgeFrame,
   propFrame,
 } from "./art/bake";
-import { BAND_HALF_WORLD, TURN_COUNT, type Turn, bandTiles, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { BAND_HALF_WORLD, TURN_COUNT, type Turn, bandTiles, hasBand, normaliseTurn, roadsAsLines, turnLayout } from "./view";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { Traffic } from "./traffic";
@@ -634,10 +634,18 @@ export class TownScene extends Phaser.Scene {
    * the browser works out for itself is a road the browser can get wrong
    * (ADR-0012).
    *
-   * The band is walked in whole tiles and clipped to the band's own extent, so a
-   * road ends where the layout says it ends rather than where a tile happens to
+   * A rectangular road is walked in whole tiles and clipped to its own extent,
+   * so it ends where the layout says it ends rather than where a tile happens to
    * fall. Half a tile of overhang is what makes a road look like it was painted
    * on rather than paved.
+   *
+   * **A band is not clipped.** `bandTiles` returns every tile the band's line
+   * touches, so a band ends wherever a tile happens to fall and can be one tile
+   * wider than itself. That is deliberate: a band is 8 world units and a tile is
+   * 16, so clipping to the exact extent would leave a road with holes in it, and
+   * a dotted road is worse than a slightly fat one — a reader sees dashes and
+   * concludes there is no connection. The cost is that a band owns whole tiles,
+   * which is already true of every other road in the town.
    */
   private paintRoads(
     ctx: CanvasRenderingContext2D,
@@ -654,8 +662,8 @@ export class TownScene extends Phaser.Scene {
       // middle tile got a kerb would show a kerb laid across the road. The
       // band's ends sit in the gaps between plots, where the surrounding tile
       // already reads as an edge.
-      if (typeof r.ax === "number" && typeof r.bx === "number") {
-        for (const { wx, wy } of bandTiles(r.ax, r.ay!, r.bx, r.by!, BAND_HALF_WORLD, TILE, TILE)) {
+      if (hasBand(r)) {
+        for (const { wx, wy } of bandTiles(r.ax, r.ay, r.bx, r.by, BAND_HALF_WORLD, TILE, TILE)) {
           const key = groundFrame("road", tileVariant(wx, wy));
           const f = this.atlas[key];
           if (!f) continue;

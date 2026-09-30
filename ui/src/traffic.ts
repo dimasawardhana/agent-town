@@ -46,9 +46,9 @@ export const CAR_LENGTH = 14;
 
 /** How tall a car is, in pixels.
  *
- *  Two thirds of its length, which at this camera angle is what separates a
- *  vehicle from a painted stripe. Thinner and it vanishes into the road's own
- *  kerb; taller and it stops being a car and becomes a block. */
+ *  A third of its length — 5 against 14 — and that ratio is the whole point:
+ *  much thinner and the car vanishes into the road's own kerb, much taller and
+ *  it stops being a car and becomes a block. */
 export const CAR_HEIGHT = 5;
 
 /** The lower, full-width part of the car: the body.
@@ -76,12 +76,24 @@ const CAR_TAIL = 2;
  *  blob, not a car. */
 const CAR_TINT = Number.parseInt(P.traffic.slice(1), 16);
 
-/** How long one car takes to cross its road, in milliseconds.
+/** Milliseconds per pixel of road, and the floor under one crossing.
  *
- *  Tied to the road rather than fixed, so a short street is crossed quickly and
- *  a long one slowly — otherwise a busy district reads as a queue and a quiet one
- *  as a crawl, and the speed stops meaning anything. */
-const CYCLE_MS = 9000;
+ *  A car's *speed* is constant, so its *cycle* is proportional to the length of
+ *  the road it is on — which is what the liveliness spec asks for ("at a speed
+ *  tied to the road's length"). It is why a long district road crawls and a
+ *  short one between two neighbours is brisk: the distance is real, and a car
+ *  covering it at a fixed rate is saying so.
+ *
+ *  The floor is what stops a 14-pixel gap — which is all the road there is
+ *  between two plots on the same row — from taking a fifth of a second and
+ *  reading as a blink rather than a journey. */
+const MS_PER_ROAD_PIXEL = 55;
+const MIN_CYCLE_MS = 1500;
+
+/** cycleMs is how long a car takes to cross this road, in milliseconds. */
+export function cycleMs(road: RoadLine): number {
+  return Math.max(MIN_CYCLE_MS, Math.hypot(road.bx - road.ax, road.by - road.ay) * MS_PER_ROAD_PIXEL);
+}
 
 /** hash is a small deterministic string hash, for staggering cars.
  *
@@ -104,9 +116,26 @@ function hash(s: string): number {
  *  what keeps two clients drawing the same town and a reload from reshuffling
  *  the traffic. */
 export function carAt(road: RoadLine, now: number): number {
-  const phase = hash(`${road.from ?? ""}${road.to ?? ""}`);
-  const t = ((now / CYCLE_MS) + phase) % 1;
+  const phase = hash(roadId(road));
+  const t = ((now / cycleMs(road)) + phase) % 1;
   return t < 0 ? t + 1 : t;
+}
+
+/** roadId identifies a road for a car's map key and for its phase hash.
+ *
+ *  The two ends are joined with a character that cannot appear in a path,
+ *  because joining them bare makes the id ambiguous: from="ab", to="c" and
+ *  from="a", to="bc" are both "abc", and two roads would share one car — one
+ *  road's car driving along another's, and whichever was created second never
+ *  being placed. Repository paths are slash-separated so the collision cannot
+ *  happen today, and a key that is only correct because of that is a key that
+ *  breaks the first time an id comes from anywhere else.
+ *
+ *  The same function builds the key and the phase, because a phase and a key
+ *  that disagreed would mean two cars for one road, which is the same bug from
+ *  the other side. */
+export function roadId(road: RoadLine): string {
+  return `${road.from ?? ""}\u0000${road.to ?? ""}`;
 }
 
 /** drivenRoads is the road set that carries traffic: the import roads only.
@@ -139,7 +168,7 @@ export class Traffic {
     // A containment road is a true fact and a static one; "this sits inside
     // that" is not a dependency and a car on it would claim one that is not there.
     this.roads = drivenRoads(roads);
-    const live = new Set(this.roads.map((r) => `${r.from}${r.to}`));
+    const live = new Set(this.roads.map(roadId));
     for (const [id, car] of this.cars) {
       if (!live.has(id)) {
         car.destroy();
@@ -147,7 +176,7 @@ export class Traffic {
       }
     }
     for (const road of this.roads) {
-      const id = `${road.from}${road.to}`;
+      const id = roadId(road);
       if (this.cars.has(id)) continue;
       // Depth is set every frame rather than once here, because it is a function
       // of where the car is on its road. The value given at creation is only the
@@ -158,7 +187,7 @@ export class Traffic {
 
   update(now: number): void {
     for (const road of this.roads) {
-      const car = this.cars.get(`${road.from}${road.to}`);
+      const car = this.cars.get(roadId(road));
       if (!car) continue;
       const p = carAt(road, now);
       // The car walks a → b. `a` and `b` are the two ends of the *projected*

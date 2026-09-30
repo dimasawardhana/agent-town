@@ -8,15 +8,46 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { bakedCels } from "../src/art/bake";
-import { carAt, CAR_HEIGHT, CAR_LENGTH, drivenRoads } from "../src/traffic";
+import { carAt, CAR_HEIGHT, CAR_LENGTH, cycleMs, drivenRoads, roadId } from "../src/traffic";
 import type { RoadLine } from "../src/view";
 import { P } from "../src/art/palette";
 
 const road: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4, from: "a", to: "b" };
 
-test("a car at the same moment is in the same place", () => {
-  assert.equal(carAt(road, 1000), carAt(road, 1000));
-  assert.equal(carAt(road, 0), carAt(road, 0));
+test("a car's position is a function of its road, not of the call", () => {
+  // Determinism, asserted so it can fail. `carAt(road, 1000) === carAt(road,
+  // 1000)` proved the same thing only if the function were already pure, which
+  // is the thing under test.
+  assert.equal(carAt(road, 1000), carAt(road, 1000), "two calls on one road disagreed");
+});
+
+test("a car crosses a long road in more time than a short one", () => {
+  // The liveliness spec: "at a speed tied to the road's length". Constant
+  // speed means a constant *cycle*, so this is the requirement stated as
+  // something falsifiable rather than as a claim in a comment.
+  const short: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4, from: "a", to: "b" };
+  const long: RoadLine = { ax: 0, ay: 0, bx: 400, by: 0, halfWidth: 4, from: "a", to: "b" };
+  assert.ok(cycleMs(long) > cycleMs(short), "a long road was crossed in the same time as a short one");
+  // Four times the length, so four times the cycle — and not the floor.
+  assert.ok(cycleMs(long) >= cycleMs(short) * 3, `300 extra pixels bought only ${cycleMs(long) - cycleMs(short)}ms`);
+});
+
+test("a very short road still takes long enough to be a journey", () => {
+  // The 14-pixel gap between two neighbouring plots is the shortest road the
+  // town has. At 55ms a pixel it would take most of a second and read as a
+  // blink; the floor is what stops that.
+  const gap: RoadLine = { ax: 0, ay: 0, bx: 14, by: 0, halfWidth: 4, from: "a", to: "b" };
+  assert.ok(cycleMs(gap) >= 1500, `a 14px road took ${cycleMs(gap)}ms; that is a blink, not a car`);
+});
+
+test("two roads with the same ends are the same road, and different ends are not", () => {
+  // The key is built by joining from and to. Joined bare, "ab"+"" and "a"+"b"
+  // are indistinguishable, two roads would share one car, and whichever was
+  // placed second would never be drawn.
+  const a: RoadLine = { ax: 0, ay: 0, bx: 10, by: 0, halfWidth: 4, from: "ab", to: "c" };
+  const b: RoadLine = { ax: 0, ay: 0, bx: 10, by: 0, halfWidth: 4, from: "a", to: "bc" };
+  assert.notEqual(roadId(a), roadId(b), "two different roads share one car key");
+  assert.equal(roadId(road), roadId({ ...road }), "the same road got two keys");
 });
 
 test("a car advances, and never leaves its road", () => {
@@ -36,9 +67,17 @@ test("two different roads carry two different cars", () => {
 });
 
 test("a road with no importer carries no car", () => {
+  // Asserting `bare.from` is undefined asserts a literal this test wrote a
+  // line ago. What matters is the consequence: the same road with a direction
+  // is kept and without one is dropped.
   const bare: RoadLine = { ax: 0, ay: 0, bx: 100, by: 0, halfWidth: 4 };
-  assert.equal(bare.from, undefined, "a containment road grew a direction");
-  assert.ok(CAR_LENGTH > 0);
+  const directed: RoadLine = { ...bare, from: "a", to: "b" };
+  assert.deepEqual(
+    drivenRoads([bare, directed]).map((r) => r.from),
+    ["a"],
+    "a road without both ends of a dependency is being given a car",
+  );
+  assert.ok(CAR_LENGTH > 0 && CAR_HEIGHT > 0, "a car with no area cannot be seen");
 });
 
 test("only import roads carry cars, and containment roads carry none", () => {

@@ -199,6 +199,33 @@ function turnRect(turn: Turn, r: WorldRect): WorldRect {
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
 }
 
+
+/** Band is a road's centre line: the two ends of the strip it runs along.
+ *
+ *  Row and district roads are areas and carry no band; containment and import
+ *  roads are strips and do. Four optional fields rather than two variants of
+ *  Road, because the wire sends them all in one object and a road's rectangle
+ *  is still meaningful for a band — it is the box the camera bounds and the
+ *  turn read. */
+export interface Band {
+  ax?: number;
+  ay?: number;
+  bx?: number;
+  by?: number;
+}
+
+/** hasBand is whether a road carries a centre line.
+ *
+ *  One predicate rather than the `typeof r.ax === "number" && typeof r.bx ===
+ *  "number"` test written at four call sites: the check is a rule about the
+ *  wire format, and a rule written four times is three chances to spell it
+ *  differently. The non-null assertions that followed each copy are what this
+ *  removes — a caller that has checked cannot go on to re-prove it.
+ */
+export function hasBand(r: Band): r is Band & { ax: number; ay: number; bx: number; by: number } {
+  return typeof r.ax === "number" && typeof r.ay === "number" &&
+    typeof r.bx === "number" && typeof r.by === "number";
+}
 /** turnBand turns a band's two ends the way turnRect turns a box.
  *
  *  A field the turn does not know about is a field that vanishes rather than
@@ -210,10 +237,10 @@ function turnRect(turn: Turn, r: WorldRect): WorldRect {
  *  Returns nothing for a road with no band. Row and district roads are areas
  *  rather than joins between two places, and spreading zeroes over them would
  *  turn "no band" into "a band at the origin". */
-function turnBand(turn: Turn, r: { ax?: number; ay?: number; bx?: number; by?: number }) {
-  if (typeof r.ax !== "number" || typeof r.bx !== "number") return {};
-  const a = turnPoint(turn, r.ax, r.ay!);
-  const b = turnPoint(turn, r.bx, r.by!);
+function turnBand(turn: Turn, r: Band) {
+  if (!hasBand(r)) return {};
+  const a = turnPoint(turn, r.ax, r.ay);
+  const b = turnPoint(turn, r.bx, r.by);
   return { ax: a.x, ay: a.y, bx: b.x, by: b.y };
 }
 
@@ -510,9 +537,9 @@ export function roadsAsLines(
     // They coincide for a rectangle that *is* a band and differ for one that is
     // not, which is the whole point: an import road's rectangle is now its
     // bounding box, so its short side is the band's *length*, not its width.
-    if (typeof r.ax === "number" && typeof r.bx === "number") {
-      const a = project(r.ax, r.ay!);
-      const b = project(r.bx, r.by!);
+    if (hasBand(r)) {
+      const a = project(r.ax, r.ay);
+      const b = project(r.bx, r.by);
       out.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, halfWidth: BAND_HALF_PX, from: r.from, to: r.to });
       continue;
     }

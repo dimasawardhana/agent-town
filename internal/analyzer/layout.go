@@ -150,11 +150,14 @@ type Road struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
-	// Kind is "row", "district", "containment" or "import". It is carried so
-	// they can be drawn differently if they ever need to be — a row road is a
-	// street, a district road runs between quarters, a containment road is a
-	// footpath and an import road is the checkered one — and so a reader
-	// debugging the map can tell which rule produced a band.
+	// Kind is "row", "district", "containment" or "import". It is carried so a
+	// reader debugging the map can tell which rule produced a band — a row road
+	// fills a gap the layout leaves, a district road runs between quarters, a
+	// containment road runs from a nested building to the one holding it, and an
+	// import road runs from a building to one whose source it names.
+	//
+	// All four are paved with the same road tile. The kinds are not four
+	// materials; they are four claims, and `Kind` says which one is being made.
 	Kind string `json:"kind"`
 	// From and To are the building paths an import road runs between, in that
 	// order: the importer, then the imported.

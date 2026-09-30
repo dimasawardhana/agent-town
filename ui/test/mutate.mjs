@@ -80,7 +80,7 @@ const MUTATIONS = [
   {
     what: "a car's position stops depending on its road",
     file: "src/traffic.ts",
-    from: '  const phase = hash(`${road.from ?? ""}${road.to ?? ""}`);',
+    from: "  const phase = hash(roadId(road));",
     to: "  const phase = 0;",
     suite: "test:traffic",
   },
@@ -94,7 +94,7 @@ const MUTATIONS = [
   {
     what: "a road band goes back to being its bounding box",
     file: "src/view.ts",
-    from: '    if (typeof r.ax === "number" && typeof r.bx === "number") {',
+    from: "    if (hasBand(r)) {",
     to: "    if (false) {",
     suite: "test:turnroads",
   },

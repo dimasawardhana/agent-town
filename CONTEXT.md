@@ -42,11 +42,19 @@ band both draw from one family, deliberately, so a building is one material
 throughout. Every archetype maps to exactly one, so adding an archetype costs
 cels on the cap and nothing on the body.
 
-**Road** — a paved band between places, in two kinds. **Row** roads fill the gap
+**Road** — a paved band between places, in three kinds. **Row** roads fill the gap
 the layout leaves between district rows; **containment** roads run from a nested
 building to the building containing it, which is a true statement about the tree
-and the only one available without a dependency graph. Travel and import
-dependency are *not* roads; they want their own spec.
+and the only one available without a dependency graph; **import** roads run from
+a building to one whose source it names, and are the only kind that says
+anything about code rather than about the tree.
+
+Row and district roads are *areas*; containment and import roads are *bands* —
+a centre line and a width, trimmed to where the line leaves each plot. A band
+crosses no building other than the two it joins, and the analyzer asserts it.
+Travel is a third thing again and is not a road: a car on an import road is
+evidence that the road means something, and `2026-09-29-town-liveliness.md` is
+where that decision lives.
 
 **Container**:
 A directory that holds source *below* it but none of its own. It is not a building — it has no rank and cannot be damaged, because it is an aggregate of what is under it rather than something anyone worked on — but it is drawn as a tower so the shallowest view of a project still says what the project is made of. Without them, a Go module laid out as `internal/<pkg>/` has nothing at the top level at all: the mass is all one or two levels down, and once the detail filter hides those, one building stood for 7.9% of the source.

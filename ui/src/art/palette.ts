@@ -129,17 +129,19 @@ export const P = {
   accent: "#e6bb38",
   accentDim: "#8a6414",
 
-  /** Traffic. The one colour on the map that is not a material.
+  /** Traffic: the colour a car is drawn in.
    *
-   *  A car needs to be *seen*, and at this scale a material colour cannot do
-   *  it: `metal[2]` and `stone[3]` are both the value of a building's wall, so
-   *  a car drawn in one reads as part of the building it is passing rather than
-   *  as a thing on the road. This is the lightest warm value in the palette for
-   *  exactly that reason — it has to separate from grass, wood, terracotta and
-   *  plaster at a handful of pixels, and all four are darker than it.
+   *  A car has to be *seen*, and at this scale a material colour cannot do it.
+   *  `metal[2]` and `stone[3]` are both the value of a building's own wall, so
+   *  a car in one reads as part of the building it is passing rather than as a
+   *  thing on the road. It is lighter than every material in the palette —
+   *  grass, wood, terracotta, plaster and stone are all darker — because that
+   *  is the only thing separating it at a handful of pixels.
    *
-   *  It is deliberately not `accent`. That is the chief's flag and the panel's
-   *  live-state marks, and a car wearing it would read as a session badge. */
+   *  It is warmer than it needs to be, and deliberately not `accent`: that is
+   *  the chief's flag and the panel's live-state marks, and a car wearing it
+   *  would read as a session badge rather than as traffic. Warm is also what
+   *  separates it from the failure colour a figure is drawn in. */
   traffic: "#f2cd63",
 } as const;
 

@@ -212,9 +212,22 @@ test("a band of zero length still terminates", () => {
   // The degenerate case is the one an unbounded walk hangs on, and it is
   // reachable: two plots at the same centre cannot happen, but a band whose
   // endpoints round to the same tile can.
-  const tiles = bandTiles(50, 50, 50, 50, 4, 24, 24);
-  assert.ok(tiles.length >= 0, "should not hang or throw");
-  assert.ok(tiles.length <= 4, `a zero-length band painted ${tiles.length} tiles`);
+  //
+  // `tiles.length >= 0` used to stand here. It could not fail, and a test that
+  // cannot fail is a comment with asserts in it — the failure `mutate.mjs`'s
+  // header says must be fixed or written down, not left in the suite.
+  const tiles = bandTiles(50, 50, 50, 50, 4, 16, 16);
+  // Four, not one: (50, 50) sits on the corner where four tiles meet, and a
+  // half-width of 4 genuinely reaches all of them. Asserting one would be
+  // asserting a number I had not checked.
+  //
+  // What is being held is that the walk *terminates* and that it covers the
+  // point it was given. `>= 0` could not fail; both of these can.
+  assert.ok(tiles.length <= 4, `a zero-length band walked ${tiles.length} tiles; the bound is the 2x2 block around the point`);
+  assert.ok(
+    tiles.some((t) => 50 >= t.wx && 50 < t.wx + 16 && 50 >= t.wy && 50 < t.wy + 16),
+    "the band painted no tile containing its own point",
+  );
 });
 
 test("a band shorter than one tile is still a road", () => {
