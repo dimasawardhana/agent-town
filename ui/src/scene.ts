@@ -45,7 +45,7 @@ import { PLACARD, type PlacardRole, placard } from "./art/placard";
 import { KERB, kerbRuns } from "./art/kerb";
 import { PLACE_INFO, type PlaceInfo, isPlaceKind, placeInfoFor } from "./place";
 import { actionInfo, targetOf } from "./actions";
-import { SITE_ID_BUILDING_PREFIX, type Layout, type Site, useTown } from "./store";
+import { SITE_ID_BUILDING_PREFIX, type Layout, type Road, type Site, useTown } from "./store";
 import { WorkerLayer } from "./workers";
 
 /** The world-space edge of one ground tile, in world units. Mirrors the terrain
@@ -656,19 +656,32 @@ export class TownScene extends Phaser.Scene {
       // A band is painted along its line; the tile grid below is for the road
       // kinds that really are rectangles. `continue` rather than an `else`, so
       // there is one place a band can be painted and one way it can be missed.
+
+      // A band is filled as its own projected quad, not as a grid of ground
+      // tiles. Tiles are the right primitive for a road *area* — row and
+      // district roads, which really are regions — and the wrong one for a strip:
+      // the tile is 16 world units and the gap between two neighbouring plots is
+      // 14, so five of the fifteen banded roads on this repository are *shorter
+      // than the tile they are painted with*. Each of those came out as one or
+      // two checkered diamonds spilling under the buildings on either side, which
+      // reads as a road going through a tunnel rather than a street between two
+      // buildings.
       //
-      // **No kerb piece for a band.** `onEdge` picks a frame by comparing
-      // against a rectangle's faces, and a line has no faces — a band whose
-      // middle tile got a kerb would show a kerb laid across the road. The
-      // band's ends sit in the gaps between plots, where the surrounding tile
-      // already reads as an edge.
+      // Filling the quad is exact by construction: a band is `half` either side
+      // of its own centre line, so the surface is exactly as wide as the road
+      // Filling the quad is exact by construction: a band is `half` either side
+      // of its own centre line, so the surface is exactly as wide as the road
+      // claims and stops at the plot edges. The colour is the road tile's own
+      // average, so a band and a row road are the same material.
       if (hasBand(r)) {
-        for (const { wx, wy } of bandTiles(r.ax, r.ay, r.bx, r.by, BAND_HALF_WORLD, TILE, TILE)) {
-          const key = groundFrame("road", tileVariant(wx, wy));
-          const f = this.atlas[key];
-          if (!f) continue;
-          const [cx, cy] = toCanvas(wx, wy);
-          ctx.drawImage(this.tileCanvas(key), Math.round(cx - f.ox), Math.round(cy - f.oy));
+        const key = groundFrame("road", 0);
+        const f = this.atlas[key];
+        if (f) {
+          const road = averageColour(this.tileCanvas(key));
+          if (road) {
+            const [cr, cg, cb] = road;
+            bandQuad(ctx, toCanvas, r, BAND_HALF_WORLD, `rgb(${cr}, ${cg}, ${cb})`, `rgb(${cr * 0.6 | 0}, ${cg * 0.6 | 0}, ${cb * 0.6 | 0})`);
+          }
         }
         continue;
       }
@@ -700,7 +713,6 @@ export class TownScene extends Phaser.Scene {
       }
     }
   }
-
   private paintKerb(
     ctx: CanvasRenderingContext2D,
     toCanvas: (wx: number, wy: number) => [number, number],
@@ -1607,4 +1619,85 @@ export class TownScene extends Phaser.Scene {
  *  the sprite a building was drawn as. */
 export function siteName(s: Site): string {
   return `site:${s.id}`;
+}
+
+/**
+ * bandQuad fills one band's surface on the ground texture.
+ *
+ * The band is a strip of `half` either side of its centre line, so its outline
+ * is four corners: two at the `a` end, offset perpendicular to the line, and two
+ * at the `b` end. Projecting those four and filling the polygon is exact — the
+ * surface is exactly as wide as the road claims and stops at the plot edges,
+ * which is the whole reason this replaced the tile grid.
+ *
+ * Free-standing because it is the only place a band becomes pixels, and a road
+ * that is wrong in one place is wrong in every place.
+ */
+/** bandQuad's road, with the band fields resolved by the caller's guard. */
+type BandedRoad = Road & { ax: number; ay: number; bx: number; by: number };
+
+function bandQuad(
+  ctx: CanvasRenderingContext2D,
+  toCanvas: (wx: number, wy: number) => [number, number],
+  r: BandedRoad,
+  half: number,
+  fill: string,
+  edge: string,
+): void {
+  const dx = r.bx - r.ax;
+  const dy = r.by - r.ay;
+  const len = Math.hypot(dx, dy) || 1;
+  // Unit normal to the centre line: the band's width lies along it.
+  const nx = (-dy / len) * half;
+  const ny = (dx / len) * half;
+  const quad = [
+    [r.ax + nx, r.ay + ny],
+    [r.ax - nx, r.ay - ny],
+    [r.bx - nx, r.by - ny],
+    [r.bx + nx, r.by + ny],
+  ].map(([x, y]) => toCanvas(x, y));
+
+  const trace = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(quad[0][0], quad[0][1]);
+    for (let i = 1; i < quad.length; i++) ctx.lineTo(quad[i][0], quad[i][1]);
+    ctx.closePath();
+  };
+
+  ctx.fillStyle = fill;
+  trace();
+  ctx.fill();
+  // A kerb around the strip, so a band reads as a made surface with a boundary
+  // rather than as a coloured line drawn on the grass. It is the band's own
+  // outline, which is the one thing a line does not have.
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = 1;
+  trace();
+  ctx.stroke();
+}
+
+/**
+ * averageColour is a tile's mean opaque RGB, or null if it has no opaque pixel.
+ *
+ * Averaged rather than sampled: the road tile is a two-tone chequer, and its
+ * *centre* pixel lands on one of the two — so a band filled from the centre
+ * came out near-black while the row road beside it was light grey, and the two
+ * stopped being the same material.
+ */
+function averageColour(canvas: HTMLCanvasElement): [number, number, number] | null {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    r += d[i];
+    g += d[i + 1];
+    b += d[i + 2];
+    n++;
+  }
+  return n === 0 ? null : [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
 }

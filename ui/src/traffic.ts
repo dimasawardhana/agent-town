@@ -41,21 +41,23 @@ import type { RoadLine } from "./view";
  * in the source and diffed when it changes — a car made of `fillRect` calls is
  * four numbers and nobody can see what it is supposed to be.
  *
- *   o  ink outline          3  lit: the top-left step of the traffic ramp
- *   d  tyre                 2  mid
- *   g  glass                1  shadowed: the bottom-right step
- *   ~  cast shadow, half-transparent
+ *   o  ink outline          3  bonnet: the lit step of the traffic ramp
+ *   d  tyre                 2  roof
+ *   g  glass                1  boot: the shadowed step
+ *   ~  under-shadow, half-transparent
  *   .  nothing
  *
  * Five things do the reading, in the order they matter:
  *
- *  1. **A light direction.** Every cell on the left is lighter than the one
- *     beside it on the right, and every row lighter than the one below — the
- *     same top-left key `shade()` lights every building with. This is what the
- *     previous version got wrong and it is why it looked flat: the value ran
- *     light at the nose to dark at the tail, *evenly across the width*. Two
- *     halves of one value meeting in the middle is a gradient, not a form — the
- *     sprite had no light in it and nothing for the eye to read depth from.
+ *  1. **The shading runs along the car, never across it.** This is not a taste
+ *     choice, it is forced by the rotation. The car sprite is turned onto its
+ *     road every frame, so any light baked into the texture turns with it: a
+ *     left-to-right gradient that reads correctly on one street points into
+ *     shadow on the next, and the car looks flat or inverted depending on which
+ *     road it happens to be on. Only the car's *own* axis survives a rotation,
+ *     so that is the only axis it may be lit on — bonnet lit, roof mid, boot
+ *     shadowed. The 3D is longitudinal, like the lit top and shadowed flank of a
+ *     building read across its own length.
  *  2. **The taper.** The nose is eight pixels and the middle twelve. A car
  *     whose front and back are the same width is a bar.
  *  3. **Four wheel blocks**, at rows 3 and 5, standing two pixels proud of the
@@ -63,12 +65,17 @@ import type { RoadLine } from "./view";
  *     most of what says "vehicle" at this size.
  *  4. **Two glass bands**, windscreen and rear window, with body between them
  *     for a roof. Without them the shape is a table.
- *  5. **A cast shadow**, offset one pixel down-right and drawn at half alpha.
- *     The light is top-left, so the shadow falls the other way; without it the
- *     car is a sticker on the tarmac rather than a thing above it. Half alpha
- *     is legal here and nowhere else: this is generated art and never baked, so
- *     no palette invariant ever sees it — the same exception the ember's glow
- *     makes.
+ *  5. **An under-shadow**, centred rather than offset. A cast shadow is a
+ *     *world*-space fact — it falls down-right because the light is up-left —
+ *     and a world-space fact cannot be baked into a sprite that rotates, so it
+ *     would swing around with the car. Centred, it stays under it.
+ *
+ * The outline is `P.ink`, matching every building in the town. Unoutlined the
+ * car floats off the road instead of sitting on it.
+ *
+ * Half alpha is legal here and nowhere else: this is generated art and never
+ * baked, so no palette invariant ever sees it — the same exception the ember's
+ * glow makes.
  *
  * Ten tall against fourteen wide, because a car is long and low and anything
  * else reads as a van or a pill. The nose points at the *top* of the texture,
@@ -76,16 +83,16 @@ import type { RoadLine } from "./view";
  */
 export const CAR_ART: readonly string[] = [
   "...oooooooo...",
-  "..o33333331o..",
-  ".o3333211111o.",
-  "ddo33321111odd",
-  "..o3gggggg1o..",
-  "ddo33321111odd",
-  ".o3333211111o.",
-  ".o3333gg1111o.",
+  "..o33333333o..",
+  ".o3333333333o.",
+  "ddo33333333odd",
+  "..o3gggggg3o..",
+  "ddo33333333odd",
+  ".o3333333333o.",
+  ".o22gggggg22o.",
   ".o1111111111o.",
   "...oooooooo...",
-  "....oooooooo..",
+  "..oooooooooo..",
 ];
 
 /** The car's plan, one string per row, transparent where the string is a dot. */
