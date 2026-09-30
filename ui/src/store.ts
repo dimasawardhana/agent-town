@@ -17,8 +17,9 @@ export const SITE_ID_BUILDING_PREFIX = "building:";
 
 export interface Road {
   x: number; y: number; w: number; h: number;
-  /** "row", "district", "containment" or "import" — which rule produced the
-   *  band. */
+  /** "row", "district" or "containment" — which rule produced the band.
+   *  "import" was here and the analyzer stopped emitting it: a dependency is a
+   *  property of a building now, and the panel is its only reader. */
   kind: string;
   /** The two ends of a band's centre line, in world units, for the road kinds
    *  that join two places.
@@ -41,10 +42,11 @@ export interface Site {
   districtKind?: "source" | "test";
   path?: string;
   files: number;
-  /** The buildings whose source this one names, sorted. The count is what the
-   *  map reads — a building that imports anything is marked — and the list is
-   *  what the panel reads, because the panel has room for exact names and the
-   *  map does not. Absent when the building imports nothing. */
+  /** The buildings whose source this one names, sorted. The panel lists them,
+   *  because the panel has room for exact names. The map does not read this at
+   *  all: it was drawn on for a while and read as a smudge, so nothing on the
+   *  map says *whether* a building imports — only what it is called. Absent
+   *  when the building imports nothing. */
   imports?: string[];
   /** Path segments below the repo root: 1 for `internal`, 3 for
    *  `internal/web/static`. The three special places carry 0, so a filter
@@ -58,8 +60,6 @@ export interface Site {
    *  declared nothing. Undefined is the normal case and means "hash the path".
    *
    *  Sent rather than read from the manifest in the browser: a declaration is
-   *  the repository asserting something about itself, and the analyzer is what
-   *  reads it. The browser resolving it a second time is two authorities over
    *  one fact, which is the split ADR-0012 exists to prevent. */
   archetype?: string;
 

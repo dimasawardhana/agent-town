@@ -1,6 +1,7 @@
 # A town that is alive when nobody is working
 
-**Status:** feature 1 built, then replaced. Features 2–5 open, re-scoped below.
+**Status:** feature 1 built three times and removed twice; the third removal was
+of the mark itself. Features 2–5 open, re-scoped below.
 
 ## The problem
 
@@ -69,27 +70,56 @@ directional light baked into a sprite that turns on its road every frame points
 into shadow on the next street. Only a sprite's *own* axis survives a rotation,
 so that is the only axis it may be lit on.
 
+### Why the mark lost
+
+The second carrier was a mark on the building's own roof. It was a cool tint with
+its own palette entry, deliberately not `accent`, drawn where nothing stands on
+top of it — and three attempts to place it were invisible before that, each for a
+reason that had nothing to do with brightness. Once it was finally visible, the
+reader who had to see it said it was a mess, that it disturbed the town, and that
+no replacement would be better.
+
+That is the right verdict and it is worth keeping the reasoning, because the
+instinct every time until then was to make it louder and brightness was never the
+problem. **A mark that takes four attempts to place and then draws attention to
+itself is not carrying a fact — it is competing with the art.** The roof is where
+the archetype's own ornament lives, and putting a tint there asked the eye to
+read a flat wash as information set against ornament drawn to be looked at.
+
 ### What replaced it
 
-The fact moved onto the building, where it has room and cannot collide.
+Nothing. That is the whole of the answer, and it took a third removal to get there.
 
-- `Site.Imports` records what a building imports. The analyzer emits **no import
-  road at all**.
-- The map marks the importing building's **roof** — a cool tint, one colour of its
-  own, nothing like `accent`, which is the chief's flag. A mark on the plot is
-  invisible because the building covers it; a mark spilling into the gap between
-  plots is a road again. The roof is the one surface nothing is drawn on top of.
-- The panel lists the names. *Whether* is on the map, *whom* is in the panel,
-  because the panel has room for exact names and the map does not.
+- `Site.Imports` still records what a building imports, because the panel prints
+  it and the panel is not a picture of the town.
+- The analyzer emits **no import road at all**.
+- The map draws **no import mark**. Nothing on it says *whether* a building
+  imports, and no count is drawn either.
 
-**The cost, stated so nobody rediscovers it by wanting the graph back:** the shape
-of the dependency is no longer visible at a glance. A reader cannot see that
-`ui/src` reaches two things rather than one without selecting it. That was never
-reliably visible with a car on it either.
+**The cost, stated so nobody rediscovers it by wanting the graph back:** the
+dependency is invisible without a click. A reader cannot see that `ui/src`
+reaches two things rather than one without selecting it, and cannot see that it
+reaches any at all without selecting it. That was never reliably visible with a
+car on it either — it was reliably visible as a speck.
 
-Feature 1 is therefore **done, in a different form**, and the "spine" it was going
-to hang the others off has to be re-founded: there is no longer anything on the
-map that moves with the code's *shape*. What moves is the crew, and that is all.
+The scanner's guarantees are untouched: a bare specifier is unresolvable, a
+relative specifier escapes the repository, a multi-line import is an import. All
+three are now visible only where the map is allowed to be legible.
+
+Two narrower conclusions, which are really one:
+
+- **There is no fourth carrier.** Plot, roof and the gap between plots are the
+  three surfaces a mark could occupy, and all three are closed — two because the
+  building covers them, one because the gap is too small to hold anything
+  without becoming a road.
+- **A map mark has to earn its place against the art, not against the absence of
+  itself.** This one never did. The town is better for not drawing it, and the
+  lesson is worth more than the feature was.
+
+Feature 1 is therefore **done**, in the form of having removed itself, and the
+"spine" it was going to hang the others off has to be re-founded: there is
+nothing on the map that moves with the code's *shape*. What moves is the crew,
+and that is all.
 
 ## The four that are open
 

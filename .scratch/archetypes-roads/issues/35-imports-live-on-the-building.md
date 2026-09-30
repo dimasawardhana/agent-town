@@ -10,8 +10,9 @@ without nine road bands crossing everything they pass.
 
 - [x] `Site.Imports` names the buildings whose source a building imports
 - [x] The analyzer emits **no import road at all** — the fact is not a shape
-- [x] The map marks a building that imports anything, inside that building's own
-      plot, where it cannot cross another building or a road
+- [x] ~~The map marks a building that imports anything~~ — built here as a roof
+      tint, and **removed by 36**: three attempts to place it were invisible and
+      the one that finally drew was a mess on a town that was better without it
 - [x] The panel lists the names, which is the only place with room for them
 - [x] `from`/`to` are off the wire; nothing read them but the cars
 - [x] The scanner's refusals are unchanged and now asserted against `Site.Imports`

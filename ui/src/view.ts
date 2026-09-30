@@ -499,25 +499,25 @@ export const BAND_HALF_WORLD = 4;
 /**
  * How each band kind is drawn, loudest first.
  *
- * The town has 17 roads and 14 buildings, and drawn identically they compete:
- * six containment bands saying "this sits inside that" — the most predictable
- * fact on the map, and the one the eye can already half-read from nesting — took
- * the same visual weight as nine import bands saying "this imports that", which
- * is the genuinely new information.
- *
- * So they are ranked, and the rank is carried by width, value and kerb:
+ * There is one entry, and that is the honest state of it. When import bands
+ * existed this ranked three kinds against each other, and the reasoning was
+ * sound: a containment band says "this sits inside that", which the eye can
+ * already half-read from nesting, and it was shouting over the genuinely new
+ * information. But the analyzer no longer emits import bands, so the ranking it
+ * justified has one member and the argument no longer applies.
  *
  *  - **district** is the loudest, and is not here: it is a real region, painted
  *    from the tile grid with its own kerb, above both.
- *  - **import** keeps its kerb and takes the second-most attention.
  *  - **containment** is a seam: no kerb, and a value close enough to the ground
  *    that it reads as a join rather than a made surface.
  *
- * Nothing is removed. A road that is true stays drawn; this only stops six of
- * them shouting over the nine that matter, which is the whole of "too messy".
- *
  * `shade` is a multiplier on the road tile's average, so a band stays the same
  * *material* as the district road beside it — dimmer, never a different colour.
+ *
+ * A kind with no entry takes `hasBand`'s default, which is the loud treatment.
+ * That default is a choice, not an oversight: it means a new band kind appears
+ * conspicuously and someone decides to quieten it, rather than appearing
+ * invisibly and nobody notices for a week.
  */
 export const BAND_TREATMENT: Record<
   string,
@@ -544,8 +544,6 @@ export function roadsAsLines(
     w: number;
     h: number;
     kind?: string;
-    from?: string;
-    to?: string;
     ax?: number;
     ay?: number;
     bx?: number;

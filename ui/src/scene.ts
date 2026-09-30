@@ -345,7 +345,6 @@ export class TownScene extends Phaser.Scene {
     const ordered = [...shown].sort((a, b) => a.x + a.y - (b.x + b.y));
     for (const s of ordered) {
       this.drawSite(s);
-      this.drawImportMark(s);
     }
 
     // The labels were created hidden, so the rule is applied once here rather
@@ -721,70 +720,6 @@ export class TownScene extends Phaser.Scene {
       }
     }
   }
-  /**
-   * drawImportMark outlines the plot of a building that imports other buildings.
-   *
-   * One hairline, in that building's own plot, saying *whether* rather than
-   * *whom*. The panel answers "whom" for the building you have selected, because
-   * the panel has room for exact names and the map does not.
-   *
-   * **A property of the building, not a shape between two.** That is the whole
-   * point: an import used to be carried as a road band from one plot to the
-   * other, with a car on it. A connection needs width, a surface, a kerb and
-   * ends, and once it has all four it collides with the buildings it passes and
-   * the roads it crosses. A hairline inside one plot cannot cross anything.
-   *
-   * **Drawn as the plot's own projected quad**, tight to the plot and nothing
-   * larger. A ring sized generously around the building looks like a road again
-   * — it spilled onto the grass, overlapped its neighbours and became the
-   * loudest thing on a map whose whole complaint was that it was too loud.
-   */
-  private drawImportMark(s: Site): void {
-    if (!s.imports || s.imports.length === 0) return;
-    const cap = this.atlas[this.capKey(s)];
-    if (!cap) return;
-    // On the **cap**, at the building's own height, not on its plot.
-    //
-    // The plot is the obvious place and it does not work: a building covers its
-    // own plot, so a mark there shows only a sliver of its edge — invisible at
-    // map zoom however bright it is. And with `cellGap` back at 14 there is no
-    // room between two plots either, so a fringe that spilled outward would fill
-    // the gap and be a road again.
-    //
-    // The roof is the one surface of a building nothing is standing on. This is
-    // also where the archetype's ornament already lives, so the mark is read
-    // against a face the reader is already looking at.
-    const z = towerTop(clampFloors(s.floors));
-    const at = (x: number, y: number) => this.project(x, y, z);
-    const near = at(s.x + s.w, s.y + s.h);
-    const left = at(s.x + s.w, s.y);
-    const right = at(s.x, s.y + s.h);
-    const far = at(s.x, s.y);
-    // The cap cel's own origin offsets the top face, so the quad starts where
-    // the sprite does rather than at the footprint.
-    const dy = cap.oy;
-
-    const g = this.add.graphics();
-    const colour = Number.parseInt(P.imports.slice(1), 16);
-    g.fillStyle(colour, 0.5);
-    g.beginPath();
-    g.moveTo(left.x, left.y + dy);
-    g.lineTo(near.x, near.y + dy);
-    g.lineTo(right.x, right.y + dy);
-    g.lineTo(far.x, far.y + dy);
-    g.closePath();
-    g.fillPath();
-    g.lineStyle(1, colour, 0.95);
-    g.strokePath();
-    // Depth is the *ground* near-corner the building's own container uses, plus
-    // a hair. The mark's own `near` is projected at roof height and so is tens
-    // of pixels higher on screen than the container's — sorting on it put the
-    // mark behind the very roof it was drawn on, which is how the first two
-    // attempts came out invisible.
-    const groundNear = this.project(s.x + s.w, s.y + s.h);
-    g.setDepth(groundNear.y + 0.5);
-  }
-
 
   private paintKerb(
     ctx: CanvasRenderingContext2D,

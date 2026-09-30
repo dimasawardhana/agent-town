@@ -138,9 +138,11 @@ test("a road line follows the band, not the rectangle around it", () => {
   const [line] = roadsAsLines(
     [
       {
-        x: 0, y: 0, w: 122, h: 122, kind: "import",
-        from: "a", to: "b",
-        // The band from A's plot edge to B's — far shorter than the box.
+        x: 0, y: 0, w: 122, h: 122, kind: "containment",
+        // The band from A's plot edge to B's — far shorter than the box. The
+        // kind is "containment" and used to be "import": nothing emits an
+        // import band any more, and a fixture naming a kind the analyzer
+        // cannot produce is a test for a thing that does not exist.
         ax: 20, ay: 20, bx: 100, by: 100,
       },
     ],
