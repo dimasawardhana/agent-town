@@ -39,41 +39,53 @@ import type { RoadLine } from "./view";
  *
  * Nine characters wide-ish per row, authored as text so the shape can be read
  * in the source and diffed when it changes — a car made of `fillRect` calls is
- * four numbers and nobody can see what it is supposed to be. The earlier
- * version was exactly that: a 14x3 bar with an 8x2 lump on top, which at 1x is
- * a lump.
+ * four numbers and nobody can see what it is supposed to be.
  *
- *   o  ink outline          3  bonnet, the light step of the traffic ramp
- *   d  tyre                 2  roof, the mid step
- *   g  glass                1  boot, the dark step
+ *   o  ink outline          3  lit: the top-left step of the traffic ramp
+ *   d  tyre                 2  mid
+ *   g  glass                1  shadowed: the bottom-right step
+ *   ~  cast shadow, half-transparent
  *   .  nothing
  *
- * Four things do the reading, in order of how much they matter:
+ * Five things do the reading, in the order they matter:
  *
- *  1. **The taper.** The nose is eight pixels wide and the middle ten. A car
+ *  1. **A light direction.** Every cell on the left is lighter than the one
+ *     beside it on the right, and every row lighter than the one below — the
+ *     same top-left key `shade()` lights every building with. This is what the
+ *     previous version got wrong and it is why it looked flat: the value ran
+ *     light at the nose to dark at the tail, *evenly across the width*. Two
+ *     halves of one value meeting in the middle is a gradient, not a form — the
+ *     sprite had no light in it and nothing for the eye to read depth from.
+ *  2. **The taper.** The nose is eight pixels and the middle twelve. A car
  *     whose front and back are the same width is a bar.
- *  2. **Four wheel blocks**, at rows 3 and 5, standing two pixels proud of the
- *     body on both sides. Rails along the whole flank read as a skirt, and
- *     wheels are most of what says "vehicle" at this size.
- *  3. **Two glass bands**, windscreen and rear window, with body between them
+ *  3. **Four wheel blocks**, at rows 3 and 5, standing two pixels proud of the
+ *     body on both sides. Rails along the flank read as a skirt, and wheels are
+ *     most of what says "vehicle" at this size.
+ *  4. **Two glass bands**, windscreen and rear window, with body between them
  *     for a roof. Without them the shape is a table.
- *  4. **The ink outline**, matching `iso.outline(P.ink)` on every building.
- *     Unoutlined, the car floats off the road instead of sitting on it.
+ *  5. **A cast shadow**, offset one pixel down-right and drawn at half alpha.
+ *     The light is top-left, so the shadow falls the other way; without it the
+ *     car is a sticker on the tarmac rather than a thing above it. Half alpha
+ *     is legal here and nowhere else: this is generated art and never baked, so
+ *     no palette invariant ever sees it — the same exception the ember's glow
+ *     makes.
  *
- * Nine tall against fourteen wide, because a car is long and low and anything
+ * Ten tall against fourteen wide, because a car is long and low and anything
  * else reads as a van or a pill. The nose points at the *top* of the texture,
  * so `update` adds a quarter turn when it lays the car on its road.
  */
 export const CAR_ART: readonly string[] = [
   "...oooooooo...",
-  "..o33333333o..",
-  ".o2222222222o.",
-  "ddo22222222odd",
-  "..o2gggggg2o..",
-  "ddo22222222odd",
-  ".o22gggggg22o.",
-  "..o11111111o..",
+  "..o33333331o..",
+  ".o3333211111o.",
+  "ddo33321111odd",
+  "..o3gggggg1o..",
+  "ddo33321111odd",
+  ".o3333211111o.",
+  ".o3333gg1111o.",
+  ".o1111111111o.",
   "...oooooooo...",
+  "....oooooooo..",
 ];
 
 /** The car's plan, one string per row, transparent where the string is a dot. */
@@ -108,15 +120,21 @@ export function carTexture(scene: Phaser.Scene, key: string): string {
     // block in its own right, which is the whole job.
     "d": P.rubber[2],
   };
+  // The shadow is the only translucent pixel in the town, and like the ember's
+  // glow it is legal only because this is generated art and never baked — no
+  // palette invariant reads it. A hard-edged shadow would be a second car
+  // outline, which is worse than none.
+  const SHADOW_ALPHA = 0.45;
   for (let y = 0; y < CAR_H; y++) {
     for (let x = 0; x < CAR_W; x++) {
-      const c = ramp[CAR_ART[y][x]];
-      if (!c) continue;
-      g.fillStyle = c;
+      const ch = CAR_ART[y][x];
+      if (ch === ".") continue;
+      g.globalAlpha = ch === "~" ? SHADOW_ALPHA : 1;
+      g.fillStyle = ch === "~" ? P.ink : ramp[ch];
       g.fillRect(x, y, 1, 1);
     }
   }
-  canvas.refresh();
+  g.globalAlpha = 1;
   return key;
 }
 

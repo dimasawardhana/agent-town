@@ -112,76 +112,83 @@ const H = ARM_H + BASE_H;
 /**
  * The undercarriage and body, authored once per kind.
  *
- * Four empty rows for the air a boom needs above the body, one row of tread, one
- * of body, one of shoulder and ground contact. Everything above this is the arm,
- * and the arm is the only part allowed to move.
+ * Three rows of body over three of track, and everything above this is the arm —
+ * the arm is the only part allowed to move.
+ *
+ * Three rules hold across all five kinds, and each was a defect first:
+ *
+ *  1. **The rows above the track are body, not air.** They used to be blank
+ *     "space for the boom", and the arms ended two to six rows above them —
+ *     measured across all twenty kind/pose pairs, `driver` idle had six. An arm
+ *     floating over a pair of lumps is two objects, and the eye is right.
+ *  2. **The body is wider than the track.** One 26-pixel plank of body and track
+ *     reads as a slab with nothing on it. A body that overhangs its track has a
+ *     shoulder, and a shoulder is what says "this thing sits on wheels".
+ *  3. **A cab, in glass.** The body is the one part that never moves, so it is
+ *     the only place a cab can live — and a lit window is the single pixel that
+ *     says somebody drives this.
+ *
+ * The track is one continuous run, not two. The old pair of lumps read as two
+ * objects standing next to each other, and the tread rhythm comes from `shade()`
+ * rimming the run rather than from alternating characters by hand.
  */
 const CHASSIS: Record<MachineKind, string[]> = {
-  // A crawler: a body on a continuous track. The track is one run, not two —
-  // the old pair of lumps read as two objects standing next to each other — and
-  // the tread rhythm comes from `shade()` rimming the run, not from alternating
-  // characters by hand.
-  //
-  // **The rows above the track are body, and that is the whole fix.** They used
-  // to be blank, "air for the boom", and the arms ended three to six rows above
-  // them — measured across all twenty kind/pose pairs, none of them had fewer
-  // than two blank rows and `driver` idle had six. A machine drawn as an arm
-  // floating over a pair of tracks is two objects, and the eye is right.
+  // A crawler: wide, low, and cab-forward because the boom needs the room.
   excavator: [
-    "..yyyyyyyyyyyyyyyyyyyyyyyy..",
+    "..gggggggggggggggggggggggg..",
+    ".tyyyyyyyyyyyyyyyyyyyyyyyyyt.",
     "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
     "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    ".tttttttttttttttttttttttttt..",
-    "tttttttttttttttttttttttttttt.",
-    "ttttttttttttttttttttttttttttt",
-    "..................................",
-  ],
-  // Same track, but a narrow base: the mast does the work, so the body has
-  // little to carry and does not pretend otherwise.
-  crane: [
-    "....yyyyyyyyyyyyyyyyyyyy......",
-    "...tyyyyyyyyyyyyyyyyyyyt....",
-    "..tyyyyyyyyyyyyyyyyyyyyyt....",
     "..tttttttttttttttttttttttttt..",
     ".ttttttttttttttttttttttttttt.",
-    "tttttttttttttttttttttttttttttt",
     "..................................",
   ],
-  // Rubber-tyred and low, so the body sits down onto the wheels and the track
-  // band is short.
+  // Same track, narrower still: the mast does the work, so the body is little
+  // more than a collar around it and does not pretend otherwise.
+  crane: [
+    "....gggggggggggggggggg......",
+    "...tyyyyyyyyyyyyyyyyyyyyt....",
+    "..tyyyyyyyyyyyyyyyyyyyyyyt...",
+    "..tttttttttttttttttttttttttt..",
+    "..tttttttttttttttttttttttttt..",
+    "..tttttttttttttttttttttttttt..",
+    "..................................",
+  ],
+  // Rubber-tyred and low, so the body sits down onto the wheels: the track band
+  // is barely wider than the body and the shoulder almost disappears.
   loader: [
-    "..tyyyyyyyyyyyyyyyyyyyyyyy..",
+    "..gggggggggggggggggggggggg..",
+    ".tyyyyyyyyyyyyyyyyyyyyyyyyyt.",
     "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
     "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    ".tttttttttttttttttttttttttt..",
-    "tttttttttttttttttttttttttttt.",
-    "ttttttttttttttttttttttttttttt",
+    "..tttttttttttttttttttttttttt..",
+    "..tttttttttttttttttttttttttt..",
     "..................................",
   ],
   // An open frame: two posts with a gap between them, which is what a driver's
   // cab is. The gap is the read — a solid block here would be a van.
   driver: [
-    "..tyyyyyyt....tyyyyyyyyt....",
-    ".tyyyyyyyy....tyyyyyyyyy...",
-    ".tyyyyyyyy....tyyyyyyyyy...",
-    "...tttttttttt..tttttttttt...",
-    "..tttttttttttttttttttttttt..",
-    "ttttttttttttttttttttttttttttt",
+    "..gggggggg....gggggggggg....",
+    ".tyyyyyyyy....tyyyyyyyyyyy...",
+    "tyyyyyyyyy....tyyyyyyyyyyyy..",
+    "tyyyyyyyyy....tyyyyyyyyyyyy..",
+    "...tttttttttt..tttttttttttt...",
+    "...tttttttttt..tttttttttttt...",
     "..................................",
   ],
   // The widest and lowest of the fleet, and the front-heavy one: a blade
-  // pushes, so the mass sits ahead of where the arm pivots.
+  // pushes, so the mass sits ahead of where the arm pivots and the track runs
+  // the whole length underneath it.
   dozer: [
-    "...tyyyyyyyyyyyyyyyyyyyyyy...",
-    "..tyyyyyyyyyyyyyyyyyyyyyyy..",
+    "..gggggggggggggggggggggggg..",
+    ".tyyyyyyyyyyyyyyyyyyyyyyyyyt.",
+    "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
     "tyyyyyyyyyyyyyyyyyyyyyyyyyyy",
     ".ttttttttttttttttttttttttttt.",
-    "ttttttttttttttttttttttttttttt",
-    "ttttttttttttttttttttttttttttt",
+    ".ttttttttttttttttttttttttttt.",
     "..................................",
   ],
 };
-
 /**
  * The arm, per kind per pose. Thirteen rows of the whole drawing.
  *
