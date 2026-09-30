@@ -170,9 +170,18 @@ Two kinds: **row roads** filling the gaps the layout already creates, and
 subdirectory is inside its parent, the analyzer already nests them, and the
 statement is always true.
 
-**Import dependency is out of scope.** A road from one package to another because
-one calls the other says far more than "this is inside that", and it is a
-dependency graph the daemon does not build. It gets its own spec.
+**Import dependency is out of scope** — and this line was right, and is now
+history. A road from one package to another because one calls the other does
+say far more than "this is inside that", and the daemon did not build the graph.
+It does now (`importEdgesCounting`), the road was built, and the road was removed:
+see issues 15 and 35. A connection needs width, a surface, a kerb and ends, and
+having all four it crosses the buildings it passes. The dependency is now a
+property of a building — `Site.Imports`, a hairline on the importing building's own
+plot, and the list in the panel — which is this spec's own argument applied one
+step further than it was written for.
+
+**It got its own spec**, as the line above predicted:
+`docs/superpowers/specs/2026-09-29-town-liveliness.md`.
 
 ## Consequences
 

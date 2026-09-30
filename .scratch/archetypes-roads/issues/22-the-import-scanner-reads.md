@@ -4,10 +4,11 @@
 
 **Blocked by:** none
 
-**Status:** done
+**Status:** done — the scanner is unchanged; the roads it used to produce are
+not. Read the amendment below before assuming the map draws one.
 
-- [x] A multi-line TypeScript import produces a road
-- [x] `export … from "…"` and a dynamic `import("…")` produce roads
+- [x] A multi-line TypeScript import is recorded
+- [x] `export … from "…"` and a dynamic `import("…")` are recorded
 - [x] A commented-out import produces none, in all three comment forms
 - [x] Comment stripping respects string literals, so a `//` in a URL is not one
 
@@ -52,12 +53,30 @@ takes a real import with it. Strings are tracked, so a URL stays a URL.
 
 ### The tests, and proving they bite
 
-`TestCommentedImportIsNotARoad` asserts **exactly one** road, not "at least one" —
+`TestCommentedImportDoesNotCount` (renamed from `TestCommentedImportIsNotARoad` when issue 35 removed the road) asserts **exactly one** edge, not "at least one" —
 three commented Go imports sit in the fixture beside one real TypeScript import, so
 a stripper that did nothing would produce four. The first version of that test
 asserted `n != 0`, which passes with the stripper completely broken. Disabling
-`stripComments` now produces 2 roads instead of 1 and the test fails.
+`stripComments` now produces 2 edges instead of 1 and the test fails.
 
-`TestMultiLineImportStillMakesARoad` is decisive by construction: the fixture
-contains no single-line import at all, so the road can only come from the
+`TestMultiLineImportStillCounts` is decisive by construction: the fixture
+contains no single-line import at all, so the edge can only come from the
 multi-line path.
+
+### Amendment — same as issue 15, and for the same reason
+
+Nothing in this ticket's *scanner* changed, and none of its guarantees moved.
+What moved is the carrier: an import edge is now a property of a building
+(`Site.Imports`), and **no road is drawn between two buildings** — see issue 35
+for why, and issue 15 for the same argument at feature level.
+
+The two test names changed with the carrier, and are the only names in this file
+that no longer resolve: `TestCommentedImportIsNotARoad` is
+`TestCommentedImportDoesNotCount`, and `TestMultiLineImportStillMakesARoad` is
+`TestMultiLineImportStillCounts`. Both still assert exactly what this ticket says
+they assert — one edge, not zero; and an edge that can only have come from a
+multi-line specifier.
+
+What was a "road" in this file is an "edge" now, and the distinction is the
+whole of issue 35: the *fact* was always the deliverable and the road was only
+ever its carrier.
