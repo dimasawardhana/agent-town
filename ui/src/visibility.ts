@@ -39,6 +39,21 @@ export function visibleAt(s: VisibleSite, filter: number): boolean {
 }
 
 /**
+ * workerLabelId is the id a figure's caption is focusable and hoverable under.
+ *
+ * Namespaced, because the store's `focused`/`hovered`/`following` carry ids from
+ * two owners — `WorkerLayer`'s figures and the scene's buildings — and a raw
+ * worker id that happened to equal a site id would light both labels at once.
+ * The prefix makes that collision impossible rather than unlikely.
+ *
+ * It lives here rather than in `workers.ts` because the store needs it too: the
+ * follow state is written by the store and read by the scene, and `workers.ts`
+ * imports the store, so a prefix declared there could not be imported back
+ * without a cycle. This module imports nothing, so both can reach it.
+ */
+export const workerLabelId = (id: string): string => `worker:${id}`;
+
+/**
  * labelVisible decides whether a label is shown.
  *
  * Two things can show one: the pointer being over what it names, and the label
@@ -51,16 +66,35 @@ export function visibleAt(s: VisibleSite, filter: number): boolean {
  * disappears and shows on the thing we are focusing on instead" is a statement
  * about one label being lit. A boolean per label can hold two focuses at once,
  * and clearing the previous one is then something every call site has to
- * remember rather than something the model cannot express.
+ * remember rather than something the model can express.
  *
  * Hover is deliberately weaker than focus: it applies only while the pointer is
  * on the object, so moving off restores the focused label and drops a preview.
  * A preview and a focus can therefore both be lit, which is the behaviour a
  * reader wants — pointing at a second building to read its name does not throw
  * away the one they clicked.
+ *
+ * A followed figure is a third thing that shows a label, and it is the one case
+ * that is not a pointer at all: following a machine is a request to watch it
+ * work, and its caption is the only thing that says which of the eight actions
+ * the pose is standing in for. It is scoped to one id for the same reason focus
+ * is — two machines both "followed" would be two cameras, and there is one.
+ *
+ * The parameter is optional and last so that the site labels, which are swept by
+ * the same rule and can never equal a `worker:` id, keep calling this with the
+ * three arguments they have always passed.
  */
-export function labelVisible(id: string, hovered: string | null, focused: string | null): boolean {
-  return id === focused || id === hovered;
+export function labelVisible(
+  id: string,
+  hovered: string | null,
+  focused: string | null,
+  following: string | null = null,
+): boolean {
+  return (
+    id === focused ||
+    id === hovered ||
+    (following !== null && id === workerLabelId(following))
+  );
 }
 
 /**

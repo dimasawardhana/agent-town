@@ -20,6 +20,7 @@ ui/ui-daylight.test.mjs
 ui/ui-visibility.test.mjs
 ui/ui-light.test.mjs
 ui/ui-atlas.test.mjs
+ui/ui-follow.test.mjs
 ui-blankcaps.test.mjs
 ui-archetypes.test.mjs
 ui-damage.test.mjs

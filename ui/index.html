@@ -436,6 +436,83 @@
         text-align: right;
       }
 
+      /* The follow control. It wraps the row's spans rather than sitting beside
+         them, so the row's own left rule, its tier chip and its place name keep
+         the positions they had — the reader who never follows sees the same list
+         they saw before, with a different cursor over it. */
+      .crew .follow {
+        display: flex;
+        gap: 7px;
+        align-items: baseline;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      /* The followed row says so by its own rule, the same one-pixel signal the
+         rest of the panel uses for a crew's agent colour, rather than by a wash:
+         a whole-row tint on the one row the camera is on would be the loudest
+         thing in a 316px column. */
+      .crew .follow.on { box-shadow: inset 2px 0 0 var(--accent); padding-left: 4px; }
+      .crew .follow:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+      /* The banner. A reader who has lost the machine in a big town needs one
+         line that says which one it is and one control that stops it; both are
+         here rather than on the row so they are found without hunting the list
+         for the row that is currently lit. */
+      .crew .following-now {
+        display: flex;
+        /* `nowrap`, and a `min-width: 0` on the truncating span below, because a
+           flex item's default `min-width: auto` refuses to shrink below its
+           content: without them the action text pushed the Stop button onto a
+           second line, where it read as a control belonging to the crew list
+           underneath it. */
+        flex-wrap: nowrap;
+        gap: 7px;
+        align-items: baseline;
+        margin: 0 14px 8px 12px;
+        padding: 4px 0 4px 8px;
+        border-left: 1px solid var(--accent);
+      }
+      .crew .following-now .nm {
+        font-family: var(--pixel);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--text-dim);
+      }
+      /* `flex: none` and no wrapping: this is a name, and a name broken across
+         three lines ("omp / moke- / a") is less readable than no name at all. It
+         is also the one span that must never be the one to ellipsise — the
+         action beside it degrades gracefully and this does not. */
+      .crew .following-now .who { flex: none; white-space: nowrap; color: var(--testing); }
+      .crew .following-now .what {
+        flex: 1 1 auto;
+        min-width: 0;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .crew .following-now button {
+        flex: none;
+        margin-left: auto;
+        font-family: var(--pixel);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--void);
+        background: var(--accent);
+        border: 0;
+        padding: 2px 5px;
+        cursor: pointer;
+      }
+      .crew .following-now button:focus-visible { outline: 1px solid var(--text); outline-offset: 1px; }
+
       .feed { flex: 1; overflow-y: auto; padding-bottom: 12px; }
       .feed h2 { margin: 12px 14px 8px; }
       .feed ul { list-style: none; margin: 0; padding: 0; }

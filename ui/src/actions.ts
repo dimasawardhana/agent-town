@@ -71,3 +71,32 @@ export function targetOf(place: string, prefix: string): string {
   const cut = path.lastIndexOf("/");
   return cut >= 0 ? path.slice(cut + 1) : path;
 }
+
+/**
+ * crewLabel is what a crew is called in the panel: the agent, then enough of its
+ * session to tell two of them apart.
+ *
+ * The session is the whole of the disambiguation, and it is needed because the
+ * daemon builds one chief per session with the same agent name — two omp
+ * sessions on one repo are two identical rows without it, and following is a
+ * coin toss.
+ *
+ * **The tail, not the head, and that is measured rather than assumed.** omp's
+ * session ids are ULIDs, and a ULID's first ten characters are its creation
+ * timestamp in base32 — so every session opened in the same stretch of time
+ * shares them. A live run produced four crews whose ids were
+ * `01a0f635-2029-…`, `01a0f635-a03d-…`, `01a0f635-a031-…` and
+ * `01a0f635-a020-…`: the first build of this took eight characters from the
+ * front and rendered all four as `omp 01a0f635`, which is the one thing the
+ * name exists to prevent. The entropy in a ULID is all after the tenth
+ * character, and in a UUIDv4 it is the last group, so the tail separates both.
+ * Six characters is enough to tell real ids apart and short enough to sit beside
+ * an action in a 316px column.
+ *
+ * A session with no id gets the agent alone rather than a trailing separator:
+ * "omp undefined" reads as a real value that went wrong, which is worse than no
+ * name at all.
+ */
+export function crewLabel(agent: string, session: string): string {
+  return session ? `${agent} ${session.slice(-6)}` : agent;
+}

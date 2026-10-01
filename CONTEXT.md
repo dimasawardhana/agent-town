@@ -66,6 +66,17 @@ _Avoid_: group, folder, parent, namespace, node
 Which way round the town is drawn, in quarter turns. A view preference like detail depth: the layout from the daemon is never changed, only turned on the way *out* of it, so a turn cannot change what the town says — only how the reader is looking at it. The turn is about the world origin and linear, which is what lets a building's art be plotted in its own frame and still land correctly. The light does not turn with the town: it is fixed at the picture's top-left, so the wall that catches it changes as the world turns under a fixed sun.
 _Avoid_: rotation angle, compass, orientation, bearing
 
+**Follow**:
+Which way the camera is pointed when it is following one worker, rather than
+framing the whole town. A view preference like Turn: the layout from the daemon
+is never changed, only aimed, so following cannot change what the town says —
+only what the reader is looking at. One worker at a time, and the zoom floors at
+three while it lasts. The follow ends when the reader stops it, when the view
+changes to the plan — a plan draws workers as marks, and there is nothing there
+to follow — and when the followed crew stops being reported, which is not the
+same as the session ending: a finished crew stands down and stays where it is.
+_Avoid_: third-person view, chase camera, lock-on, spectate
+
 **Land**:
 The field a town stands on, and the ground texture painted into one canvas. It is sized from the **layout's own extent**, never from the sites, because the field does not come and go with the detail filter — a deeper directory being hidden must not shrink the world. The canvas must cover the land: sizing it from the sites alone leaves the town's own fields cut off mid-tile.
 _Avoid_: terrain, map, ground texture, background
@@ -238,6 +249,10 @@ _Avoid_: server, backend, collector, listener
 - ADR-0016: The extension may default its target address, but still fails silent
 - ADR-0017: The daemon checks Host and Origin on every request
 - ADR-0018: The building lifecycle is one ordered ladder, and damage is not a rank
+- ADR-0019: Labels are revealed on hover, and pinned one at a time by focus
+- ADR-0020: The view turns, the world does not
+- ADR-0021: Roofs are deliberate ornament, confined away from every measured channel
+- ADR-0022: A follow view is a camera, not a projection
 
 ## Resolved Questions
 
@@ -253,5 +268,5 @@ Answered by live experiment. Kept because the reasoning matters more than the an
 - **The default port.** 7777 was chosen over 7000 because 7000 collides with macOS AirPlay. It is a guess, not a measured choice.
 
 - **Multi-agent in one town.** `prd.md` §33 promises simultaneous agents. Attribution by session id is designed but not demonstrated with two concurrent sessions.
-- **Subagent mapping.** omp gives subagents their own session id inside the parent process. Rendering them as Sub Workers is mechanically possible; the policy is undecided.
+- **Subagent mapping.** omp gives subagents their own session id inside the parent process. Rendering them as Sub Workers is mechanically possible; the policy is undecided. The follow view inherits this rather than settling it: it follows one session, so a subagent's work is watched as part of its chief.
 - **omp's edit path.** omp carries no top-level path for `edit` — it is embedded in a hashline string. Unobserved in any live run so far, so an edit may currently arrive pathless.

@@ -5,7 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
-import { actionInfo, targetOf } from "./actions";
+import { actionInfo, crewLabel, targetOf } from "./actions";
 import { EMBER_MS } from "./embers";
 import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { STAGE_ORDER, type Stage } from "./art/building";
@@ -205,6 +205,9 @@ export function App() {
   const pushEvent = useTown((s) => s.pushEvent);
   const select = useTown((s) => s.select);
   const focus = useTown((s) => s.focus);
+  const following = useTown((s) => s.following);
+  const follow = useTown((s) => s.follow);
+  const unfollow = useTown((s) => s.unfollow);
   const layout = useTown((s) => s.layout);
   const depth = useTown((s) => s.depth);
   const setDepth = useTown((s) => s.setDepth);
@@ -236,6 +239,11 @@ export function App() {
   // inside the building's own plot; this is where the *which* is answered,
   // because the panel has room for exact names and the map does not.
   const imports = selected?.imports ?? [];
+
+  // The machine being watched, for the banner. Null when the follow has been
+  // released but the worker is still on screen, which is the ordinary case the
+  // banner has to render as nothing rather than as a dangling name.
+  const watched = following ? live.workers.find((w) => w.id === following) : undefined;
 
   // The deepest building the daemon reported, so the detail control's range
   // reflects the town rather than a guessed ceiling. A town whose buildings are
@@ -560,19 +568,51 @@ export function App() {
         {live.workers.length > 0 && (
           <section className="crew">
             <h2>Crew</h2>
+            {/* What the camera is on, and the one control that stops it. It sits
+                above the list rather than on the row because a row is also a
+                target: a reader who has lost the machine in a big town needs one
+                place that says which one, and one place to undo the choice. */}
+            {watched && (
+              <p className="following-now">
+                <span className="nm">Following</span>
+                <span className="who">{crewLabel(watched.agent, watched.session)}</span>
+                <span className="what">{actionInfo(watched.action).plain}</span>
+                <button type="button" onClick={unfollow}>
+                  Stop
+                </button>
+              </p>
+            )}
             <ul>
-              {live.workers.map((w) => (
-                <li key={w.id} className={w.action === "celebrating" ? "done" : ""}>
-                  <span className={`tier ${w.tier}`}>{w.tier}</span>
-                  <span className="agent">{w.agent}</span>
-                  {/* The world's word is the map's job — it captions the figure
-                      itself. Here the panel has room to be exact, so it says
-                      what the agent actually did rather than which animation is
-                      playing: "editing an existing file", not "hammering". */}
-                  <span className="action">{actionInfo(w.action).plain}</span>
-                  <span className="at">{targetOf(w.place, SITE_ID_BUILDING_PREFIX)}</span>
-                </li>
-              ))}
+              {live.workers.map((w) => {
+                const on = following === w.id;
+                return (
+                  <li key={w.id} className={w.action === "celebrating" ? "done" : ""}>
+                    {/* A button rather than a click handler on the row: this is
+                        the one control in the panel that changes what the map is
+                        doing rather than what the panel is describing, and it has
+                        to be reachable by keyboard and announce its state. */}
+                    <button
+                      type="button"
+                      className={`follow ${on ? "on" : ""}`}
+                      aria-pressed={on}
+                      onClick={() => (on ? unfollow() : follow(w.id))}
+                    >
+                      <span className={`tier ${w.tier}`}>{w.tier}</span>
+                      {/* Agent plus the head of the session id. Two sessions of
+                          one agent are the ordinary case — one repo, one agent,
+                          two terminals — and without this the list shows two
+                          identical rows. */}
+                      <span className="agent">{crewLabel(w.agent, w.session)}</span>
+                      {/* The world's word is the map's job — it captions the figure
+                          itself. Here the panel has room to be exact, so it says
+                          what the agent actually did rather than which animation
+                          is playing: "editing an existing file", not "hammering". */}
+                      <span className="action">{actionInfo(w.action).plain}</span>
+                      <span className="at">{targetOf(w.place, SITE_ID_BUILDING_PREFIX)}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}
