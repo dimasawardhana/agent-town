@@ -49,15 +49,18 @@ export interface Daylight {
    *  lighting, and at dusk the town is a town where the work has stopped for
    *  the day. At `day` the same windows read as glass, which is what they are. */
   lit: boolean;
-  /** The cloud colour, or null when this phase has no visible cloud.
+  /** How many cloud sprites are in the sky at this phase.
    *
-   *  `null` at night, and that is a claim rather than a mood: you cannot see
-   *  cloud at night, and drawing one there would be the sky asserting something
-   *  it knows to be false.
+   *  A **count**, where this used to be a colour: the clouds moved out of the
+   *  backdrop and into a drifting sprite layer, and a backdrop cannot be asked
+   *  how many things are in it.
    *
-   *  A palette key, like every other sky colour, for the reason
-   *  `sky.test.ts` exists. */
-  cloud: string | null;
+   *  The claim is unchanged and is still a claim about the hour — **zero at
+   *  night**, because you cannot see cloud at night, and drawing one there would
+   *  be the sky asserting something it knows to be false. Five at day and six at
+   *  dusk is not a weather report: it is the number that fills the band without
+   *  any two clouds touching. */
+  clouds: number;
   /** How many birds are in the sky at this phase.
    *
    *  **A count, and it is the claim.** A bird in the sky is the first thing in
@@ -112,7 +115,7 @@ export const DAYLIGHT: Record<DayPhase, Daylight> = {
     // put there — which is why the first cloud pass was on the canvas and
     // invisible. A cloud has to be lighter than the air behind it or it is not a
     // cloud.
-    cloud: P.plaster[3],
+    clouds: 5,
     birds: 0,
     lit: false,
     lamp: null,
@@ -124,7 +127,7 @@ export const DAYLIGHT: Record<DayPhase, Daylight> = {
     // a cloud at dusk is the last light catching it, and the cloud has to sit
     // *above* the glow or the ladder stops being ordered and the posterise has
     // nothing to step between.
-    cloud: P.plaster[3],
+    clouds: 6,
     birds: 6,
     lit: true,
     lamp: "lamp",
@@ -132,7 +135,7 @@ export const DAYLIGHT: Record<DayPhase, Daylight> = {
   night: {
     label: "Night",
     sky: { ground: P.skyZenith, mid: P.skyMid, void: P.void },
-    cloud: null,
+    clouds: 0,
     birds: 0,
     lit: true,
     lamp: "lamp",

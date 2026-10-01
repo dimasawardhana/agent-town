@@ -36,6 +36,7 @@ import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { Birds } from "./birds";
+import { Clouds } from "./clouds";
 import { SKY_DEPTH, skyTexture } from "./sky";
 import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
@@ -123,6 +124,13 @@ const DEPTH = {
    *  about the building. The one place it is ahead of the ground is a bird that
    *  has drifted below the horizon, which is a bird the sky has already lost. */
   bird: SKY_DEPTH + 1,
+  /** Cloud, behind the birds.
+   *
+   *  A bird is nearer than a cloud, and that ordering is the depth read: the
+   *  whole sky is a flat plane otherwise, and a bird crossing in front of a
+   *  cloud is the one thing that tells a reader the sky has a near side and a
+   *  far one. Both are behind the island for the same reason. */
+  cloud: SKY_DEPTH + 1,
 } as const;
 
 export class TownScene extends Phaser.Scene {
@@ -190,6 +198,9 @@ export class TownScene extends Phaser.Scene {
 
   /** The dusk flock. Rebuilt with the map, and sized by the phase alone. */
   private birds: Birds | null = null;
+
+  /** The drifting cloud. Same terms as the flock: sized by the phase alone. */
+  private clouds: Clouds | null = null;
   /** Cars on the import roads. Generated, so no atlas cost, and re-synced with
    *  the draw so a turn re-routes them against the turned roads. */
   /** The backdrop, pinned to the camera. Resized with the view and no further. */
@@ -224,12 +235,9 @@ export class TownScene extends Phaser.Scene {
   private resizeSky(): void {
     // The flock is placed against the frame, so a resize has to re-place it —
     // the same reason the sky itself is repainted here rather than stretched.
-    this.birds?.reconcile(
-      useTown.getState().day,
-      this.time.now / 1000,
-      this.scale.width,
-      this.scale.height,
-    );
+    const day = useTown.getState().day;
+    this.clouds?.reconcile(day, this.time.now / 1000, this.scale.width, this.scale.height);
+    this.birds?.reconcile(day, this.time.now / 1000, this.scale.width, this.scale.height);
     if (!this.sky) return;
     const w = this.scale.width;
     const h = this.scale.height;
@@ -425,6 +433,8 @@ export class TownScene extends Phaser.Scene {
     this.embers = new Embers(this, DEPTH.ember);
     this.birds?.destroy();
     this.birds = new Birds(this, DEPTH.bird);
+    this.clouds?.destroy();
+    this.clouds = new Clouds(this, DEPTH.cloud);
 
 
     // The sky is here for the same reason the chimneys are: the redraw calls
@@ -1364,12 +1374,9 @@ export class TownScene extends Phaser.Scene {
   override update(time: number): void {
     // The flock first and alone: it needs nothing from the town, so a reader who
     // has the sky open and no layout yet still gets the sky they asked for.
-    this.birds?.reconcile(
-      useTown.getState().day,
-      time / 1000,
-      this.scale.width,
-      this.scale.height,
-    );
+    const day = useTown.getState().day;
+    this.clouds?.reconcile(day, time / 1000, this.scale.width, this.scale.height);
+    this.birds?.reconcile(day, time / 1000, this.scale.width, this.scale.height);
     if (!this.embers || !this.layout) return;
     const { live } = useTown.getState();
     const byPath = new Map(live.buildings.map((b) => [b.path, b.updated]));

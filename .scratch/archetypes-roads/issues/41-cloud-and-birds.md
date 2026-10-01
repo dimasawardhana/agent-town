@@ -128,3 +128,45 @@ source and the suite were both correct. That is the third time in this session a
 stale bundle has cost time — twice by rebuilding and once by not ordering the
 restart after the install — and the tell is always the same: `git status` clean,
 `tsc` clean, tests green, and the browser disagreeing with all three.
+
+## Amendment 2 — cloud became sprite art, and the birds became occasional
+
+Asked for: sprite art, clouds that move, birds that *sometimes* appear. Two of
+those three were not what had shipped.
+
+**Cloud was painted into the backdrop.** A cluster of radial gradients,
+posterised along with the sky. That was wrong twice: a gradient has no pixel grid,
+so a cloud made of gradients could never be the same kind of picture as the
+building beside it, and a cloud painted into a backdrop is nailed to it, because
+a texture cannot move.
+
+Cloud is a sprite now, on the same terms as the bird and the ember — generated,
+so the atlas pays nothing:
+
+- **a union of discs with a flat base.** That is how a cloud is drawn, and it is
+  also the only construction that gets a hard edge and a straight underside out of
+  the same code. Three tones of plaster read as light: crown, body, shadowed base.
+- **three sizes and two variants**, six textures, hashed from `(width, variant)`
+  so a given cloud is always the same cloud.
+- `DAYLIGHT.cloud` — a *colour* — became `DAYLIGHT.clouds`, a **count**, because
+  a backdrop cannot be asked how many things are in it.
+
+**Birds were always out.** Six circling for the whole of a dusk is not
+"sometimes", it is furniture — a reader who has watched one for a minute has
+stopped seeing a bird. `FLOCK_PERIOD = 48`, `FLOCK_VISIBLE = 12`: a flock
+crosses and is gone for most of a minute, about two sightings a minute, and the
+window is a pure function of the clock so two clients see the same flock.
+
+## Two things this got wrong on the way
+
+**The clouds came out as flat bars.** The disc radii were sized as a fraction of
+the *width*, which at 38 wide put 6-to-17-pixel discs into a sixteen-pixel-tall
+box. Their union was the whole rectangle and every cloud was a slab. A cloud's
+proportions are set by its height — that is what makes the thing wide and shallow
+— so that is what the discs are sized against.
+
+**The variant axis was never on screen.** `setTexture` was handed the first key
+matching a size, which is always variant 0, and then asked for frame 1 — a frame
+a canvas texture does not have. The variant existed in the art, in the tests and
+on disk, and had never once been drawn. The suite passed the whole time, because
+every test looked at the pixels rather than at the key the layer asked for.

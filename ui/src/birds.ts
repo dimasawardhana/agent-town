@@ -141,6 +141,34 @@ export function birdPath(
   return { x, y: base + bob, speed };
 }
 
+/**
+ * FLOCK_PERIOD is how long the cycle is, and FLOCK_VISIBLE how much of it the
+ * birds are out for.
+ *
+ * **"Sometimes" is a number, and these two are it.** The first version had six
+ * birds circling the dusk sky for as long as the phase lasted, which is not
+ * "sometimes" — it is always, and always reads as furniture. A flock that crosses
+ * and is gone for most of a minute is something that happened.
+ *
+ * Both are whole seconds and the ratio is 1 in 4, chosen so a reader watching
+ * for a minute sees a flock twice and does not wonder whether it is broken. A
+ * shorter period is a bird that flickers, which at this size reads as a defect in
+ * the renderer rather than as life — the same reason the wing does not flap.
+ */
+export const FLOCK_PERIOD = 48;
+export const FLOCK_VISIBLE = 12;
+
+/**
+ * flockOut is whether any bird is in the air at time `t`.
+ *
+ * A pure function of the clock, so two clients watching the same town see the
+ * same flock and a redraw does not conjure one — and so a test can ask "is a bird
+ * ever out?" without waiting for it.
+ */
+export function flockOut(t: number): boolean {
+  return ((t % FLOCK_PERIOD) + FLOCK_PERIOD) % FLOCK_PERIOD < FLOCK_VISIBLE;
+}
+
 /** Birds owns the flock, and the flock is only ever as large as the phase asks for. */
 export class Birds {
   private readonly scene: Phaser.Scene;
@@ -161,7 +189,12 @@ export class Birds {
    * and no way for a second one to disagree with it.
    */
   reconcile(phase: DayPhase, t: number, w: number, h: number): void {
-    const want = DAYLIGHT[normaliseDay(phase)].birds;
+    // Both gates, and both from the phase table: dusk or nothing, and even at
+    // dusk only sometimes. The sprite is hidden rather than destroyed when the
+    // flock is in, because a bird that is created and destroyed every twelve
+    // seconds is twelve seconds of allocation a minute for a thing that is not
+    // there.
+    const want = flockOut(t) ? DAYLIGHT[normaliseDay(phase)].birds : 0;
     while (this.sprites.length > want) this.sprites.pop()?.destroy();
     while (this.sprites.length < want) {
       const s = this.scene.add.image(0, 0, birdTexture(this.scene));
@@ -175,6 +208,7 @@ export class Birds {
       const p = birdPath(i, t, w, h);
       this.sprites[i].setPosition(p.x, p.y);
     }
+    // `want` is above, so nothing else has to know about the window.
   }
 
   destroy(): void {

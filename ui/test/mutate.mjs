@@ -126,18 +126,29 @@ const MUTATIONS = [
     // the phase table to hang the hour off.
     what: "a bird flies at night",
     file: "src/daylight.ts",
-    from: "    cloud: null,\n    birds: 0,",
-    to: "    cloud: null,\n    birds: 6,",
+    from: "    clouds: 0,\n    birds: 0,",
+    to: "    clouds: 0,\n    birds: 6,",
     suite: "test:birds",
   },
   {
     // The cloud field emptied. Every loop over CLOUD_COUNT is vacuous at zero,
     // which is why the sky suite pins the count as well as the clouds.
+    // The cloud field emptied. Every loop over CLOUD_COUNT is vacuous at zero,
+    // which is why the cloud suite pins the count as well as the clouds.
     what: "the sky loses its cloud",
-    file: "src/sky.ts",
-    from: "export const CLOUD_COUNT = 7;",
+    file: "src/clouds.ts",
+    from: "export const CLOUD_COUNT = 6;",
     to: "export const CLOUD_COUNT = 0;",
-    suite: "test:sky",
+    suite: "test:clouds",
+  },
+  {
+    // A bird is out at night. Birds roost by dark, so this is the town
+    // asserting something it knows to be untrue.
+    what: "the flock never appears",
+    file: "src/birds.ts",
+    from: "  return ((t % FLOCK_PERIOD) + FLOCK_PERIOD) % FLOCK_PERIOD < FLOCK_VISIBLE;",
+    to: "  return false;",
+    suite: "test:clouds",
   },
   {
     // The posterise stops happening, and the sky goes back to being a smooth
