@@ -99,7 +99,12 @@
       }
 
       .app { display: flex; height: 100%; }
-      #town { flex: 1; position: relative; min-width: 0; }
+      /* The stage is the positioning context for the floating controls, and is a
+         wrapper rather than `#town` itself because `#town` is the node Phaser
+         mounts the canvas into — two owners appending to one element is a race
+         neither admits to. */
+      .stage { flex: 1; position: relative; min-width: 0; }
+      #town { position: absolute; inset: 0; }
       #town canvas {
         display: block;
         /* The town is pannable and zoomable, so say so. Without a cursor the
@@ -134,60 +139,94 @@
       }
       .panel > * { flex: none; }
 
-      /* The agent bar. `position: sticky` inside the scrolling panel, so it is
-         the one row that survives a scroll — which is the entire reason it
-         exists. The sideways scroll keeps its height independent of how many
-         agents are running, so a busy session does not push the rest of the
-         panel down. Its scrollbar is hidden rather than restyled: a visible
-         one in a strip this short would be the panel's loudest element, and the
-         chips themselves already say there is more to the side. */
-      .agent-bar {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-        display: flex;
-        gap: 6px;
-        padding: 8px 14px;
-        background: var(--panel);
-        border-bottom: 1px solid var(--edge);
-        overflow-x: auto;
-        scrollbar-width: none;
+      /* The floating controls. The overlay covers the whole stage and takes no
+         clicks: the town is panned by dragging the canvas, and a transparent
+         full-bleed layer that swallowed those drags would make the map feel
+         broken in a way that is hard to describe and easy to blame on the
+         renderer. Only the controls themselves are clickable. */
+      .hud {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 3;
       }
-      .agent-bar::-webkit-scrollbar { display: none; }
-      .agent-bar .chip {
-        flex: none;
+      .hud-group { position: absolute; top: 10px; pointer-events: auto; }
+      .hud-group.left { left: 10px; }
+      .hud-group.right { right: 10px; }
+
+      /* The trigger. Two lines — a fixed pixel-font key and a value — so the
+         button is the same size whether it says "3 agents" or a session name,
+         and the thing that changes is the thing that changed. A followed crew
+         is named on the button itself, because a control that only opened a
+         list would put "which machine am I watching" one click further away
+         than it was before it floated. */
+      .hud-btn {
         display: flex;
         flex-direction: column;
         align-items: flex-start;
         gap: 2px;
-        padding: 3px 7px;
+        padding: 5px 9px;
+        background: var(--panel);
         border: 1px solid var(--edge);
-        background: var(--raised);
         color: inherit;
         font: inherit;
         text-align: left;
         cursor: pointer;
       }
-      .agent-bar .chip .who {
+      .hud-btn .k {
         font-family: var(--pixel);
         font-size: 8px;
         text-transform: uppercase;
         letter-spacing: .06em;
-        color: var(--testing);
-        white-space: nowrap;
-      }
-      .agent-bar .chip .what {
-        font-size: 10px;
         color: var(--text-dim);
-        white-space: nowrap;
       }
-      /* The followed chip is the one thing in the panel outlined in the accent,
-         the same signal the followed row carries further down, so the two agree
-         about which machine the camera is on instead of being two controls that
-         could disagree. */
-      .agent-bar .chip.on { border-color: var(--accent); }
-      .agent-bar .chip.on .what { color: var(--text); }
-      .agent-bar .chip:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+      .hud-btn .v { font-size: 11px; color: var(--text); white-space: nowrap; }
+      .hud-btn.following { border-color: var(--accent); }
+      .hud-btn.following .v { color: var(--accent); }
+      .hud-btn:hover { background: var(--raised); }
+      .hud-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+      /* The popover. Positioned under its own trigger and never wider than the
+         column it came from, so it reads as belonging to the button rather than
+         as a second panel. `overflow-y` because a busy town can list more crews
+         than fit, and a popover that grows off the bottom of the screen is a
+         popover that has hidden the control that closes it. */
+      .hud-pop {
+        position: absolute;
+        top: calc(100% + 6px);
+        width: 300px;
+        max-height: 60vh;
+        overflow-y: auto;
+        padding: 10px 12px;
+        background: var(--panel);
+        border: 1px solid var(--edge);
+        box-shadow: 0 6px 0 -2px rgba(0, 0, 0, .45);
+      }
+      .hud-group.right .hud-pop { right: 0; }
+      .hud-pop .detail-control,
+      .hud-pop .view-control { padding: 0 0 10px; }
+      .hud-pop .detail-control + .view-control { padding-top: 10px; border-top: 1px solid var(--edge); }
+      .hud-pop .detail-control h2 { margin: 0 0 6px; }
+
+      /* The crew list keeps the panel's own row treatment — the tier chip, the
+         one-pixel left rule, the place name pushed right — so a row looks the
+         same wherever it is read. */
+      .hud-pop .crew-list { list-style: none; margin: 0; padding: 0; }
+      .hud-pop .crew-list li {
+        padding: 4px 4px 4px 8px;
+        border-left: 1px solid var(--edge);
+      }
+      .hud-pop .crew-list li:hover { background: var(--raised); }
+      .hud-pop .crew-list li.done { opacity: .5; }
+      .hud-pop .crew-list .follow {
+        display: flex; gap: 7px; align-items: baseline; width: 100%;
+        padding: 0; border: 0; background: none; color: inherit;
+        font: inherit; text-align: left; cursor: pointer;
+      }
+      .hud-pop .crew-list .follow.on { color: var(--accent); }
+      .hud-pop .crew-list .at { margin-left: auto; font-size: 10px; }
+      .hud-pop .following-now { margin: 0 0 8px; }
+      .hud-pop .following-now button { margin-left: auto; }
 
       /* The title bar is the panel's one piece of pure chrome: town name in the
          town's own face, with the connection lamp at the end of it. */
@@ -611,7 +650,10 @@
          full width; the panel scrolls underneath. */
       @media (max-width: 900px) {
         .app { flex-direction: column; }
-        #town { flex: 0 0 62%; min-height: 0; }
+        /* The stage carries the flex share, not `#town`: the controls float
+           inside it, and a share of zero would stack them on top of the panel
+           instead of the town. */
+        .stage { flex: 0 0 62%; min-height: 0; }
         .panel {
           width: 100%;
           flex: 1 1 auto;

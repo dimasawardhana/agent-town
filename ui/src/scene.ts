@@ -33,7 +33,7 @@ import {
   noWindowLightFrame,
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
-import { clampZoom, followZoom } from "./follow";
+import { FOLLOW_ZOOM, clampZoom, followZoom } from "./follow";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { Birds } from "./birds";
@@ -320,6 +320,27 @@ export class TownScene extends Phaser.Scene {
    * watched and nothing about how (see `State.following`).
    */
   private followZoomBefore: number | null = null;
+
+  /**
+   * The zoom a running follow is sitting at, restored after a re-frame.
+   *
+   * Separate from `followZoomBefore` because that is the zoom to go *back* to on
+   * release — usually the whole-town fit — and this is the one to hold *during*.
+   * One field cannot answer both: a reader who wheeled to 4x to read a building
+   * while following wants 4x back after a turn, and 1x back after they stop.
+   */
+  private followZoomActive = FOLLOW_ZOOM;
+
+  /**
+   * Set by `fit`, consumed by `followTick`.
+   *
+   * `fit` is the one thing that moves the camera to a zoom a follow must not be
+   * at, and it happens without the follow knowing: a turn, a depth change that
+   * alters the town signature, a project switch, the first draw. A flag rather
+   * than a comparison, because the follow cannot tell a re-frame from a reader
+   * who deliberately wheeled out — both are just "the zoom is not what I set".
+   */
+  private reframed = false;
 
   /**
    * Every label on screen, by the id of the thing it names.
@@ -1573,6 +1594,26 @@ export class TownScene extends Phaser.Scene {
       return;
     }
 
+    // A re-frame puts the camera back at the whole-town fit, which is the one
+    // zoom a follow must never sit at: the machine becomes the 2.5% speck the
+    // floor exists to rule out, while the button still says you are watching it.
+    //
+    // A turn causes this. ADR-0020 has a turned layout start at the origin and
+    // *swap its extent*, and both numbers are in the fit signature — so turning
+    // the town changes the signature and re-fits, even though `turn` itself is
+    // not in it. Measured: a turn during a follow dropped the camera from 3x to
+    // the 1x whole-town frame and left the follow running.
+    if (this.reframed) {
+      this.reframed = false;
+      // Only once a follow is established. On the frame a follow *starts*, the
+      // block below raises the zoom from whatever the camera actually had, and
+      // that pre-follow value is the one worth remembering — restoring the
+      // in-force zoom first would overwrite it, so the follow would "restore"
+      // its own floor on release. Measured: Stop returned the camera to 3x
+      // instead of the 1x whole-town fit it started from.
+      if (this.followZoomBefore !== null) cam.setZoom(this.followZoomActive);
+    }
+
     if (this.followZoomBefore === null) {
       // Saved on the first frame of a follow, not at the call that started it,
       // so the zoom is whatever the camera actually had — including a fit that
@@ -1580,6 +1621,13 @@ export class TownScene extends Phaser.Scene {
       this.followZoomBefore = cam.zoom;
       cam.setZoom(followZoom(cam.zoom));
     }
+    // The zoom the follow is running at, recorded rather than recomputed, so a
+    // re-frame restores the one the reader had — a reader who wheeled in to 4x
+    // to read a building gets 4x back after a turn, not the floor. Clamped to
+    // the floor on the way in, because a reader who wheeled *out* past it was
+    // answering a different question and must not have their choice restored
+    // over them after a turn.
+    this.followZoomActive = followZoom(cam.zoom);
     // `setBounds` in `draw` already clamps a target that walks to the edge of the
     // town, and that is the right answer: the camera may follow a machine across
     // the land, not off it.
@@ -2152,6 +2200,10 @@ export class TownScene extends Phaser.Scene {
    * made "make the land bigger" shrink the town.
    */
   private fit(l: Layout): void {
+    // Announced before this method moves anything, so a follow running when it
+    // lands re-asserts its own zoom on the next frame rather than spending the
+    // rest of the session at the whole-town fit.
+    this.reframed = true;
     const cam = this.cameras.main;
     if (this.view === "plan") {
       const b = planBox(l);

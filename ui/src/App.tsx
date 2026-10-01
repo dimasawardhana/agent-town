@@ -4,16 +4,15 @@
 // store the scene writes to.
 
 import { useEffect, useRef } from "react";
-import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
-import { actionInfo, crewLabel, targetOf } from "./actions";
+import { type BuildingState, useTown } from "./store";
 import { EMBER_MS } from "./embers";
 import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { STAGE_ORDER, type Stage } from "./art/building";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
-import { DAYLIGHT, DAY_PHASES } from "./daylight";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { TownCanvas } from "./TownCanvas";
+import { Hud } from "./Hud";
 
 /**
  * The ladder in the words a developer would use, and what each rank adds.
@@ -205,19 +204,6 @@ export function App() {
   const pushEvent = useTown((s) => s.pushEvent);
   const select = useTown((s) => s.select);
   const focus = useTown((s) => s.focus);
-  const following = useTown((s) => s.following);
-  const follow = useTown((s) => s.follow);
-  const unfollow = useTown((s) => s.unfollow);
-  const layout = useTown((s) => s.layout);
-  const depth = useTown((s) => s.depth);
-  const setDepth = useTown((s) => s.setDepth);
-  const turn = useTown((s) => s.turn);
-  const turnBy = useTown((s) => s.turnBy);
-  const setTurn = useTown((s) => s.setTurn);
-  const view = useTown((s) => s.view);
-  const toggleView = useTown((s) => s.toggleView);
-  const day = useTown((s) => s.day);
-  const setDay = useTown((s) => s.setDay);
 
 
   // The selected site's building state, if it is a building the town knows
@@ -240,38 +226,6 @@ export function App() {
   // because the panel has room for exact names and the map does not.
   const imports = selected?.imports ?? [];
 
-  // The machine being watched, for the banner. Null when the follow has been
-  // released but the worker is still on screen, which is the ordinary case the
-  // banner has to render as nothing rather than as a dangling name.
-  const watched = following ? live.workers.find((w) => w.id === following) : undefined;
-
-  // The deepest building the daemon reported, so the detail control's range
-  // reflects the town rather than a guessed ceiling. A town whose buildings are
-  // all top-level has nothing to filter, and the control hides itself.
-  const maxDepth = layout
-    ? layout.sites.reduce((m, s) => Math.max(m, s.depth), 1)
-    : 1;
-
-  // The agent bar scrolls sideways, so a followed crew can sit off the end of
-  // the strip with its chip out of sight — the bar would then be visible and
-  // say nothing about which machine the camera is on, which is the one thing it
-  // exists to say. `nearest` on both axes: the chip is brought into the strip
-  // without the bar scrolling the panel, and nothing moves when it is already
-  // visible.
-  //
-  // Keyed on the roster as well as the follow, because a crew arriving reflows
-  // the strip and can push a chip that was in view out of it. Measured: with six
-  // chips showing, a seventh arriving left the followed chip 340px to the left
-  // of the bar's own left edge, and the effect did not run because nothing about
-  // the follow had changed. A joined id list is what changes when the crew does
-  // — the same signature `planCrewSignature` uses to gate the plan's marks.
-  const bar = useRef<HTMLElement>(null);
-  const crewKey = live.workers.map((w) => w.id).join("|");
-  useEffect(() => {
-    bar.current
-      ?.querySelector(".chip.on")
-      ?.scrollIntoView({ inline: "nearest", block: "nearest" });
-  }, [following, crewKey]);
   // load reads one project's town. An empty path names none, which the daemon
   // answers with every project it serves.
   const load = useRef(async (project: string) => {
@@ -331,7 +285,14 @@ export function App() {
 
   return (
     <div className="app">
-      <TownCanvas />
+      {/* The stage is the positioning context for the floating controls. It is
+          its own element rather than `#town` itself, because `#town` is the
+          element Phaser mounts the canvas into and two owners appending children
+          to one node is a race neither of them admits to. */}
+      <div className="stage">
+        <TownCanvas />
+        <Hud />
+      </div>
       <aside className="panel">
         <header>
           <h1>{town ? town.name : "AI Town"}</h1>
@@ -343,149 +304,9 @@ export function App() {
 
         <ProjectSwitcher />
 
-        {/* The agent bar: every live crew, always on screen, one click to
-            follow. The Crew list further down says more, and is easy to lose —
-            it sits below Places, and the panel used to clip rather than scroll,
-            so on a short viewport a list that grew with the number of running
-            agents was clipped and unreachable rather than scrolled to. A reader
-            who has lost track of which machine is theirs should not have to
-            scroll to find out.
-
-            It scrolls sideways rather than stacking, so its height does not
-            depend on how many agents are running — otherwise a busy session
-            would push everything below it down, which is the problem it is
-            meant to solve.
-
-            The world's word rather than the panel's usual plain one, which is
-            the one deliberate departure from the rule the Crew list follows. A
-            chip is a picker and not a description, and "Hammering" is scannable
-            in a strip this narrow where "editing an existing file" is not. */}
-        {live.workers.length > 0 && (
-          <nav ref={bar} className="agent-bar" aria-label="Live agents">
-            {live.workers.map((w) => {
-              const on = following === w.id;
-              return (
-                <button
-                  key={w.id}
-                  type="button"
-                  className={`chip ${on ? "on" : ""}`}
-                  aria-pressed={on}
-                  onClick={() => (on ? unfollow() : follow(w.id))}
-                >
-                  <span className="who">{crewLabel(w.agent, w.session)}</span>
-                  <span className="what">{actionInfo(w.action).world}</span>
-                </button>
-              );
-            })}
-          </nav>
-        )}
 
         {town && <TownPulse />}
 
-        {/* The detail control. It limits which buildings are *drawn*, by how
-            deep they sit below the repo root.
-
-            This is a view filter and nothing more: the layout is computed once
-            in full and filtered on the way out, so moving this cannot shift a
-            building that is already on screen. That property is why the control
-            is safe to offer at all — the first design re-ran the layout over a
-            subset, which renumbered the placement slices and moved 12 of 18
-            buildings on screen.
-
-            The maximum is the deepest site the daemon actually reported, not a
-            guessed number: a town with no nested buildings gets no control to
-            speak of, and one nested five deep gets all five. */}
-        {town && maxDepth > 1 && (
-          <section className="detail-control">
-            <h2>Detail</h2>
-            <label htmlFor="depth">
-              {depth === Number.POSITIVE_INFINITY
-                ? "Everything"
-                : depth === 1
-                  ? "Top level only"
-                  : `${depth} levels deep`}
-            </label>
-            <input
-              id="depth"
-              type="range"
-              min={1}
-              max={maxDepth}
-              step={1}
-              value={depth === Number.POSITIVE_INFINITY ? maxDepth : depth}
-              onChange={(e) => setDepth(Number(e.target.value))}
-            />
-          </section>
-        )}
-
-        {/* The view controls. All three are preferences over how the *same* town
-            is shown: none is sent anywhere, and none can change what the map
-            says. Turning is offered only when there is a town to turn, and the
-            reset appears only once the view is off its default, so the panel
-            does not carry a control that would do nothing.
-
-            The light is a *phase* and not a clock, and the control names all
-            three rather than stepping through them: a reader who wants night
-            should not have to press a button twice to find out which way the
-            cycle runs, and a control that could show a value nobody chose is a
-            control that lies about the town's one key light. */}
-        {town && (
-          <section className="view-control">
-            <h2>View</h2>
-            <div className="turn-row">
-              <button
-                className="bevel"
-                onClick={toggleView}
-                aria-pressed={view === "plan"}
-                title={
-                  view === "plan"
-                    ? "Back to the isometric town"
-                    : "Look at the town from directly above"
-                }
-              >
-                {view === "plan" ? "Isometric" : "From above"}
-              </button>
-            </div>
-            <div className="turn-row">
-              <button className="bevel" onClick={() => turnBy(-1)} title="Turn left">
-                Turn left
-              </button>
-              <button className="bevel" onClick={() => turnBy(1)} title="Turn right">
-                Turn right
-              </button>
-            </div>
-            <p className="muted">
-              {turn === 0 ? "Upright" : `Turned ${turn * 90}°`}
-              {turn !== 0 && (
-                <>
-                  {" · "}
-                  <button className="link" onClick={() => setTurn(0)}>
-                    reset
-                  </button>
-                </>
-              )}
-            </p>
-            <div className="turn-row" role="group" aria-label="Time of day">
-              {DAY_PHASES.map((p) => (
-                <button
-                  key={p}
-                  className="bevel"
-                  aria-pressed={day === p}
-                  onClick={() => setDay(p)}
-                  title={`${DAYLIGHT[p].label} — ${
-                    DAYLIGHT[p].lit ? "windows lit" : "no lights"
-                  }`}
-                >
-                  {DAYLIGHT[p].label}
-                </button>
-              ))}
-            </div>
-            <p className="muted">
-              {day === "day"
-                ? "Full light. Every window is glass."
-                : "The light is going. A lit window is the one warm thing left."}
-            </p>
-          </section>
-        )}
 
         {!town && projects.length === 0 && (
           <p className="muted">
@@ -620,58 +441,6 @@ export function App() {
             })}
           </ul>
         </section>
-
-        {live.workers.length > 0 && (
-          <section className="crew">
-            <h2>Crew</h2>
-            {/* What the camera is on, and the one control that stops it. It sits
-                above the list rather than on the row because a row is also a
-                target: a reader who has lost the machine in a big town needs one
-                place that says which one, and one place to undo the choice. */}
-            {watched && (
-              <p className="following-now">
-                <span className="nm">Following</span>
-                <span className="who">{crewLabel(watched.agent, watched.session)}</span>
-                <span className="what">{actionInfo(watched.action).plain}</span>
-                <button type="button" onClick={unfollow}>
-                  Stop
-                </button>
-              </p>
-            )}
-            <ul>
-              {live.workers.map((w) => {
-                const on = following === w.id;
-                return (
-                  <li key={w.id} className={w.action === "celebrating" ? "done" : ""}>
-                    {/* A button rather than a click handler on the row: this is
-                        the one control in the panel that changes what the map is
-                        doing rather than what the panel is describing, and it has
-                        to be reachable by keyboard and announce its state. */}
-                    <button
-                      type="button"
-                      className={`follow ${on ? "on" : ""}`}
-                      aria-pressed={on}
-                      onClick={() => (on ? unfollow() : follow(w.id))}
-                    >
-                      <span className={`tier ${w.tier}`}>{w.tier}</span>
-                      {/* Agent plus the head of the session id. Two sessions of
-                          one agent are the ordinary case — one repo, one agent,
-                          two terminals — and without this the list shows two
-                          identical rows. */}
-                      <span className="agent">{crewLabel(w.agent, w.session)}</span>
-                      {/* The world's word is the map's job — it captions the figure
-                          itself. Here the panel has room to be exact, so it says
-                          what the agent actually did rather than which animation
-                          is playing: "editing an existing file", not "hammering". */}
-                      <span className="action">{actionInfo(w.action).plain}</span>
-                      <span className="at">{targetOf(w.place, SITE_ID_BUILDING_PREFIX)}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
 
         <section className="feed">
           <h2>Activity</h2>
