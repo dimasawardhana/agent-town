@@ -90,13 +90,20 @@ export function targetOf(place: string, prefix: string): string {
  * front and rendered all four as `omp 01a0f635`, which is the one thing the
  * name exists to prevent. The entropy in a ULID is all after the tenth
  * character, and in a UUIDv4 it is the last group, so the tail separates both.
- * Six characters is enough to tell real ids apart and short enough to sit beside
- * an action in a 316px column.
+ * Eight characters is margin rather than a fix. Six was already enough for
+ * real ids — the entropy is 80 bits of a ULID's tail or 48 of a UUID's last
+ * group, and two sessions colliding in six characters is not a thing that
+ * happens without the ids having been built by hand. It looked like one once:
+ * a synthetic session was created by copying a real one's suffix, and the two
+ * rendered identically. That is a fixture that was wrong, not a property of
+ * real ids, and no width would have separated those two either, because they
+ * agreed on everything after the first group. Eight costs nothing in a 316px
+ * column and leaves more room before that shape of collision is reachable.
  *
  * A session with no id gets the agent alone rather than a trailing separator:
  * "omp undefined" reads as a real value that went wrong, which is worse than no
  * name at all.
  */
 export function crewLabel(agent: string, session: string): string {
-  return session ? `${agent} ${session.slice(-6)}` : agent;
+  return session ? `${agent} ${session.slice(-8)}` : agent;
 }

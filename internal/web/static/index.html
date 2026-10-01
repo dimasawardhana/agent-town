@@ -124,8 +124,70 @@
         background: var(--panel);
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        /* The panel scrolls as one column, and every section keeps its natural
+           height. The feed used to be the only thing that scrolled, which meant
+           a Crew list that grew with the number of live agents was clipped by
+           this `overflow: hidden` and unreachable rather than scrolled to. The
+           narrow-screen rule below already described the panel as scrolling;
+           this is what makes that true on both layouts. */
+        overflow-y: auto;
       }
+      .panel > * { flex: none; }
+
+      /* The agent bar. `position: sticky` inside the scrolling panel, so it is
+         the one row that survives a scroll — which is the entire reason it
+         exists. The sideways scroll keeps its height independent of how many
+         agents are running, so a busy session does not push the rest of the
+         panel down. Its scrollbar is hidden rather than restyled: a visible
+         one in a strip this short would be the panel's loudest element, and the
+         chips themselves already say there is more to the side. */
+      .agent-bar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        gap: 6px;
+        padding: 8px 14px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--edge);
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .agent-bar::-webkit-scrollbar { display: none; }
+      .agent-bar .chip {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        padding: 3px 7px;
+        border: 1px solid var(--edge);
+        background: var(--raised);
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .agent-bar .chip .who {
+        font-family: var(--pixel);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--testing);
+        white-space: nowrap;
+      }
+      .agent-bar .chip .what {
+        font-size: 10px;
+        color: var(--text-dim);
+        white-space: nowrap;
+      }
+      /* The followed chip is the one thing in the panel outlined in the accent,
+         the same signal the followed row carries further down, so the two agree
+         about which machine the camera is on instead of being two controls that
+         could disagree. */
+      .agent-bar .chip.on { border-color: var(--accent); }
+      .agent-bar .chip.on .what { color: var(--text); }
+      .agent-bar .chip:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
       /* The title bar is the panel's one piece of pure chrome: town name in the
          town's own face, with the connection lamp at the end of it. */
@@ -513,7 +575,9 @@
       }
       .crew .following-now button:focus-visible { outline: 1px solid var(--text); outline-offset: 1px; }
 
-      .feed { flex: 1; overflow-y: auto; padding-bottom: 12px; }
+      /* The feed no longer manages its own scroll: the panel is the scroll
+         container, and a second one nested inside it is a scroll trap. */
+      .feed { padding-bottom: 12px; }
       .feed h2 { margin: 12px 14px 8px; }
       .feed ul { list-style: none; margin: 0; padding: 0; }
       .feed li {
@@ -560,7 +624,7 @@
         .crew .at { text-align: right; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-yioUzTQa.js"></script>
+    <script type="module" crossorigin src="/assets/index-C5yMkI8F.js"></script>
   </head>
   <body>
     <div id="root"></div>

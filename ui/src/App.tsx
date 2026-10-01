@@ -251,6 +251,27 @@ export function App() {
   const maxDepth = layout
     ? layout.sites.reduce((m, s) => Math.max(m, s.depth), 1)
     : 1;
+
+  // The agent bar scrolls sideways, so a followed crew can sit off the end of
+  // the strip with its chip out of sight — the bar would then be visible and
+  // say nothing about which machine the camera is on, which is the one thing it
+  // exists to say. `nearest` on both axes: the chip is brought into the strip
+  // without the bar scrolling the panel, and nothing moves when it is already
+  // visible.
+  //
+  // Keyed on the roster as well as the follow, because a crew arriving reflows
+  // the strip and can push a chip that was in view out of it. Measured: with six
+  // chips showing, a seventh arriving left the followed chip 340px to the left
+  // of the bar's own left edge, and the effect did not run because nothing about
+  // the follow had changed. A joined id list is what changes when the crew does
+  // — the same signature `planCrewSignature` uses to gate the plan's marks.
+  const bar = useRef<HTMLElement>(null);
+  const crewKey = live.workers.map((w) => w.id).join("|");
+  useEffect(() => {
+    bar.current
+      ?.querySelector(".chip.on")
+      ?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [following, crewKey]);
   // load reads one project's town. An empty path names none, which the daemon
   // answers with every project it serves.
   const load = useRef(async (project: string) => {
@@ -322,7 +343,42 @@ export function App() {
 
         <ProjectSwitcher />
 
-        {error && <p className="error">{error}</p>}
+        {/* The agent bar: every live crew, always on screen, one click to
+            follow. The Crew list further down says more, and is easy to lose —
+            it sits below Places, and the panel used to clip rather than scroll,
+            so on a short viewport a list that grew with the number of running
+            agents was clipped and unreachable rather than scrolled to. A reader
+            who has lost track of which machine is theirs should not have to
+            scroll to find out.
+
+            It scrolls sideways rather than stacking, so its height does not
+            depend on how many agents are running — otherwise a busy session
+            would push everything below it down, which is the problem it is
+            meant to solve.
+
+            The world's word rather than the panel's usual plain one, which is
+            the one deliberate departure from the rule the Crew list follows. A
+            chip is a picker and not a description, and "Hammering" is scannable
+            in a strip this narrow where "editing an existing file" is not. */}
+        {live.workers.length > 0 && (
+          <nav ref={bar} className="agent-bar" aria-label="Live agents">
+            {live.workers.map((w) => {
+              const on = following === w.id;
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  className={`chip ${on ? "on" : ""}`}
+                  aria-pressed={on}
+                  onClick={() => (on ? unfollow() : follow(w.id))}
+                >
+                  <span className="who">{crewLabel(w.agent, w.session)}</span>
+                  <span className="what">{actionInfo(w.action).world}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
 
         {town && <TownPulse />}
 

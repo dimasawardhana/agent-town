@@ -110,7 +110,10 @@ time shares them. A live run produced four crews whose ids were `01a0f635-2029-�
 `01a0f635-a03d-…`, `01a0f635-a031-…` and `01a0f635-a020-…`; the first build took
 eight characters from the front and rendered all four as `omp 01a0f635`, which is
 the one thing the name exists to prevent. The entropy in a ULID is all after the
-tenth character, and in a UUIDv4 it is the last group, so the tail separates both.
+tenth character and in a UUIDv4 it is the last group, so the tail separates both.
+Eight characters is margin rather than a fix: six was already past any
+realistic collision, and the one apparent collision was a test fixture built by
+copying a real session's suffix, which no width would have separated.
 
 ## Consequences
 

@@ -119,6 +119,7 @@ test("two sessions of one agent are told apart by their names", () => {
   assert.ok(labels[0].startsWith("omp"), "the agent is still the first word a reader looks for");
 });
 
+
 test("a session with no id still names its agent", () => {
   // A daemon that has not reported a session id, or a hand-written frame, must
   // not produce a row reading "omp undefined" — that is worse than no name,
