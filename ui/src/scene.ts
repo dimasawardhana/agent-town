@@ -42,6 +42,7 @@ import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building
 import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { LAND_APRON, LAND_BACK, boxContains, labelVisible, landBox, visibleAt } from "./visibility";
+import { PLAN_PAD, planBox, planFloors, type ViewMode } from "./plan";
 import { DAYLIGHT, normaliseDay, type DayPhase } from "./daylight";
 
 /**
@@ -112,6 +113,27 @@ interface GroundRegion {
  * ordered among itself by screen position, so its depth is the y of the point
  * it stands on; labels are above all of it.
  */
+/**
+ * PLAN_TONE is the fill a plot carries in the plan view, by construction stage.
+ *
+ * **Brightness is the stage, because that is the only thing left to say it
+ * with.** From above a tower and a hut are both rectangles, so the plan leans on
+ * the construction ladder for everything it can and prints the storey count for
+ * the thing it cannot. The ramp is the plaster ramp stepped by rank, which keeps
+ * it inside a palette the town already uses rather than inventing six more
+ * colours for a view.
+ */
+const PLAN_TONE: Record<string, number> = {
+  planned: 0x2b2724,
+  foundation: 0x3a332e,
+  framed: 0x4a423a,
+  walled: 0x5d5348,
+  roofed: 0x736658,
+  glazed: 0x8b7c6b,
+  doored: 0xa3907c,
+  completed: 0xbba68e,
+};
+
 const DEPTH = {
   ground: -100000,
   /** Above every building, so a puff is never half-hidden behind a roof, and
@@ -160,6 +182,10 @@ export class TownScene extends Phaser.Scene {
   /** The key light the town is drawn under, as a phase. Held here as well as in
    *  the store so the sky and the windows cannot read different ones. */
   private day: DayPhase = "dusk";
+
+  /** Iso or plan. Held here as well as in the store so the projection and the
+   *  store can never disagree about which one is being drawn. */
+  private view: ViewMode = "iso";
   /**
    * Every orientation baked so far, by turn.
    *
@@ -352,6 +378,11 @@ export class TownScene extends Phaser.Scene {
       // The sky is repainted and the storeys are restaged, which is cheaper than
       // a full draw and — more to the point — a full draw would re-derive the
       // camera framing for a change that cannot move anything.
+      if (s.view !== prev.view && this.sourceLayout) {
+        this.view = s.view === "plan" ? "plan" : "iso";
+        this.draw(this.sourceLayout);
+        return;
+      }
       if (s.day !== prev.day && this.sourceLayout) {
         this.day = normaliseDay(s.day);
         this.resizeSky();
@@ -389,11 +420,19 @@ export class TownScene extends Phaser.Scene {
     // and forget it in the coordinates.
     this.sourceLayout = source;
     this.ensureAtlas();
-    const layout = turnLayout(this.turn, source);
+    // The plan view draws the layout, not the art, so it is not turned: a plan
+    // read from a different quadrant is a different plan, and the turn exists to
+    // orbit an isometric town.
+    const layout = this.view === "plan" ? source : turnLayout(this.turn, source);
     this.layout = layout;
     this.children.removeAll(true);
     this.buildingSprites.clear();
     this.workers?.destroy();
+
+    if (this.view === "plan") {
+      this.drawPlan(layout);
+      return;
+    }
 
     // Ground is baked into a single texture first, then everything that stands
     // on it is placed as its own sprite. The order matters and is the whole
@@ -511,6 +550,12 @@ export class TownScene extends Phaser.Scene {
    * discrepancy would put every worker off its building rather than fail.
    */
   private project(wx: number, wy: number, z = 0): { x: number; y: number } {
+    if (this.view === "plan") {
+      // Straight down. No skew and **no z**, because from directly above a
+      // building's height is not visible — that is the trade the plan view makes,
+      // and `planFloors` is where the height goes instead of being lost.
+      return { x: wx, y: wy };
+    }
     return { x: (wx - wy) / 2, y: (wx + wy) / 4 - z };
   }
 
@@ -1130,8 +1175,15 @@ export class TownScene extends Phaser.Scene {
    */
   private refreshLabels(): void {
     const { focused, hovered } = useTown.getState();
+    // **Every name, in the plan view.** `labelVisible` shows a name only when
+    // its site is hovered or focused, which is right for the isometric town — a
+    // skyline covered in type is the one thing the map should not be — and
+    // exactly wrong for a plan, whose entire job is saying what is where. A plan
+    // that hides every name until you point at something is a plan with the one
+    // thing it is for taken away.
+    const always = this.view === "plan";
     for (const [id, images] of this.labels) {
-      const show = labelVisible(id, hovered, focused);
+      const show = always || labelVisible(id, hovered, focused);
       for (const img of images) img.setVisible(show);
     }
     // The figures' captions are the other half of the same rule, and they are
@@ -1781,6 +1833,125 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
+   * drawPlan draws the town from directly above.
+   *
+   * Every plot is the rectangle it actually is, outlined and filled; districts are
+   * outlined regions behind them; roads are bands between the plots they join.
+   * No atlas is touched and no sprite is placed, which is the point — see
+   * `plan.ts` for why a camera would not work and this does.
+   *
+   * **The storey count is printed on every plot.** This town draws a directory's
+   * file count as height, so from above every building is a rectangle and the
+   * size signal is simply absent. Printing it is the difference between a plan
+   * that carries the town's information and one that quietly drops its most
+   * important field.
+   */
+  private drawPlan(l: Layout): void {
+    const plan = this.add.graphics();
+    const edge = Number.parseInt(P.ink.slice(1), 16);
+
+    // The ground the plan is drawn on. Without it the rectangles float on the
+    // backdrop, which reads as a diagram in a void rather than as a town seen
+    // from above — and the land is the one thing both views share.
+    const g0 = this.project(0, 0);
+    const g1 = this.project(l.width, l.height);
+    plan.fillStyle(Number.parseInt(P.grass[1].slice(1), 16), 1);
+    plan.fillRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+    plan.lineStyle(2, edge, 0.8);
+    plan.strokeRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+
+    // Districts first, as an outlined region the plots sit inside. Filled
+    // faintly rather than solidly: a plan's job is to show what is *inside* a
+    // district, and a solid fill would hide the plots it is grouping.
+    for (const d of l.districts) {
+      const a = this.project(d.x, d.y);
+      const b = this.project(d.x + d.w, d.y + d.h);
+      plan.fillStyle(Number.parseInt(P.grass[0].slice(1), 16), 0.7);
+      plan.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      plan.lineStyle(1, edge, 0.5);
+      plan.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+
+    // Roads as their own rectangles. They are regions on this map — nothing here
+    // joins two places — so a band is honest and a line would not be.
+    for (const r of l.roads ?? []) {
+      const a = this.project(r.x, r.y);
+      const b = this.project(r.x + r.w, r.y + r.h);
+      plan.fillStyle(Number.parseInt(P.stone[1].slice(1), 16), 0.9);
+      plan.fillRect(a.x, a.y, Math.max(1, b.x - a.x), Math.max(1, b.y - a.y));
+    }
+
+    // The three places, which are plates rather than buildings.
+    for (const s of l.sites) {
+      if (s.kind === "building") continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      plan.fillStyle(Number.parseInt(P.stone[2].slice(1), 16), 0.8);
+      plan.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      plan.lineStyle(1, edge, 0.7);
+      plan.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+
+    for (const s of l.sites) {
+      if (s.kind !== "building") continue;
+      if (!visibleAt(s, this.depth)) continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      const w = Math.max(2, b.x - a.x);
+      const h = Math.max(2, b.y - a.y);
+      // Fill by stage, so a plan still says what is built and what is not, and
+      // border harder on the damaged or the working.
+      const stage = this.statusOf(s.path);
+      const tone = PLAN_TONE[stage] ?? PLAN_TONE.planned;
+      plan.fillStyle(tone, 0.95);
+      plan.fillRect(a.x, a.y, w, h);
+      plan.lineStyle(1, edge, 1);
+      plan.strokeRect(a.x, a.y, w, h);
+      // The storey count, centred, and only when there is room for it.
+      if (w >= 10 && h >= 10) {
+        const n = this.add.text(a.x + w / 2, a.y + h / 2, String(planFloors(s)));
+        n.setOrigin(0.5, 0.5).setDepth(DEPTH.label).setResolution(2);
+        n.setStyle({ fontFamily: "monospace", fontSize: "11px", color: "#e8e0d0" });
+        n.setResolution(1);
+      }
+      this.hitZone(a.x, a.y, w, h, s, 0);
+    }
+
+    // Names last, so a plot's own number is never behind its name.
+    for (const s of l.sites) {
+      if (!s.path) continue;
+      if (s.kind === "building" && !visibleAt(s, this.depth)) continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      const lbl = this.label(s.path, (a.x + b.x) / 2, a.y - 2, "name");
+      if (lbl) this.register(s.id, lbl);
+    }
+    // The names. `refreshLabels` is what decides which of them the visibility
+    // rule allows to be lit, and it lives after the isometric path's own return
+    // — so without this every label is created and stays hidden, and the plan has
+    // numbers on its plots and no names, which is the one thing a plan is for.
+    this.refreshLabels();
+
+    // **Counter-scaled.** A label is a world-space sprite, so it shrinks with the
+    // camera — and the plan is framed at 0.72x, which turned every name into a
+    // smudge. A name is the one thing on a plan that has to be readable, and a
+    // plan is framed to fit the whole town rather than zoomed into it, so the
+    // scale is undone rather than the framing changed.
+    const inv = 1 / this.cameras.main.zoom;
+    for (const images of this.labels.values()) {
+      for (const img of images) img.setScale(inv);
+    }
+
+    plan.setDepth(DEPTH.ground + 1);
+    // The sky, because `draw` has already swept every child and `drawPlan`
+    // returns before the isometric path's own sky setup. Without this the canvas
+    // falls back to the camera background — a near-black void, which reads as a
+    // plan drawn on a broken screen rather than as the town from above.
+    this.ensureSky();
+    this.fit(l);
+  }
+
+  /**
    * fit frames the town and centres it.
    *
    * **Centred, and that is a decision rather than a default.** Two reframings
@@ -1796,10 +1967,25 @@ export class TownScene extends Phaser.Scene {
    * made "make the land bigger" shrink the town.
    */
   private fit(l: Layout): void {
+    const cam = this.cameras.main;
+    if (this.view === "plan") {
+      const b = planBox(l);
+      // **Not floored.** `Math.floor(784 / 1092)` is 0, so a plan is always
+      // framed at the clamp floor and comes out as a stamp in the middle of an
+      // empty frame — which is exactly what the first build of this did, at zoom
+      // 0.2 on a 784px canvas. The isometric fit floors and clamps to 1, which
+      // hides the same mistake there.
+      const byWidth = this.scale.width / b.w;
+      const byHeight = this.scale.height / b.h;
+      // The clamp's top is higher than the isometric one: a plan has no tall
+      // sprites to overlap, so there is nothing to zoom out for.
+      cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 0.2, 8));
+      cam.centerOn(b.x + b.w / 2, b.y + b.h / 2);
+      return;
+    }
     const c = this.contentExtents(l);
     const cw = c.maxX - c.minX;
     const ch = c.maxY - c.minY;
-    const cam = this.cameras.main;
     const byWidth = Math.floor((this.scale.width - 60) / cw);
     const byHeight = Math.floor((this.scale.height - 100) / ch);
     cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));

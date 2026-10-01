@@ -211,6 +211,8 @@ export function App() {
   const turn = useTown((s) => s.turn);
   const turnBy = useTown((s) => s.turnBy);
   const setTurn = useTown((s) => s.setTurn);
+  const view = useTown((s) => s.view);
+  const toggleView = useTown((s) => s.toggleView);
   const day = useTown((s) => s.day);
   const setDay = useTown((s) => s.setDay);
 
@@ -365,6 +367,20 @@ export function App() {
         {town && (
           <section className="view-control">
             <h2>View</h2>
+            <div className="turn-row">
+              <button
+                className="bevel"
+                onClick={toggleView}
+                aria-pressed={view === "plan"}
+                title={
+                  view === "plan"
+                    ? "Back to the isometric town"
+                    : "Look at the town from directly above"
+                }
+              >
+                {view === "plan" ? "Isometric" : "From above"}
+              </button>
+            </div>
             <div className="turn-row">
               <button className="bevel" onClick={() => turnBy(-1)} title="Turn left">
                 Turn left

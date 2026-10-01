@@ -9,6 +9,7 @@
 import { create } from "zustand";
 
 import { type DayPhase, normaliseDay, stepDay } from "./daylight";
+import { type ViewMode, isViewMode } from "./plan";
 
 // SITE_ID_BUILDING_PREFIX mirrors analyzer.SiteIDBuildingPrefix.
 //
@@ -265,6 +266,27 @@ interface State {
   turn: number;
 
   /**
+   * Which way the town is drawn: isometric, or straight down.
+   *
+   * A view preference like `depth` and `turn`, and never sent to the daemon.
+   *
+   * **The plan view is not a camera.** The isometric art has the 2:1 skew
+   * baked into its pixels — every wall face, window, chimney and machine is drawn
+   * as seen from the side and above — so a top-down rendering of *that* art is not
+   * a transform, it is a re-authoring of all 1145 cels. The plan view is
+   * therefore a second drawing of the same **layout**: every plot as the
+   * rectangle it actually is, its name on it, districts outlined, roads as bands.
+   * It reads the town's structure, and it costs no atlas and no bake.
+   *
+   * What it cannot show is height, and height is how this town encodes size —
+   * a directory's file count becomes its floors. The plan view carries that
+   * explicitly instead: the storey count is printed on the plot and the fill
+   * brightness follows the construction stage. Without that the map would be
+   * lying by omission.
+   */
+  view: ViewMode;
+
+  /**
    * The town's one key light: a phase, not a clock.
    *
    * A view preference like `depth` and `turn`, and never sent to the daemon.
@@ -293,6 +315,10 @@ interface State {
   turnBy: (delta: number) => void;
   /** setTurn selects an orientation outright, for resetting to the default. */
   setTurn: (t: number) => void;
+  /** setView switches between the isometric town and the plan. */
+  setView: (v: ViewMode) => void;
+  /** toggleView flips it, for a single control. */
+  toggleView: () => void;
   /** dayBy steps the key light through its phases, wrapping. */
   dayBy: (delta: number) => void;
   /** setDay selects a phase outright, for a control that names all three. */
@@ -323,6 +349,7 @@ export const useTown = create<State>((set) => ({
   // Upright, which is the orientation the art was authored at and the one that
   // shows the daemon's own idea of the town.
   turn: 0,
+  view: "iso" as ViewMode,
   day: "dusk" as DayPhase,
   setTown: (town, layout, live) =>
     set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
@@ -354,6 +381,8 @@ export const useTown = create<State>((set) => ({
   setDepth: (depth) => set({ depth }),
   turnBy: (delta) => set((s) => ({ turn: (((s.turn + delta) % 4) + 4) % 4 })),
   setTurn: (turn) => set({ turn: (((turn % 4) + 4) % 4) }),
+  setView: (view) => set({ view: isViewMode(view) ? view : "iso" }),
+  toggleView: () => set((s) => ({ view: s.view === "plan" ? "iso" : "plan" })),
   dayBy: (delta) => set((s) => ({ day: stepDay(s.day, delta) })),
   setDay: (day) => set({ day: normaliseDay(day) }),
 }));

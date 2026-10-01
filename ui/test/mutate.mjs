@@ -175,6 +175,17 @@ const MUTATIONS = [
     to: "export const LAND_APRON = 48;",
     suite: "test:land",
   },
+  {
+    // The plan's size signal goes away. A plan is rectangles, so without the
+    // printed storey count this view silently drops the field the isometric town
+    // draws as height — the map stops lying by omission and starts lying by
+    // omission, which is worse because it looks right.
+    what: "every plot in the plan prints one floor",
+    file: "src/plan.ts",
+    from: "  return Math.min(n, 32);",
+    to: "  return 1;",
+    suite: "test:plan",
+  },
 ];
 
 const run = (cmd, cwd) => {

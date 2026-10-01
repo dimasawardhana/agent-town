@@ -38,3 +38,4 @@ ui-traffic.test.mjs
 ui/ui-birds.test.mjs
 ui/ui-clouds.test.mjs
 ui/ui-land.test.mjs
+ui/ui-plan.test.mjs
