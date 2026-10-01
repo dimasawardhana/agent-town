@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { boxContains, labelVisible, landBox, visibleAt } from "../src/visibility";
+import { boxContains, labelVisible, landBox, visibleAt, workerLabelId } from "../src/visibility";
 import { TURNS, turnLayout, turnPoint } from "../src/view";
 
 /** A top-level building: depth 1, nothing under it. */
@@ -113,6 +113,38 @@ test("a hover and a focus can both be lit", () => {
 test("losing the focus leaves only the hover standing", () => {
   assert.equal(labelVisible("b1", null, null), false);
   assert.equal(labelVisible("b1", "b1", null), true, "a hover alone still shows its label");
+});
+
+test("a followed figure keeps its caption lit", () => {
+  // A follow camera is a request to watch one machine, and the caption is the
+  // only thing that says which of the eight actions the pose is standing in
+  // for. Following without it would leave a reader watching a machine hammer
+  // and reading nothing.
+  const id = workerLabelId("chief:s1");
+  assert.equal(labelVisible(id, null, null, "chief:s1"), true, "following pins the caption open");
+  assert.equal(labelVisible(id, null, null, "chief:s2"), false, "following another machine does not");
+  // The case that decides whether the rule composes: a reader who follows a
+  // machine and then clicks a building moves the *focus*, and the caption has to
+  // stay lit anyway. Focus and follow are different acts — one is a click, one
+  // is a standing choice — and the second must not be undone by the first.
+  assert.equal(labelVisible(id, null, "building:internal", "chief:s1"), true, "a building click must not unpin a followed caption");
+});
+
+test("following one figure cannot light another's label", () => {
+  // The same collision the `worker:` prefix exists to prevent, one step further
+  // on: a site id and a worker id are drawn from different owners, and a follow
+  // target is a third place that has to agree about which object it means.
+  assert.equal(labelVisible("building:internal", null, null, "chief:s1"), false, "a site is not a figure");
+  assert.equal(labelVisible(workerLabelId("chief:s1"), null, null, "chief:s1"), true);
+});
+
+test("the label rule is unchanged for a reader who is not following", () => {
+  // A fourth argument that defaulted to "followed" would turn every pinned
+  // label on the map into a permanently visible one, which is the wall of
+  // thirteen boards ADR-0019 was written to undo.
+  assert.equal(labelVisible("a", null, null), false);
+  assert.equal(labelVisible("a", null, "a"), true);
+  assert.equal(labelVisible("a", "a", null), true);
 });
 
 // --- the land --------------------------------------------------------------

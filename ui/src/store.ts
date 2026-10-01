@@ -10,6 +10,7 @@ import { create } from "zustand";
 
 import { type DayPhase, normaliseDay, stepDay } from "./daylight";
 import { type ViewMode, isViewMode } from "./plan";
+import { workerLabelId } from "./visibility";
 
 // SITE_ID_BUILDING_PREFIX mirrors analyzer.SiteIDBuildingPrefix.
 //
@@ -239,6 +240,24 @@ interface State {
    * disagree about what "the thing under the pointer" means.
    */
   hovered: string | null;
+
+  /**
+   * The one machine the camera is following, or null.
+   *
+   * A selection, like `focused` and not like the camera: it says *what* the
+   * reader has chosen to watch, and the scene works out where to point. Nothing
+   * about the camera itself — no zoom, no scroll, no pan — lives here, which is
+   * what lets the transport stay one-way and the camera stay local
+   * (`TownScene` header, ADR-0002).
+   *
+   * A raw worker id, not the `worker:<id>` label id, because the thing being
+   * followed is a machine and not a caption; the prefix belongs to the label
+   * namespace and is applied at the two places that address a caption.
+   *
+   * One, not a set: one camera, one target. Two would be two cameras, which is
+   * a different feature and was explicitly not what was asked for.
+   */
+  following: string | null;
   events: AgentEvent[];
   connected: boolean;
   error: string | null;
@@ -306,6 +325,10 @@ interface State {
   focus: (id: string | null) => void;
   /** hover records what the pointer is over, or null when it leaves. */
   hover: (id: string | null) => void;
+  /** follow points the camera at a machine and pins its caption open. */
+  follow: (id: string) => void;
+  /** unfollow releases the camera and unpins the caption following pinned. */
+  unfollow: () => void;
   pushEvent: (e: AgentEvent) => void;
   setConnected: (c: boolean) => void;
   setError: (e: string | null) => void;
@@ -343,6 +366,7 @@ export const useTown = create<State>((set) => ({
   error: null,
   focused: null,
   hovered: null,
+  following: null,
   // Everything drawn by default, for the reason in the field's own comment: a
   // numeric default's failure mode is silently hiding work.
   depth: Number.POSITIVE_INFINITY,
@@ -368,12 +392,29 @@ export const useTown = create<State>((set) => ({
       // visible answers to.
       focused: null,
       hovered: null,
+      // The follow goes with them for the same reason, and harder: a live id
+      // resolves to a real machine in the town being opened only by accident, and
+      // a camera pointed at an id that names nothing is a camera pointed at a
+      // coordinate it remembers.
+      following: null,
       error: null,
     }),
   setLive: (live) => set({ live }),
   select: (selected) => set({ selected }),
   focus: (focused) => set({ focused }),
   hover: (hovered) => set({ hovered }),
+  // Following pins the caption as a side effect rather than leaving it to each
+  // call site. There are two call sites — a click on the machine and a click on
+  // its row in the panel — and a caption that is lit for a machine being
+  // followed but not for one it is not would make the follow look broken in one
+  // of them. Focus is a single id, so a new follow moves the pin rather than
+  // adding a second.
+  follow: (following) => set({ following, focused: workerLabelId(following) }),
+  // Clearing the pin on release is the asymmetry the other half of that comment
+  // is about: following set the focus, so a stop that left it lit would leave a
+  // caption showing for no pointer and no focus, which is the one state the
+  // label rule cannot otherwise produce.
+  unfollow: () => set({ following: null, focused: null }),
   pushEvent: (e) =>
     set((s) => ({ events: [e, ...s.events].slice(0, MAX_EVENTS) })),
   setConnected: (connected) => set({ connected }),

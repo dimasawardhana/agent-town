@@ -71,3 +71,39 @@ export function targetOf(place: string, prefix: string): string {
   const cut = path.lastIndexOf("/");
   return cut >= 0 ? path.slice(cut + 1) : path;
 }
+
+/**
+ * crewLabel is what a crew is called in the panel: the agent, then enough of its
+ * session to tell two of them apart.
+ *
+ * The session is the whole of the disambiguation, and it is needed because the
+ * daemon builds one chief per session with the same agent name — two omp
+ * sessions on one repo are two identical rows without it, and following is a
+ * coin toss.
+ *
+ * **The tail, not the head, and that is measured rather than assumed.** omp's
+ * session ids are ULIDs, and a ULID's first ten characters are its creation
+ * timestamp in base32 — so every session opened in the same stretch of time
+ * shares them. A live run produced four crews whose ids were
+ * `01a0f635-2029-…`, `01a0f635-a03d-…`, `01a0f635-a031-…` and
+ * `01a0f635-a020-…`: the first build of this took eight characters from the
+ * front and rendered all four as `omp 01a0f635`, which is the one thing the
+ * name exists to prevent. The entropy in a ULID is all after the tenth
+ * character, and in a UUIDv4 it is the last group, so the tail separates both.
+ * Eight characters is margin rather than a fix. Six was already enough for
+ * real ids — the entropy is 80 bits of a ULID's tail or 48 of a UUID's last
+ * group, and two sessions colliding in six characters is not a thing that
+ * happens without the ids having been built by hand. It looked like one once:
+ * a synthetic session was created by copying a real one's suffix, and the two
+ * rendered identically. That is a fixture that was wrong, not a property of
+ * real ids, and no width would have separated those two either, because they
+ * agreed on everything after the first group. Eight costs nothing in a 316px
+ * column and leaves more room before that shape of collision is reachable.
+ *
+ * A session with no id gets the agent alone rather than a trailing separator:
+ * "omp undefined" reads as a real value that went wrong, which is worse than no
+ * name at all.
+ */
+export function crewLabel(agent: string, session: string): string {
+  return session ? `${agent} ${session.slice(-8)}` : agent;
+}

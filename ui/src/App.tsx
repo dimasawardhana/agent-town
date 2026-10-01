@@ -4,16 +4,15 @@
 // store the scene writes to.
 
 import { useEffect, useRef } from "react";
-import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
-import { actionInfo, targetOf } from "./actions";
+import { type BuildingState, useTown } from "./store";
 import { EMBER_MS } from "./embers";
 import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
 import { STAGE_ORDER, type Stage } from "./art/building";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
-import { DAYLIGHT, DAY_PHASES } from "./daylight";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { TownCanvas } from "./TownCanvas";
+import { Hud } from "./Hud";
 
 /**
  * The ladder in the words a developer would use, and what each rank adds.
@@ -205,16 +204,6 @@ export function App() {
   const pushEvent = useTown((s) => s.pushEvent);
   const select = useTown((s) => s.select);
   const focus = useTown((s) => s.focus);
-  const layout = useTown((s) => s.layout);
-  const depth = useTown((s) => s.depth);
-  const setDepth = useTown((s) => s.setDepth);
-  const turn = useTown((s) => s.turn);
-  const turnBy = useTown((s) => s.turnBy);
-  const setTurn = useTown((s) => s.setTurn);
-  const view = useTown((s) => s.view);
-  const toggleView = useTown((s) => s.toggleView);
-  const day = useTown((s) => s.day);
-  const setDay = useTown((s) => s.setDay);
 
 
   // The selected site's building state, if it is a building the town knows
@@ -237,12 +226,6 @@ export function App() {
   // because the panel has room for exact names and the map does not.
   const imports = selected?.imports ?? [];
 
-  // The deepest building the daemon reported, so the detail control's range
-  // reflects the town rather than a guessed ceiling. A town whose buildings are
-  // all top-level has nothing to filter, and the control hides itself.
-  const maxDepth = layout
-    ? layout.sites.reduce((m, s) => Math.max(m, s.depth), 1)
-    : 1;
   // load reads one project's town. An empty path names none, which the daemon
   // answers with every project it serves.
   const load = useRef(async (project: string) => {
@@ -302,7 +285,14 @@ export function App() {
 
   return (
     <div className="app">
-      <TownCanvas />
+      {/* The stage is the positioning context for the floating controls. It is
+          its own element rather than `#town` itself, because `#town` is the
+          element Phaser mounts the canvas into and two owners appending children
+          to one node is a race neither of them admits to. */}
+      <div className="stage">
+        <TownCanvas />
+        <Hud />
+      </div>
       <aside className="panel">
         <header>
           <h1>{town ? town.name : "AI Town"}</h1>
@@ -314,114 +304,9 @@ export function App() {
 
         <ProjectSwitcher />
 
-        {error && <p className="error">{error}</p>}
 
         {town && <TownPulse />}
 
-        {/* The detail control. It limits which buildings are *drawn*, by how
-            deep they sit below the repo root.
-
-            This is a view filter and nothing more: the layout is computed once
-            in full and filtered on the way out, so moving this cannot shift a
-            building that is already on screen. That property is why the control
-            is safe to offer at all — the first design re-ran the layout over a
-            subset, which renumbered the placement slices and moved 12 of 18
-            buildings on screen.
-
-            The maximum is the deepest site the daemon actually reported, not a
-            guessed number: a town with no nested buildings gets no control to
-            speak of, and one nested five deep gets all five. */}
-        {town && maxDepth > 1 && (
-          <section className="detail-control">
-            <h2>Detail</h2>
-            <label htmlFor="depth">
-              {depth === Number.POSITIVE_INFINITY
-                ? "Everything"
-                : depth === 1
-                  ? "Top level only"
-                  : `${depth} levels deep`}
-            </label>
-            <input
-              id="depth"
-              type="range"
-              min={1}
-              max={maxDepth}
-              step={1}
-              value={depth === Number.POSITIVE_INFINITY ? maxDepth : depth}
-              onChange={(e) => setDepth(Number(e.target.value))}
-            />
-          </section>
-        )}
-
-        {/* The view controls. All three are preferences over how the *same* town
-            is shown: none is sent anywhere, and none can change what the map
-            says. Turning is offered only when there is a town to turn, and the
-            reset appears only once the view is off its default, so the panel
-            does not carry a control that would do nothing.
-
-            The light is a *phase* and not a clock, and the control names all
-            three rather than stepping through them: a reader who wants night
-            should not have to press a button twice to find out which way the
-            cycle runs, and a control that could show a value nobody chose is a
-            control that lies about the town's one key light. */}
-        {town && (
-          <section className="view-control">
-            <h2>View</h2>
-            <div className="turn-row">
-              <button
-                className="bevel"
-                onClick={toggleView}
-                aria-pressed={view === "plan"}
-                title={
-                  view === "plan"
-                    ? "Back to the isometric town"
-                    : "Look at the town from directly above"
-                }
-              >
-                {view === "plan" ? "Isometric" : "From above"}
-              </button>
-            </div>
-            <div className="turn-row">
-              <button className="bevel" onClick={() => turnBy(-1)} title="Turn left">
-                Turn left
-              </button>
-              <button className="bevel" onClick={() => turnBy(1)} title="Turn right">
-                Turn right
-              </button>
-            </div>
-            <p className="muted">
-              {turn === 0 ? "Upright" : `Turned ${turn * 90}°`}
-              {turn !== 0 && (
-                <>
-                  {" · "}
-                  <button className="link" onClick={() => setTurn(0)}>
-                    reset
-                  </button>
-                </>
-              )}
-            </p>
-            <div className="turn-row" role="group" aria-label="Time of day">
-              {DAY_PHASES.map((p) => (
-                <button
-                  key={p}
-                  className="bevel"
-                  aria-pressed={day === p}
-                  onClick={() => setDay(p)}
-                  title={`${DAYLIGHT[p].label} — ${
-                    DAYLIGHT[p].lit ? "windows lit" : "no lights"
-                  }`}
-                >
-                  {DAYLIGHT[p].label}
-                </button>
-              ))}
-            </div>
-            <p className="muted">
-              {day === "day"
-                ? "Full light. Every window is glass."
-                : "The light is going. A lit window is the one warm thing left."}
-            </p>
-          </section>
-        )}
 
         {!town && projects.length === 0 && (
           <p className="muted">
@@ -556,26 +441,6 @@ export function App() {
             })}
           </ul>
         </section>
-
-        {live.workers.length > 0 && (
-          <section className="crew">
-            <h2>Crew</h2>
-            <ul>
-              {live.workers.map((w) => (
-                <li key={w.id} className={w.action === "celebrating" ? "done" : ""}>
-                  <span className={`tier ${w.tier}`}>{w.tier}</span>
-                  <span className="agent">{w.agent}</span>
-                  {/* The world's word is the map's job — it captions the figure
-                      itself. Here the panel has room to be exact, so it says
-                      what the agent actually did rather than which animation is
-                      playing: "editing an existing file", not "hammering". */}
-                  <span className="action">{actionInfo(w.action).plain}</span>
-                  <span className="at">{targetOf(w.place, SITE_ID_BUILDING_PREFIX)}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
 
         <section className="feed">
           <h2>Activity</h2>

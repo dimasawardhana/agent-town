@@ -33,6 +33,7 @@ import {
   noWindowLightFrame,
 } from "./art/bake";
 import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { FOLLOW_ZOOM, clampZoom, followZoom } from "./follow";
 import { Chimneys, SMOKES } from "./smoke";
 import { Embers } from "./embers";
 import { Birds } from "./birds";
@@ -308,6 +309,40 @@ export class TownScene extends Phaser.Scene {
   private moved = 0;
 
   /**
+   * The zoom the reader was at before following started, or null when not
+   * following.
+   *
+   * Doubles as the "am I following" flag, which is why it is a number and not a
+   * separate boolean: the two can never disagree, and there is no state in which
+   * a restore is owed but nothing says so.
+   *
+   * Camera state, deliberately not in the store — the store says *what* is being
+   * watched and nothing about how (see `State.following`).
+   */
+  private followZoomBefore: number | null = null;
+
+  /**
+   * The zoom a running follow is sitting at, restored after a re-frame.
+   *
+   * Separate from `followZoomBefore` because that is the zoom to go *back* to on
+   * release — usually the whole-town fit — and this is the one to hold *during*.
+   * One field cannot answer both: a reader who wheeled to 4x to read a building
+   * while following wants 4x back after a turn, and 1x back after they stop.
+   */
+  private followZoomActive = FOLLOW_ZOOM;
+
+  /**
+   * Set by `fit`, consumed by `followTick`.
+   *
+   * `fit` is the one thing that moves the camera to a zoom a follow must not be
+   * at, and it happens without the follow knowing: a turn, a depth change that
+   * alters the town signature, a project switch, the first draw. A flag rather
+   * than a comparison, because the follow cannot tell a re-frame from a reader
+   * who deliberately wheeled out — both are just "the zoom is not what I set".
+   */
+  private reframed = false;
+
+  /**
    * Every label on screen, by the id of the thing it names.
    *
    * A list rather than one image, because a thing can wear more than one board:
@@ -401,6 +436,13 @@ export class TownScene extends Phaser.Scene {
         // came back at the plan's 0.8x. The guard is about towns, not about
         // views.
         this.fittedSignature = "";
+        // Following ends at the plan view. The plan is not a camera on the town
+        // but a second drawing of the layout (`plan.ts`), and a machine in it is
+        // a 9px mark in its crew's colour, not a figure — there is nothing to
+        // follow. It also has its own `[0.2, 8]` zoom, so carrying a follow zoom
+        // across would hand the plan a framing it never chose. The fit below
+        // re-frames anyway.
+        useTown.getState().unfollow();
         this.draw(this.sourceLayout);
         return;
       }
@@ -1203,7 +1245,7 @@ export class TownScene extends Phaser.Scene {
    * and from the store subscription without tracking what changed.
    */
   private refreshLabels(): void {
-    const { focused, hovered } = useTown.getState();
+    const { focused, hovered, following } = useTown.getState();
     // **Every name, in the plan view.** `labelVisible` shows a name only when
     // its site is hovered or focused, which is right for the isometric town — a
     // skyline covered in type is the one thing the map should not be — and
@@ -1219,7 +1261,7 @@ export class TownScene extends Phaser.Scene {
     // swept here rather than in a store subscription of their own so that one
     // pointer move resolves one rule. Two sweeps would each have to know about
     // the other's objects to avoid disagreeing.
-    this.workers?.applyLabels(focused, hovered);
+    this.workers?.applyLabels(focused, hovered, following);
   }
 
   /**
@@ -1438,7 +1480,7 @@ export class TownScene extends Phaser.Scene {
       // the single most recognisable way a pixel-art screen looks broken — and
       // zooming out below 1 destroys the art rather than showing more of it.
       const next = dy > 0 ? cam.zoom - 1 : cam.zoom + 1;
-      cam.setZoom(Phaser.Math.Clamp(next, 1, 4));
+      cam.setZoom(clampZoom(next));
     });
 
     // Trackpads and mice with a middle button otherwise scroll or open a menu
@@ -1476,6 +1518,10 @@ export class TownScene extends Phaser.Scene {
     // The plan's crews move on events, not on layout changes, and this is the
     // only thing that redraws between them.
     this.drawPlanWorkers();
+    // The follow camera is above the embers' guard for the same reason the plan's
+    // crews are: it is one of the two things a reader is watching, and it must
+    // move on a town that has no embers yet exactly as much as on one that does.
+    this.followTick();
     if (!this.embers || !this.layout) return;
     const { live } = useTown.getState();
     const byPath = new Map(live.buildings.map((b) => [b.path, b.updated]));
@@ -1498,6 +1544,94 @@ export class TownScene extends Phaser.Scene {
       if (w.place) working.add(w.place);
     }
     this.embers.reconcile(touched, working);
+  }
+
+  /**
+   * followTick keeps the camera on the followed figure.
+   *
+   * The policy is three numbers and a lookup — a target, a zoom, and
+   * `centerOn` — and everything that makes following awkward is about not
+   * fighting the other five places the camera is written.
+   *
+   * Called from `update` above the embers' early return, because a reader
+   * watching a machine is watching the one thing on screen that matters whether
+   * or not the town has a layout yet.
+   */
+  private followTick(): void {
+    const cam = this.cameras.main;
+    const { following, unfollow } = useTown.getState();
+    // A drag is the reader taking the camera back, and the pointer is already
+    // down when it starts — the same gesture that picked the figure. Phaser
+    // runs `update` after input, so without this the follow visibly wins the
+    // reader's own drag. Yielding for as long as the pointer is down lets them
+    // look around the machine without fighting it.
+    //
+    // Letting go re-centres the machine, and that is the follow's contract
+    // rather than a snap-back to apologise for: a camera that left its subject
+    // off-centre after the reader let go would be a camera that is not following.
+    // The zoom is untouched either way, so a reader who wanted a wider look at
+    // what they panned to can simply zoom back out.
+    if (this.dragging) return;
+
+    if (following === null) {
+      // Releasing restores the reader's own zoom rather than re-fitting. A fit
+      // would answer "where is the town" to a reader who asked "where was I",
+      // and the pan they had set would be gone.
+      if (this.followZoomBefore !== null) {
+        cam.setZoom(clampZoom(this.followZoomBefore));
+        this.followZoomBefore = null;
+      }
+      return;
+    }
+
+    const at = this.workers?.positionOf(following) ?? null;
+    // No figure means the daemon stopped reporting that session, and
+    // `WorkerLayer.remove` has already taken the sprite out. Release rather than
+    // hold the last point: a camera with full confidence and nothing to look at
+    // is the failure this town is not allowed to have.
+    if (!at) {
+      unfollow();
+      return;
+    }
+
+    // A re-frame puts the camera back at the whole-town fit, which is the one
+    // zoom a follow must never sit at: the machine becomes the 2.5% speck the
+    // floor exists to rule out, while the button still says you are watching it.
+    //
+    // A turn causes this. ADR-0020 has a turned layout start at the origin and
+    // *swap its extent*, and both numbers are in the fit signature — so turning
+    // the town changes the signature and re-fits, even though `turn` itself is
+    // not in it. Measured: a turn during a follow dropped the camera from 3x to
+    // the 1x whole-town frame and left the follow running.
+    if (this.reframed) {
+      this.reframed = false;
+      // Only once a follow is established. On the frame a follow *starts*, the
+      // block below raises the zoom from whatever the camera actually had, and
+      // that pre-follow value is the one worth remembering — restoring the
+      // in-force zoom first would overwrite it, so the follow would "restore"
+      // its own floor on release. Measured: Stop returned the camera to 3x
+      // instead of the 1x whole-town fit it started from.
+      if (this.followZoomBefore !== null) cam.setZoom(this.followZoomActive);
+    }
+
+    if (this.followZoomBefore === null) {
+      // Saved on the first frame of a follow, not at the call that started it,
+      // so the zoom is whatever the camera actually had — including a fit that
+      // landed a frame earlier.
+      this.followZoomBefore = cam.zoom;
+      cam.setZoom(followZoom(cam.zoom));
+    }
+    // The zoom the follow is running at, recorded rather than recomputed, so a
+    // re-frame restores the one the reader had — a reader who wheeled in to 4x
+    // to read a building gets 4x back after a turn, not the floor. Clamped to
+    // the floor on the way in, because a reader who wheeled *out* past it was
+    // answering a different question and must not have their choice restored
+    // over them after a turn.
+    this.followZoomActive = followZoom(cam.zoom);
+    // `setBounds` in `draw` already clamps a target that walks to the edge of the
+    // town, and that is the right answer: the camera may follow a machine across
+    // the land, not off it.
+    cam.centerOn(at.x, at.y);
   }
 
   /**
@@ -2066,6 +2200,10 @@ export class TownScene extends Phaser.Scene {
    * made "make the land bigger" shrink the town.
    */
   private fit(l: Layout): void {
+    // Announced before this method moves anything, so a follow running when it
+    // lands re-asserts its own zoom on the next frame rather than spending the
+    // rest of the session at the whole-town fit.
+    this.reframed = true;
     const cam = this.cameras.main;
     if (this.view === "plan") {
       const b = planBox(l);
@@ -2087,7 +2225,7 @@ export class TownScene extends Phaser.Scene {
     const ch = c.maxY - c.minY;
     const byWidth = Math.floor((this.scale.width - 60) / cw);
     const byHeight = Math.floor((this.scale.height - 100) / ch);
-    cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));
+    cam.setZoom(clampZoom(Math.min(byWidth, byHeight)));
     cam.centerOn((c.minX + c.maxX) / 2, (c.minY + c.maxY) / 2);
   }
 

@@ -41,7 +41,7 @@ import { POSE_FOR, machineFor, type MachineKind } from "./art/machine";
 import { PLACARD, placard } from "./art/placard";
 import { actionInfo, targetOf } from "./actions";
 import { SITE_ID_BUILDING_PREFIX, type Action, type Layout, type Site, type Worker, useTown } from "./store";
-import { labelVisible } from "./visibility";
+import { labelVisible, workerLabelId } from "./visibility";
 /** The shortest a journey may take, in milliseconds. Long enough to read as
  *  movement, short enough that a fast agent does not leave workers trailing far
  *  behind what actually happened. */
@@ -73,16 +73,6 @@ const TAG_LIFT = 27;
  *  Above the crew tag rather than beside it, so the two never overlap: the tag
  *  says *who*, the caption says *what*, and both are wanted at once. */
 const CAPTION_LIFT = 38;
-
-/**
- * The id a figure's caption is focusable and hoverable under.
- *
- * Namespaced, because the store's `focused`/`hovered` carry ids from two owners —
- * this layer's figures and the scene's buildings — and a raw worker id that
- * happened to equal a site id would light both labels at once. The prefix makes
- * that collision impossible rather than unlikely.
- */
-const workerLabelId = (id: string): string => `worker:${id}`;
 
 /**
  * The depth a figure's hit target sits at.
@@ -425,6 +415,32 @@ export class WorkerLayer {
     this.roads = roads;
   }
 
+  /**
+   * positionOf is where a figure is right now, in picture pixels, or null when
+   * there is no such figure.
+   *
+   * Read by the follow camera, which has to ask every frame and cannot work it
+   * out for itself: a travelling machine's position is written by its own
+   * stepper from the arc length of its route (`stepper`), and neither the route
+   * nor the sprite is reachable from outside this class.
+   *
+   * The sprite's own position rather than `groundY`, which differs by the walk
+   * lift of 0 or 1 pixel: a camera aiming at a body that bobs on its tracks
+   * inherits the bob, and one aiming at the ground it is not standing on would
+   * be aiming at a point the reader cannot see anything at.
+   *
+   * Null rather than a stale point is the whole contract. `remove` destroys the
+   * sprite and every per-worker map when the daemon stops reporting a session,
+   * and a follow camera holding the last coordinate it saw would sit over empty
+   * ground for the rest of the session — pointing at nothing with full
+   * confidence, which is the one thing this town must never do.
+   */
+  positionOf(id: string): Point | null {
+    const sprite = this.sprites.get(id);
+    if (!sprite) return null;
+    return { x: sprite.x, y: sprite.y };
+  }
+
   constructor(scene: Phaser.Scene, _atlasKey: string, atlas: Atlas, dragged: () => boolean) {
     this.scene = scene;
     this.atlas = atlas;
@@ -496,12 +512,13 @@ export class WorkerLayer {
     }
 
     // A figure created by this pass started hidden, and a live update changes
-    // neither the hover nor the focus — so nothing else would run the rule and a
-    // worker appearing under an existing focus would stay dark until the reader
-    // moved the pointer. Applying it here is what makes the rule hold for figures
-    // that arrive after the click.
-    const { focused, hovered } = useTown.getState();
-    this.applyLabels(focused, hovered);
+    // neither the hover, the focus nor the follow — so nothing else would run
+    // the rule and a worker appearing under an existing focus, or belonging to
+    // the session being followed, would stay dark until the reader moved the
+    // pointer. Applying it here is what makes the rule hold for figures that
+    // arrive after the click.
+    const { focused, hovered, following } = useTown.getState();
+    this.applyLabels(focused, hovered, following);
   }
 
   /**
@@ -598,9 +615,9 @@ export class WorkerLayer {
       .setInteractive({ useHandCursor: false });
     this.hitZones.set(w.id, zone);
 
-    // Pointing at the figure reveals its caption; clicking it pins the caption
-    // open. Both go through the store, so a building's name and a worker's
-    // caption obey one rule and focusing a worker clears the building focused
+    // Pointing at the figure reveals its caption; clicking it follows the
+    // machine. Both go through the store, so a building's name and a worker's
+    // caption obey one rule and following a worker clears the building focused
     // before it — which is the reader's own description of the behaviour.
     //
     // `useHandCursor` stays false: this is not a link, and the whole map is
@@ -611,7 +628,20 @@ export class WorkerLayer {
       if (useTown.getState().hovered === workerLabelId(w.id)) useTown.getState().hover(null);
     });
     zone.on("pointerup", () => {
-      if (!this.dragged()) useTown.getState().focus(workerLabelId(w.id));
+      // The same gesture that focused a caption now follows the machine, and
+      // the two are the same act: pointing at a figure and clicking it is asking
+      // what it is *and* to watch it, and the walk between buildings is most of
+      // what a machine does — a caption says "Hammering / internal" and shows
+      // none of it.
+      if (this.dragged()) return;
+      // Clicking the machine you are already following stops following it, so
+      // the same gesture both starts and ends. There is no keyboard handler in
+      // this app and adding one for an escape hatch would be the first
+      // (TownScene.controls registers pointer events only), and a visible stop
+      // control is in the panel either way.
+      const { following, follow, unfollow } = useTown.getState();
+      if (following === w.id) unfollow();
+      else follow(w.id);
     });
 
     this.anim.set(w.id, { state: "idle", tier, agent: w.agent || w.id, elapsed: 0, index: 0 });
@@ -626,10 +656,14 @@ export class WorkerLayer {
    * own, so that one pointer move resolves one rule. A second subscription here
    * would have to know which labels the scene owns in order to leave them alone,
    * and that knowledge is exactly what drifts.
+   *
+   * A followed figure's caption is lit for as long as the follow lasts, for the
+   * reason `labelVisible` states: the caption is what names the action, and a
+   * machine being followed with no caption is one the reader cannot act on.
    */
-  applyLabels(focused: string | null, hovered: string | null): void {
+  applyLabels(focused: string | null, hovered: string | null, following: string | null): void {
     for (const [id, entry] of this.captions) {
-      entry.text.setVisible(labelVisible(workerLabelId(id), hovered, focused));
+      entry.text.setVisible(labelVisible(workerLabelId(id), hovered, focused, following));
     }
   }
 

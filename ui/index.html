@@ -99,7 +99,12 @@
       }
 
       .app { display: flex; height: 100%; }
-      #town { flex: 1; position: relative; min-width: 0; }
+      /* The stage is the positioning context for the floating controls, and is a
+         wrapper rather than `#town` itself because `#town` is the node Phaser
+         mounts the canvas into — two owners appending to one element is a race
+         neither admits to. */
+      .stage { flex: 1; position: relative; min-width: 0; }
+      #town { position: absolute; inset: 0; }
       #town canvas {
         display: block;
         /* The town is pannable and zoomable, so say so. Without a cursor the
@@ -124,8 +129,104 @@
         background: var(--panel);
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        /* The panel scrolls as one column, and every section keeps its natural
+           height. The feed used to be the only thing that scrolled, which meant
+           a Crew list that grew with the number of live agents was clipped by
+           this `overflow: hidden` and unreachable rather than scrolled to. The
+           narrow-screen rule below already described the panel as scrolling;
+           this is what makes that true on both layouts. */
+        overflow-y: auto;
       }
+      .panel > * { flex: none; }
+
+      /* The floating controls. The overlay covers the whole stage and takes no
+         clicks: the town is panned by dragging the canvas, and a transparent
+         full-bleed layer that swallowed those drags would make the map feel
+         broken in a way that is hard to describe and easy to blame on the
+         renderer. Only the controls themselves are clickable. */
+      .hud {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 3;
+      }
+      .hud-group { position: absolute; top: 10px; pointer-events: auto; }
+      .hud-group.left { left: 10px; }
+      .hud-group.right { right: 10px; }
+
+      /* The trigger. Two lines — a fixed pixel-font key and a value — so the
+         button is the same size whether it says "3 agents" or a session name,
+         and the thing that changes is the thing that changed. A followed crew
+         is named on the button itself, because a control that only opened a
+         list would put "which machine am I watching" one click further away
+         than it was before it floated. */
+      .hud-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        padding: 5px 9px;
+        background: var(--panel);
+        border: 1px solid var(--edge);
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .hud-btn .k {
+        font-family: var(--pixel);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--text-dim);
+      }
+      .hud-btn .v { font-size: 11px; color: var(--text); white-space: nowrap; }
+      .hud-btn.following { border-color: var(--accent); }
+      .hud-btn.following .v { color: var(--accent); }
+      .hud-btn:hover { background: var(--raised); }
+      .hud-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+      /* The popover. Positioned under its own trigger and never wider than the
+         column it came from, so it reads as belonging to the button rather than
+         as a second panel. `overflow-y` because a busy town can list more crews
+         than fit, and a popover that grows off the bottom of the screen is a
+         popover that has hidden the control that closes it. */
+      .hud-pop {
+        position: absolute;
+        top: calc(100% + 6px);
+        width: 300px;
+        max-height: 60vh;
+        overflow-y: auto;
+        padding: 10px 12px;
+        background: var(--panel);
+        border: 1px solid var(--edge);
+        box-shadow: 0 6px 0 -2px rgba(0, 0, 0, .45);
+      }
+      .hud-group.right .hud-pop { right: 0; }
+      .hud-pop .detail-control,
+      .hud-pop .view-control { padding: 0 0 10px; }
+      .hud-pop .detail-control + .view-control { padding-top: 10px; border-top: 1px solid var(--edge); }
+      .hud-pop .detail-control h2 { margin: 0 0 6px; }
+
+      /* The crew list keeps the panel's own row treatment — the tier chip, the
+         one-pixel left rule, the place name pushed right — so a row looks the
+         same wherever it is read. */
+      .hud-pop .crew-list { list-style: none; margin: 0; padding: 0; }
+      .hud-pop .crew-list li {
+        padding: 4px 4px 4px 8px;
+        border-left: 1px solid var(--edge);
+      }
+      .hud-pop .crew-list li:hover { background: var(--raised); }
+      .hud-pop .crew-list li.done { opacity: .5; }
+      .hud-pop .crew-list .follow {
+        display: flex; gap: 7px; align-items: baseline; width: 100%;
+        padding: 0; border: 0; background: none; color: inherit;
+        font: inherit; text-align: left; cursor: pointer;
+      }
+      .hud-pop .crew-list .follow.on { color: var(--accent); }
+      .hud-pop .crew-list .at { margin-left: auto; font-size: 10px; }
+      .hud-pop .following-now { margin: 0 0 8px; }
+      .hud-pop .following-now button { margin-left: auto; }
 
       /* The title bar is the panel's one piece of pure chrome: town name in the
          town's own face, with the connection lamp at the end of it. */
@@ -436,7 +537,86 @@
         text-align: right;
       }
 
-      .feed { flex: 1; overflow-y: auto; padding-bottom: 12px; }
+      /* The follow control. It wraps the row's spans rather than sitting beside
+         them, so the row's own left rule, its tier chip and its place name keep
+         the positions they had — the reader who never follows sees the same list
+         they saw before, with a different cursor over it. */
+      .crew .follow {
+        display: flex;
+        gap: 7px;
+        align-items: baseline;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      /* The followed row says so by its own rule, the same one-pixel signal the
+         rest of the panel uses for a crew's agent colour, rather than by a wash:
+         a whole-row tint on the one row the camera is on would be the loudest
+         thing in a 316px column. */
+      .crew .follow.on { box-shadow: inset 2px 0 0 var(--accent); padding-left: 4px; }
+      .crew .follow:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+      /* The banner. A reader who has lost the machine in a big town needs one
+         line that says which one it is and one control that stops it; both are
+         here rather than on the row so they are found without hunting the list
+         for the row that is currently lit. */
+      .crew .following-now {
+        display: flex;
+        /* `nowrap`, and a `min-width: 0` on the truncating span below, because a
+           flex item's default `min-width: auto` refuses to shrink below its
+           content: without them the action text pushed the Stop button onto a
+           second line, where it read as a control belonging to the crew list
+           underneath it. */
+        flex-wrap: nowrap;
+        gap: 7px;
+        align-items: baseline;
+        margin: 0 14px 8px 12px;
+        padding: 4px 0 4px 8px;
+        border-left: 1px solid var(--accent);
+      }
+      .crew .following-now .nm {
+        font-family: var(--pixel);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--text-dim);
+      }
+      /* `flex: none` and no wrapping: this is a name, and a name broken across
+         three lines ("omp / moke- / a") is less readable than no name at all. It
+         is also the one span that must never be the one to ellipsise — the
+         action beside it degrades gracefully and this does not. */
+      .crew .following-now .who { flex: none; white-space: nowrap; color: var(--testing); }
+      .crew .following-now .what {
+        flex: 1 1 auto;
+        min-width: 0;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .crew .following-now button {
+        flex: none;
+        margin-left: auto;
+        font-family: var(--pixel);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--void);
+        background: var(--accent);
+        border: 0;
+        padding: 2px 5px;
+        cursor: pointer;
+      }
+      .crew .following-now button:focus-visible { outline: 1px solid var(--text); outline-offset: 1px; }
+
+      /* The feed no longer manages its own scroll: the panel is the scroll
+         container, and a second one nested inside it is a scroll trap. */
+      .feed { padding-bottom: 12px; }
       .feed h2 { margin: 12px 14px 8px; }
       .feed ul { list-style: none; margin: 0; padding: 0; }
       .feed li {
@@ -470,7 +650,10 @@
          full width; the panel scrolls underneath. */
       @media (max-width: 900px) {
         .app { flex-direction: column; }
-        #town { flex: 0 0 62%; min-height: 0; }
+        /* The stage carries the flex share, not `#town`: the controls float
+           inside it, and a share of zero would stack them on top of the panel
+           instead of the town. */
+        .stage { flex: 0 0 62%; min-height: 0; }
         .panel {
           width: 100%;
           flex: 1 1 auto;
