@@ -79,3 +79,49 @@ export function planFloors(s: Site): number {
   if (!Number.isFinite(n) || n < 1) return 1;
   return Math.min(n, 32);
 }
+/** A plot's box in the plan view, in screen pixels. */
+export interface PlanBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** A crew's mark on a plot: where, how big, and whether it is the chief. */
+export interface CrewMark {
+  x: number;
+  y: number;
+  size: number;
+  chief: boolean;
+}
+
+/**
+ * planCrewMark is where one worker's mark sits on the plot it is standing on.
+ *
+ * **Pure, and extracted so ADR-0007 is testable.** The brief requires chief and
+ * sub workers to be separable "at a glance", and a plan has no helmet to
+ * separate them with — so the separation has to be geometry, and a rule nobody
+ * can assert is a rule nobody has checked. Two marks of one colour on a plot
+ * differ only by size and by the ink edge, and both differences matter: size is
+ * what reads first at map zoom, the edge is what separates two chiefs on one
+ * plot.
+ *
+ * The mark sits in the plot's top-right corner, clear of the storey count, which
+ * owns the top-left.
+ */
+export function planCrewMark(
+  worker: { tier: "chief" | "sub" },
+  box: PlanBox,
+): CrewMark {
+  const chief = worker.tier !== "sub";
+  const size = chief ? 9 : 5;
+  return { x: box.x + box.w - size - 2, y: box.y + 2, size, chief };
+}
+
+/** planCrewSignature is the whole crew as one string, for the "has anything
+ *  changed" test that stops the plan rebuilding its marks every frame. */
+export function planCrewSignature(
+  workers: readonly { id: string; place: string; tier: string; agent: string }[],
+): string {
+  return workers.map((w) => `${w.id}:${w.place}:${w.tier}:${w.agent}`).join("|");
+}

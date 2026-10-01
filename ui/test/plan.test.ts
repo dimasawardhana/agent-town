@@ -7,7 +7,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { PLAN_PAD, isViewMode, planBox, planFloors, type ViewMode } from "../src/plan";
+import { PLAN_PAD, isViewMode, planBox, planCrewMark, planCrewSignature, planFloors, type ViewMode } from "../src/plan";
 import type { Layout, Site } from "../src/store";
 
 /**
@@ -77,4 +77,46 @@ test("the plan carries the size signal the isometric view draws as height", () =
   const tall = planFloors(siteWithFloors(20));
   const short = planFloors(siteWithFloors(1));
   assert.ok(tall > short, "a twenty-floor building and a hut print the same number");
+});
+test("chief and sub crews are separable without a helmet", () => {
+  // ADR-0007 requires the tiers to be distinguishable at a glance, and a plan has
+  // no helmet — so the separation is geometry, and a geometry rule nobody can
+  // call is a rule nobody has checked.
+  const box = { x: 100, y: 200, w: 120, h: 90 };
+  const chief = planCrewMark({ tier: "chief" }, box);
+  const sub = planCrewMark({ tier: "sub" }, box);
+  assert.ok(chief.size > sub.size, `chief ${chief.size}px and sub ${sub.size}px are the same size`);
+  assert.ok(chief.chief && !sub.chief, "the edge rule does not follow the tier");
+  // Both inside the plot, because a mark hanging off its own plot is the exact
+  // class of bug this project has now paid for three times.
+  for (const m of [chief, sub]) {
+    assert.ok(m.x >= box.x && m.y >= box.y, "a crew mark sits off the top-left of its plot");
+    assert.ok(m.x + m.size <= box.x + box.w, "a crew mark hangs off the right of its plot");
+    assert.ok(m.y + m.size <= box.y + box.h, "a crew mark hangs off the bottom of its plot");
+  }
+});
+
+test("the crew mark clears the storey count", () => {
+  // The count owns the top-left; two marks in one corner is one mark too many.
+  const box = { x: 0, y: 0, w: 140, h: 100 };
+  const m = planCrewMark({ tier: "sub" }, box);
+  assert.ok(m.x > box.w / 2, "the crew mark and the storey count share the top-left corner");
+});
+
+test("the crew signature changes when anything about the crew changes", () => {
+  // The plan's marks are rebuilt on this string and on nothing else, so every
+  // thing that should move a mark has to appear in it — and the thing that
+  // should not must not, or the layer rebuilds sixty times a second for nothing.
+  const crew = [{ id: "a", place: "b1", tier: "chief" as const, agent: "omp" }];
+  const sig = planCrewSignature(crew);
+  assert.equal(planCrewSignature(crew), sig, "the same crew produced two signatures");
+  for (const change of [
+    { ...crew[0], id: "z" },
+    { ...crew[0], place: "b2" },
+    { ...crew[0], tier: "sub" as const },
+    { ...crew[0], agent: "pi" },
+  ]) {
+    assert.notEqual(planCrewSignature([change]), sig, `${JSON.stringify(change)} did not move the signature`);
+  }
+  assert.notEqual(planCrewSignature([...crew, crew[0]]), sig, "a second identical worker did not move it");
 });

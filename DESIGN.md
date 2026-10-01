@@ -17,8 +17,8 @@ for this document.
 ## The world
 
 A 16-bit isometric construction site, drawn entirely in code and seen from one fixed camera:
-the classic 2:1 dimetric view with the sun up and to the left, and no rotation, no perspective
-and no second angle anywhere in the system. The layout arrives from the daemon in top-down
+the classic 2:1 dimetric view with the sun up and to the left, and no rotation and no
+perspective anywhere in the system. The layout arrives from the daemon in top-down
 world units and is never recomputed in the browser (`ui/src/scene.ts:1-9`; ADR-0012); the
 renderer only projects it. Ground is laid as diamond plates with authored edge pieces; buildings
 gain one part per rank as they climb an eight-rank ladder; and figures walk between them and play
@@ -29,6 +29,22 @@ ships as an image file: there is no loader and nothing to fetch at runtime. The 
 loopback, builds offline with zero dependencies, and carries the whole UI inside the Go binary
 (`internal/web/web.go:17`). Pan and zoom are local to Phaser and stay local (`ui/src/scene.ts:531-568`); the
 camera is never a data source.
+
+**There is a second view, and it is not a camera.** A **plan view** draws the town
+from directly above: every plot as the rectangle it actually is, districts as
+plates, roads as bands, the three places on their own plates, the ladder's rank as
+a step on `P.plaster`, damage as a `P.rust` edge, and the storey count printed on
+each plot because a plan cannot show height and height is this town's size signal
+(`ui/src/plan.ts`).
+
+It reuses the world's palette, its 1px ink, and its 3x5 face — there is no second
+drawing language. What it deliberately does **not** reuse is the art: the
+isometric cels have the 2:1 skew in their pixels, so no transform recovers a
+top-down view of them, and a worker in a plan is a mark in that crew's colour on
+the plot rather than a figure. Chief and sub are separated by geometry alone
+(square size and an ink edge), which is ADR-0007 carried into a view with no
+helmet in it. The two views cannot share a camera: the plan is framed
+fractionally and the isometric view is not, so a view change re-fits.
 
 ## Palette
 

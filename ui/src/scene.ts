@@ -10,7 +10,7 @@
 // what lets the transport stay one-way.
 
 import Phaser from "phaser";
-import { P } from "./art/palette";
+import { P, crewColour } from "./art/palette";
 import {
   ATLAS,
   type Atlas,
@@ -42,7 +42,7 @@ import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building
 import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
 import { LAND_APRON, LAND_BACK, boxContains, labelVisible, landBox, visibleAt } from "./visibility";
-import { PLAN_PAD, planBox, planFloors, type ViewMode } from "./plan";
+import { PLAN_PAD, planBox, planCrewMark, planCrewSignature, planFloors, type PlanBox, type ViewMode } from "./plan";
 import { DAYLIGHT, normaliseDay, type DayPhase } from "./daylight";
 
 /**
@@ -114,24 +114,28 @@ interface GroundRegion {
  * it stands on; labels are above all of it.
  */
 /**
- * PLAN_TONE is the fill a plot carries in the plan view, by construction stage.
+ * PLAN_STEP maps a construction rank to a step on an authored ramp.
  *
- * **Brightness is the stage, because that is the only thing left to say it
- * with.** From above a tower and a hut are both rectangles, so the plan leans on
- * the construction ladder for everything it can and prints the storey count for
- * the thing it cannot. The ramp is the plaster ramp stepped by rank, which keeps
- * it inside a palette the town already uses rather than inventing six more
- * colours for a view.
+ * **A ramp, not eight invented colours.** The first plan palette was eight
+ * hand-picked hexes that were in no ramp and in no `P`, which is precisely what
+ * DESIGN.md's palette allowlist exists to prevent — "a hex typed into a sprite
+ * by hand is automatically not [allowed]". A plan is a second drawing of this
+ * town and it has no palette of its own: the plot's brightness is the **rank**,
+ * stepped along `P.plaster`, the same warm neutral the lower-tier walls take.
+ *
+ * Four steps, and the ladder has eight ranks, so two ranks share a step. That is
+ * the intended trade: the plan says *how far along* a building is, not which
+ * part it has, and a reader who needs the exact part clicks it.
  */
-const PLAN_TONE: Record<string, number> = {
-  planned: 0x2b2724,
-  foundation: 0x3a332e,
-  framed: 0x4a423a,
-  walled: 0x5d5348,
-  roofed: 0x736658,
-  glazed: 0x8b7c6b,
-  doored: 0xa3907c,
-  completed: 0xbba68e,
+const PLAN_STEP: Record<string, number> = {
+  planned: 0,
+  foundation: 0,
+  framed: 1,
+  walled: 1,
+  roofed: 2,
+  glazed: 2,
+  doored: 3,
+  completed: 3,
 };
 
 const DEPTH = {
@@ -186,6 +190,16 @@ export class TownScene extends Phaser.Scene {
   /** Iso or plan. Held here as well as in the store so the projection and the
    *  store can never disagree about which one is being drawn. */
   private view: ViewMode = "iso";
+
+  /** Each building's plot box in the plan view, kept so the worker's marks can be
+   *  redrawn on a tick without re-deriving the projection every frame. */
+  private planBoxes = new Map<string, PlanBox>();
+  /** The plan's worker layer. Separate from the plan's own Graphics because it
+   *  changes on every event and the plan only on a layout change. */
+  private planCrew: Phaser.GameObjects.Graphics | null = null;
+  /** Who is standing where, as one string. The crew layer is rebuilt when this
+   *  changes and not on every frame. */
+  private planCrewSignature = "";
   /**
    * Every orientation baked so far, by turn.
    *
@@ -380,6 +394,13 @@ export class TownScene extends Phaser.Scene {
       // camera framing for a change that cannot move anything.
       if (s.view !== prev.view && this.sourceLayout) {
         this.view = s.view === "plan" ? "plan" : "iso";
+        // The fit is forced, because a view toggle presents the *same town* and
+        // would otherwise produce the same signature as before it — so the guard
+        // that stops a reconnect from throwing away a developer's pan would also
+        // stop the camera from returning to the isometric framing, and the town
+        // came back at the plan's 0.8x. The guard is about towns, not about
+        // views.
+        this.fittedSignature = "";
         this.draw(this.sourceLayout);
         return;
       }
@@ -505,7 +526,15 @@ export class TownScene extends Phaser.Scene {
     // therefore threw away whatever the developer had panned and zoomed to
     // every time the stream blipped. The signature is what actually
     // distinguishes one town from another, so it is what the fit is keyed to.
-    const signature = `${layout.width}x${layout.height}:${layout.sites.length}:${layout.districts.length}`;
+    // **The view is part of the signature.** It was not, and the plan's whole
+    // framing is a fractional zoom — so toggling back to the isometric town left
+    // the camera at 0.72, which is the one thing this projection forbids: "a
+    // fractional zoom makes some art pixels two screen pixels wide and their
+    // neighbours one, and zooming below 1 destroys the art rather than showing
+    // more of it." A view change re-fits because the two views cannot share a
+    // camera, and the guard that stops a reconnect from throwing away the
+    // developer's pan is about *towns*, not about *views*.
+    const signature = `${this.view}:${layout.width}x${layout.height}:${layout.sites.length}:${layout.districts.length}`;
     if (signature !== this.fittedSignature) {
       this.fittedSignature = signature;
       this.fit(layout);
@@ -1444,6 +1473,9 @@ export class TownScene extends Phaser.Scene {
     const day = useTown.getState().day;
     this.clouds?.reconcile(day, time / 1000, this.scale.width, this.scale.height);
     this.birds?.reconcile(day, time / 1000, this.scale.width, this.scale.height);
+    // The plan's crews move on events, not on layout changes, and this is the
+    // only thing that redraws between them.
+    this.drawPlanWorkers();
     if (!this.embers || !this.layout) return;
     const { live } = useTown.getState();
     const byPath = new Map(live.buildings.map((b) => [b.path, b.updated]));
@@ -1847,51 +1879,56 @@ export class TownScene extends Phaser.Scene {
    * important field.
    */
   private drawPlan(l: Layout): void {
-    const plan = this.add.graphics();
-    const edge = Number.parseInt(P.ink.slice(1), 16);
+    const g = this.add.graphics();
+    const ink = Number.parseInt(P.ink.slice(1), 16);
 
-    // The ground the plan is drawn on. Without it the rectangles float on the
-    // backdrop, which reads as a diagram in a void rather than as a town seen
-    // from above — and the land is the one thing both views share.
+    // The ground, as a plate: a ramp step and a 1px ink edge, which is how the
+    // isometric ground is built (diamond plates with authored edge pieces) rather
+    // than a translucent wash over the sky.
     const g0 = this.project(0, 0);
     const g1 = this.project(l.width, l.height);
-    plan.fillStyle(Number.parseInt(P.grass[1].slice(1), 16), 1);
-    plan.fillRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
-    plan.lineStyle(2, edge, 0.8);
-    plan.strokeRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+    g.fillStyle(Number.parseInt(P.grass[1].slice(1), 16), 1);
+    g.fillRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+    g.lineStyle(1, ink, 1);
+    g.strokeRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
 
-    // Districts first, as an outlined region the plots sit inside. Filled
-    // faintly rather than solidly: a plan's job is to show what is *inside* a
-    // district, and a solid fill would hide the plots it is grouping.
+    // Districts: one ramp step down from the field, edged in ink. A district is a
+    // region in this world, and a region reads by its *edge*, not by a tint laid
+    // over its contents.
     for (const d of l.districts) {
       const a = this.project(d.x, d.y);
       const b = this.project(d.x + d.w, d.y + d.h);
-      plan.fillStyle(Number.parseInt(P.grass[0].slice(1), 16), 0.7);
-      plan.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
-      plan.lineStyle(1, edge, 0.5);
-      plan.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.fillStyle(Number.parseInt(P.grass[0].slice(1), 16), 1);
+      g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.lineStyle(1, ink, 0.85);
+      g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
     }
 
-    // Roads as their own rectangles. They are regions on this map — nothing here
-    // joins two places — so a band is honest and a line would not be.
+    // Roads. They are regions on this map — nothing here joins two places — so a
+    // filled band with an ink edge, which is a plate, is honest and a line is not.
     for (const r of l.roads ?? []) {
       const a = this.project(r.x, r.y);
       const b = this.project(r.x + r.w, r.y + r.h);
-      plan.fillStyle(Number.parseInt(P.stone[1].slice(1), 16), 0.9);
-      plan.fillRect(a.x, a.y, Math.max(1, b.x - a.x), Math.max(1, b.y - a.y));
+      const w = Math.max(1, b.x - a.x);
+      const h = Math.max(1, b.y - a.y);
+      g.fillStyle(Number.parseInt(P.stone[1].slice(1), 16), 1);
+      g.fillRect(a.x, a.y, w, h);
+      g.lineStyle(1, ink, 0.7);
+      g.strokeRect(a.x, a.y, w, h);
     }
 
-    // The three places, which are plates rather than buildings.
+    // The three places, on the warm plates their own ground takes.
     for (const s of l.sites) {
       if (s.kind === "building") continue;
       const a = this.project(s.x, s.y);
       const b = this.project(s.x + s.w, s.y + s.h);
-      plan.fillStyle(Number.parseInt(P.stone[2].slice(1), 16), 0.8);
-      plan.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
-      plan.lineStyle(1, edge, 0.7);
-      plan.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.fillStyle(Number.parseInt(P.yardFloorLit.slice(1), 16), 1);
+      g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.lineStyle(1, ink, 1);
+      g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
     }
 
+    // The plots.
     for (const s of l.sites) {
       if (s.kind !== "building") continue;
       if (!visibleAt(s, this.depth)) continue;
@@ -1899,25 +1936,48 @@ export class TownScene extends Phaser.Scene {
       const b = this.project(s.x + s.w, s.y + s.h);
       const w = Math.max(2, b.x - a.x);
       const h = Math.max(2, b.y - a.y);
-      // Fill by stage, so a plan still says what is built and what is not, and
-      // border harder on the damaged or the working.
       const stage = this.statusOf(s.path);
-      const tone = PLAN_TONE[stage] ?? PLAN_TONE.planned;
-      plan.fillStyle(tone, 0.95);
-      plan.fillRect(a.x, a.y, w, h);
-      plan.lineStyle(1, edge, 1);
-      plan.strokeRect(a.x, a.y, w, h);
-      // The storey count, centred, and only when there is room for it.
-      if (w >= 10 && h >= 10) {
-        const n = this.add.text(a.x + w / 2, a.y + h / 2, String(planFloors(s)));
-        n.setOrigin(0.5, 0.5).setDepth(DEPTH.label).setResolution(2);
-        n.setStyle({ fontFamily: "monospace", fontSize: "11px", color: "#e8e0d0" });
-        n.setResolution(1);
+      g.fillStyle(Number.parseInt(P.plaster[PLAN_STEP[stage] ?? 0].slice(1), 16), 1);
+      g.fillRect(a.x, a.y, w, h);
+      // **Damage stays visible.** The brief requires a broken building to be
+      // visibly damaged, and the first plan drew every plot in one ink — so a
+      // failing building looked identical to a sound one. Rust is the world's
+      // own damage colour, used as an edge because an edge is what carries a
+      // condition here.
+      const failed = this.damagedOf(s.path);
+      g.lineStyle(2, Number.parseInt(P.rust[3].slice(1), 16), 1);
+      g.strokeRect(a.x, a.y, w, h);
+      if (!failed) {
+        g.lineStyle(1, ink, 1);
+        g.strokeRect(a.x, a.y, w, h);
+      }
+      // The storey count, in the town's own 3x5 face. It replaces the height the
+      // isometric town draws, so a plan still says how big a building is.
+      if (w >= 16 && h >= 12) {
+        const n = this.label(String(planFloors(s)), a.x + 2, a.y + 2, "count");
+        if (n) {
+          n.setOrigin(0, 0);
+          this.register(s.id, n);
+        }
       }
       this.hitZone(a.x, a.y, w, h, s, 0);
     }
 
-    // Names last, so a plot's own number is never behind its name.
+    // The worker's marks go on their own layer, redrawn every tick. They are
+    // drawn here *first* only to record the geometry — `drawPlan` runs on a
+    // layout change and a crew arrives and leaves between two of those, so marks
+    // painted with the plan would be a photograph of who was working when the
+    // town last redrew. `drawPlanWorkers` owns them.
+    this.planBoxes = new Map();
+    for (const s of l.sites) {
+      if (s.kind !== "building") continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      this.planBoxes.set(s.id, { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y });
+    }
+    this.drawPlanWorkers(true);
+
+    // Names last, so a plot's own count is never behind its name.
     for (const s of l.sites) {
       if (!s.path) continue;
       if (s.kind === "building" && !visibleAt(s, this.depth)) continue;
@@ -1926,29 +1986,68 @@ export class TownScene extends Phaser.Scene {
       const lbl = this.label(s.path, (a.x + b.x) / 2, a.y - 2, "name");
       if (lbl) this.register(s.id, lbl);
     }
-    // The names. `refreshLabels` is what decides which of them the visibility
-    // rule allows to be lit, and it lives after the isometric path's own return
-    // — so without this every label is created and stays hidden, and the plan has
-    // numbers on its plots and no names, which is the one thing a plan is for.
-    this.refreshLabels();
 
-    // **Counter-scaled.** A label is a world-space sprite, so it shrinks with the
-    // camera — and the plan is framed at 0.72x, which turned every name into a
-    // smudge. A name is the one thing on a plan that has to be readable, and a
-    // plan is framed to fit the whole town rather than zoomed into it, so the
-    // scale is undone rather than the framing changed.
+    this.refreshLabels();
+    // Counter-scaled: a label is a world-space sprite, so it shrinks with the
+    // camera, and the plan is framed at ~0.7x, which turned every name into a
+    // smudge. A name is the one thing on a plan that has to be readable.
     const inv = 1 / this.cameras.main.zoom;
     for (const images of this.labels.values()) {
       for (const img of images) img.setScale(inv);
     }
 
-    plan.setDepth(DEPTH.ground + 1);
-    // The sky, because `draw` has already swept every child and `drawPlan`
-    // returns before the isometric path's own sky setup. Without this the canvas
-    // falls back to the camera background — a near-black void, which reads as a
-    // plan drawn on a broken screen rather than as the town from above.
+    g.setDepth(DEPTH.ground + 1);
     this.ensureSky();
     this.fit(l);
+  }
+
+
+  /**
+   * drawPlanWorkers places a mark on every plot a crew is standing on.
+   *
+   * **A plan cannot draw a figure** — the machine art is a side view, and that is
+   * the same argument as every other mark in this file. So the plan says "a crew
+   * is on this plot" the way a plan says anything: a square in that crew's own
+   * colour, with the tier kept legible. ADR-0007 requires chief and sub to be
+   * separable at a glance, and a plan has no helmet to separate them, so **chief
+   * is the larger square and the only one with an ink edge.**
+   *
+   * This is the whole reason the view exists — a surface whose job is "where is
+   * it, what is it doing" that cannot say where it is — and the first plan had no
+   * worker at all.
+   */
+  private drawPlanWorkers(force = false): void {
+    if (this.view !== "plan") {
+      this.planCrewSignature = "";
+      this.planCrew?.destroy();
+      this.planCrew = null;
+      return;
+    }
+    // **Redrawn only when the crew actually changes.** This is called every
+    // frame, and destroying and rebuilding a Graphics sixty times a second for a
+    // mark that changes twice a minute is the kind of cost that shows up as a
+    // dropped frame on the machine that can least afford one.
+    const crew = useTown.getState().live.workers;
+    const signature = planCrewSignature(crew);
+    if (!force && signature === this.planCrewSignature) return;
+    this.planCrewSignature = signature;
+
+    this.planCrew?.destroy();
+    const g = this.add.graphics();
+    this.planCrew = g;
+    const ink = Number.parseInt(P.ink.slice(1), 16);
+    for (const w of crew) {
+      const box = this.planBoxes.get(w.place);
+      if (!box) continue;
+      const mark = planCrewMark(w, box);
+      g.fillStyle(Number.parseInt(crewColour(w.agent).slice(1), 16), 1);
+      g.fillRect(mark.x, mark.y, mark.size, mark.size);
+      if (mark.chief) {
+        g.lineStyle(1, ink, 1);
+        g.strokeRect(mark.x, mark.y, mark.size, mark.size);
+      }
+    }
+    g.setDepth(DEPTH.ground + 2);
   }
 
   /**

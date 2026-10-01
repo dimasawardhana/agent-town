@@ -186,6 +186,17 @@ const MUTATIONS = [
     to: "  return 1;",
     suite: "test:plan",
   },
+  {
+    // Chief and sub become the same mark. ADR-0007 requires the tiers to be
+    // separable at a glance, and a plan has no helmet — so this is the only thing
+    // separating them, and this is what a plan silently stops saying when it
+    // goes.
+    what: "a chief worker's mark is no longer bigger than a sub's",
+    file: "src/plan.ts",
+    from: "  const size = chief ? 9 : 5;",
+    to: "  const size = 6;",
+    suite: "test:plan",
+  },
 ];
 
 const run = (cmd, cwd) => {
