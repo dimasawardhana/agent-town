@@ -164,6 +164,17 @@ const MUTATIONS = [
     to: "  void skyLadder(phase);",
     suite: "test:sky",
   },
+  {
+    // The apron back to three tiles. The land's far corner comes back inside the
+    // picture and there is sky beneath it again — the diorama. Nothing about the
+    // *town* changes, which is the point: this is a picture defect and only a
+    // picture test can see it.
+    what: "the land shrinks back inside the frame",
+    file: "src/visibility.ts",
+    from: "export const LAND_APRON = 900;",
+    to: "export const LAND_APRON = 48;",
+    suite: "test:land",
+  },
 ];
 
 const run = (cmd, cwd) => {

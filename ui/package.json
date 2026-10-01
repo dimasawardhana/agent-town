@@ -9,7 +9,7 @@
     "test:blankcaps": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-blankcaps.test.mjs test/blankcaps.test.ts --log-level=warning && node --test ui-blankcaps.test.mjs",
     "test:archetypes": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-archetypes.test.mjs test/archetypes.test.ts --log-level=warning && node --test ui-archetypes.test.mjs",
     "test:visibility": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-visibility.test.mjs test/visibility.test.ts --log-level=warning && node --test ui-visibility.test.mjs",
-    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:embers && npm run test:roads && npm run test:turnroads && npm run test:turnalign && npm run test:flagcorner && npm run test:daylight && npm run test:birds && npm run test:clouds && npm run test:sky && npm run test:motion && npm run test:materials && npm run test:routing && npm run test:visibility && npm run test:light && npm run test:atlas && npm run test:commenttruth && npm run test:selftest && npm run test:traffic",
+    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:embers && npm run test:roads && npm run test:turnroads && npm run test:turnalign && npm run test:flagcorner && npm run test:daylight && npm run test:birds && npm run test:clouds && npm run test:land && npm run test:sky && npm run test:motion && npm run test:materials && npm run test:routing && npm run test:visibility && npm run test:light && npm run test:atlas && npm run test:commenttruth && npm run test:selftest && npm run test:traffic",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:light": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-light.test.mjs test/light.test.ts --log-level=warning && node --test ui-light.test.mjs",
     "test:atlas": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-atlas.test.mjs test/atlas.test.ts --log-level=warning && node --test ui-atlas.test.mjs",
@@ -29,7 +29,8 @@
     "test:mutate": "node test/mutate.mjs",
     "test:daylight": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-daylight.test.mjs test/daylight.test.ts --log-level=warning && node --test ui-daylight.test.mjs",
     "test:birds": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-birds.test.mjs test/birds.test.ts --log-level=warning && node --test ui-birds.test.mjs",
-    "test:clouds": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-clouds.test.mjs test/clouds.test.ts --log-level=warning && node --test ui-clouds.test.mjs"
+    "test:clouds": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-clouds.test.mjs test/clouds.test.ts --log-level=warning && node --test ui-clouds.test.mjs",
+    "test:land": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-land.test.mjs test/land.test.ts --log-level=warning && node --test ui-land.test.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1",

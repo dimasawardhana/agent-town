@@ -41,7 +41,7 @@ import { SKY_DEPTH, skyTexture } from "./sky";
 import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building";
 import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
-import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
+import { LAND_APRON, LAND_BACK, boxContains, labelVisible, landBox, visibleAt } from "./visibility";
 import { DAYLIGHT, normaliseDay, type DayPhase } from "./daylight";
 
 /**
@@ -75,6 +75,9 @@ import { WorkerLayer } from "./workers";
  *  module's own constant; the tile *pixels* and origin come from the atlas
  *  rather than from here, so only the tiling pitch is restated. */
 const TILE = 16;
+
+
+
 
 /** The id prefix a district's plate label is registered under. A district is not
  *  a site, so it needs its own namespace; the prefix is what keeps it from ever
@@ -543,13 +546,20 @@ export class TownScene extends Phaser.Scene {
    * instead would paint land nobody can reach.
    */
   private drawGround(l: Layout): void {
-    const pad = TILE * 3;
+    // `LAND_APRON`, not the old three-tile pad — see the constant for why the
+    // land is not sized to the town. The inner band is still the town's own
+    // cleared grass; everything past it is the colder field.
+    const pad = LAND_APRON;
     this.groundPlan.length = 0;
     this.groundPlan.push({
-      x: -pad,
-      y: -pad,
-      w: l.width + pad * 2,
-      h: l.height + pad * 2,
+      // Asymmetric on purpose — see `LAND_BACK`. Painted and measured from the
+      // same two constants, which is the whole reason they are two constants
+      // rather than one: a land measured larger than the land painted is a
+      // camera that finds an edge the reader can already see.
+      x: -LAND_BACK,
+      y: -LAND_BACK,
+      w: l.width + pad + LAND_BACK,
+      h: l.height + pad + LAND_BACK,
       kind: "grassOutside",
       // The inner band is the town's own cleared grass; the outer field is a
       // colder grass, so the site reads as land inside a field.
@@ -1271,7 +1281,12 @@ export class TownScene extends Phaser.Scene {
     // whole axis. The previous version did exactly that and lost `h/2` on the
     // left of every rectangle, which is the same class of error as the land
     // being left out entirely, and it hid behind it.
-    const land = landBox(l.width, l.height, TILE * 3, (x, y) => this.project(x, y));
+    // The land, at the apron the ground is actually painted to. The two numbers
+    // are the same by construction now rather than by the comment asking that
+    // they be: `drawGround` and this function both say `LAND_APRON`, and a land
+    // measured smaller than the land painted is how a camera finds an edge the
+    // reader can already see.
+    const land = landBox(l.width, l.height, LAND_APRON, (x, y) => this.project(x, y), LAND_BACK);
     let minX = land.minX;
     let maxX = land.maxX;
     let minY = land.minY;
@@ -1727,14 +1742,70 @@ export class TownScene extends Phaser.Scene {
    * is no honest way to show a 1400-unit town in a 1100-pixel canvas without
    * either breaking the pixels or lying about the size.
    */
-  private fit(l: Layout): void {
-    const e = this.extents(l);
-    const cam = this.cameras.main;
-    const byWidth = Math.floor((this.scale.width - 60) / e.w);
-    const byHeight = Math.floor((this.scale.height - 100) / e.h);
-    cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));
-    cam.centerOn((e.minX + e.maxX) / 2, (e.minY + e.maxY) / 2);
+  /**
+   * contentExtents is the box the camera frames: the town, and not its field.
+   *
+   * It used to frame `extents`, which included the land. That is the coupling
+   * that made "make the land bigger" shrink the town: a bigger land was a bigger
+   * frame, and a bigger frame at the same viewport is a smaller town. Framing the
+   * content and letting the field run off the edges is what decouples them.
+   */
+  private contentExtents(l: Layout): { minX: number; maxX: number; minY: number; maxY: number } {
+    const land = landBox(l.width, l.height, TILE * 3, (x, y) => this.project(x, y));
+    let minX = land.minX;
+    let maxX = land.maxX;
+    let minY = land.minY;
+    let maxY = land.maxY;
+    const consider = (box: { minX: number; maxX: number; minY: number; maxY: number }): void => {
+      minX = Math.min(minX, box.minX);
+      maxX = Math.max(maxX, box.maxX);
+      minY = Math.min(minY, box.minY);
+      maxY = Math.max(maxY, box.maxY);
+    };
+    for (const s of l.sites) {
+      if (!visibleAt(s, this.depth)) continue;
+      const pts = [
+        this.project(s.x, s.y),
+        this.project(s.x + s.w, s.y),
+        this.project(s.x, s.y + s.h),
+        this.project(s.x + s.w, s.y + s.h),
+      ];
+      consider({
+        minX: Math.min(...pts.map((p) => p.x)),
+        maxX: Math.max(...pts.map((p) => p.x)),
+        minY: Math.min(...pts.map((p) => p.y)),
+        maxY: Math.max(...pts.map((p) => p.y)),
+      });
+    }
+    return { minX, maxX, minY, maxY };
   }
+
+  /**
+   * fit frames the town and centres it.
+   *
+   * **Centred, and that is a decision rather than a default.** Two reframings
+   * were tried against a bigger land — placing the land's near corner on the
+   * frame's centre line, and pushing the corner down by a sky share — and both
+   * measured as worse than simply centring, because the composition of an
+   * isometric land is decided by where its near corner falls and the town has to
+   * stay near the middle of the frame to read as a town.
+   *
+   * The land grew (`LAND_APRON`) and this did not change with it, which is the
+   * point of having `contentExtents`: framing the content and letting the field
+   * run off the edges are two independent decisions, and coupling them is what
+   * made "make the land bigger" shrink the town.
+   */
+  private fit(l: Layout): void {
+    const c = this.contentExtents(l);
+    const cw = c.maxX - c.minX;
+    const ch = c.maxY - c.minY;
+    const cam = this.cameras.main;
+    const byWidth = Math.floor((this.scale.width - 60) / cw);
+    const byHeight = Math.floor((this.scale.height - 100) / ch);
+    cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));
+    cam.centerOn((c.minX + c.maxX) / 2, (c.minY + c.maxY) / 2);
+  }
+
 
 }
 

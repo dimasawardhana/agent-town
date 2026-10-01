@@ -84,16 +84,58 @@ export function labelVisible(id: string, hovered: string | null, focused: string
  * loses half the rectangle's span on one axis. The first version of the fix did
  * exactly that and lost 353 pixels off the left of the town.
  */
+/**
+ * LAND_APRON is how far the field reaches past the town's own ground, in world
+ * units, on every side.
+ *
+ * **The land was sized to the town, and that made it a diorama.** An isometric
+ * rectangle projects to a diamond, so a land whose *bounding box* fills the
+ * frame still leaves sky at all four corners — measured at 935x817 against an
+ * 884x860 viewport, with 83.6% of the frame green and the rest sky. The only way
+ * the frame is ever all land is a diamond big enough that its edges fall outside
+ * it, and that takes roughly twice the height.
+ *
+ * The apron is why it is an apron and not a bigger layout: the layout describes
+ * *content*, and how much field a reader sees beyond it is a question about the
+ * picture. Growing `l.width` would make the analyzer place districts further
+ * apart for no reason and would still leave the corners open.
+ */
+export const LAND_APRON = 900;
+
+/** LAND_BACK is the small margin of field *behind* the town's own near corner.
+ *
+ *  Three tiles, and deliberately small. The near corner of the land is the only
+ *  point above which there is sky, so it is the whole of the composition — and
+ *  it rises with the margin, at `LAND_BACK / 2` above the town's own origin. A
+ *  symmetric apron would raise it by `LAND_APRON / 2` instead and push the sky
+ *  clean off the top of the frame, which is the opposite of what was asked for.
+ *
+ *  It is not zero because a field whose edge is exactly the town's own corner
+ *  puts the first building on the boundary of the world. */
+/** Three tiles, and no more — see the note above. */
+export const LAND_BACK = 48;
+
 export function landBox(
   width: number,
   height: number,
   pad: number,
   project: (x: number, y: number) => { x: number; y: number },
+  /** How far the field reaches *back*, past the town's own near corner.
+   *
+   *  Separate from `pad` because the land has to reach forward, not backward: a
+   *  symmetric apron pushes the field's far corner up as well as its near corners
+   *  out, and a far corner above the frame is a sky-less picture — the opposite
+   *  of the one that was asked for. Forward-only keeps the near corner where the
+   *  town already was and sends the other three off-screen.
+   *
+   *  It is not zero: a field whose edge is exactly the town's own corner puts
+   *  the first building on the boundary of the world. */
+  backPad = 0,
 ): { minX: number; maxX: number; minY: number; maxY: number } {
   const corners = [
-    project(-pad, -pad),
-    project(width + pad, -pad),
-    project(-pad, height + pad),
+    project(-backPad, -backPad),
+    project(width + pad, -backPad),
+    project(-backPad, height + pad),
     project(width + pad, height + pad),
   ];
   return {
