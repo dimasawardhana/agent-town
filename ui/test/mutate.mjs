@@ -112,8 +112,8 @@ const MUTATIONS = [
     // the whole claim of the feature would be decoration nobody could see.
     what: "dusk stops lighting anything",
     file: "src/daylight.ts",
-    from: '    cloud: P.skyGlow,\n    birds: 6,\n    lit: true,',
-    to: '    cloud: P.skyGlow,\n    birds: 6,\n    lit: false,',
+    from: '    birds: 6,\n    lit: true,',
+    to: '    birds: 6,\n    lit: false,',
     suite: "test:daylight",
   },
   {
@@ -137,6 +137,20 @@ const MUTATIONS = [
     file: "src/sky.ts",
     from: "export const CLOUD_COUNT = 7;",
     to: "export const CLOUD_COUNT = 0;",
+    suite: "test:sky",
+  },
+  {
+    // The posterise stops happening, and the sky goes back to being a smooth
+    // gradient next to a crisp town — which is the whole defect it was added
+    // for, and which looks *correct* in a screenshot.
+    //
+    // Caught by counting colours: the ladder's own step count. Nothing else in
+    // the project can see this, because a blurred sky and a sharp one are the
+    // same colours in different places.
+    what: "the sky stops being posterised",
+    file: "src/sky.ts",
+    from: "  posterise(frame.data, w, h, skyLadder(phase));",
+    to: "  void skyLadder(phase);",
     suite: "test:sky",
   },
 ];

@@ -68,3 +68,63 @@ The unclamped fill rects are the third: a real canvas clips silently, so they
 worked, and the sky's test harness — which writes into a flat array and does not
 clip — is what caught it. Depending on the caller to clip is how a backdrop ends
 up drawing outside the frame on a surface that does not.
+
+## Amendment — the sky became pixel art too
+
+The clouds shipped into a smooth gradient sky, which is the one part of this town
+that was never pixel art, and it read as blur rather than as atmosphere.
+
+Measured before changing anything: the sky texture was 884x860 on an 884x860
+canvas — **1:1, nothing scaled**. So it was never a resolution problem. The town
+is crisp because it is drawn from a baked atlas with NEAREST filtering, and the
+sky is a set of radial gradients, which have no pixel grid to be crisp on.
+
+The backdrop is now **posterised to an ordered ladder with Bayer dithering**:
+
+- `skyLadder(phase)` — nine steps without cloud, eleven with, every one a blend
+  of the phase's own void / ground / mid / cloud. No invented colour, so the
+  harmony `sky.test.ts` checks between those keys still holds.
+- `posterise` finds the two nearest steps per pixel and picks one by an 8x8 Bayer
+  threshold, which is where the texture comes from rather than the rings.
+
+Measured after: **9 distinct colours in the day sky, was 1004.**
+
+## The mutation that found a real gap
+
+A mutation deleting the posterise call from `skyTexture` **passed the whole
+suite.** Every sky test exercised `paintBackdrop` or `posterise`; none exercised
+the place they are combined. Two things individually right and an unchecked seam
+— the same shape as issue 37 and the light-pattern bug, and the third time this
+project has paid it.
+
+So the combination is now one exported `renderSky`, which `skyTexture` calls and
+the suite renders through. That widened `BackdropContext` by exactly two methods
+— `getImageData` and `putImageData` — and widening it was worth it, because a
+context that can paint a sky no test can read back is the failure the harness
+exists to prevent.
+
+## Four harness bugs the widening exposed
+
+All four were latent and all four were invisible while the posterise did not run:
+
+- `alpha()` returned 0 for anything it could not parse, so a **`#rrggbb` fill
+  read as fully transparent** and the sky's plain stopped painting.
+- `rgb()` could not parse hex at all, so the plain — which the backdrop fills
+  from the palette, not from `rgb()` — read as black whenever anything blended
+  onto it. The vignette blends onto the plain, so this is the vignette's test.
+- `getImageData` allocated **one byte per pixel** instead of four, so
+  `putImageData` rewrote a quarter of the frame and left raw gradient behind it.
+- `putImageData` stepped over `px` rather than over the byte array.
+
+The first fix made the second appear, which is what a harness is for: each was
+masked by the one before it.
+
+## Worth recording
+
+**I raced the daemon against the build and spent a turn looking at a stale
+bundle.** The restart and `go install` were issued in the same turn and the
+restart won by three seconds, so the page was served the previous embed while the
+source and the suite were both correct. That is the third time in this session a
+stale bundle has cost time — twice by rebuilding and once by not ordering the
+restart after the install — and the tell is always the same: `git status` clean,
+`tsc` clean, tests green, and the browser disagreeing with all three.

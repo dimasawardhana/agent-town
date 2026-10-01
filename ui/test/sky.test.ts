@@ -4,7 +4,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { CLOUD_COUNT, cloudAt, paintBackdrop, type BackdropContext } from "../src/sky";
+import { CLOUD_COUNT, cloudAt, paintBackdrop, posterise, renderSky, skyLadder, type BackdropContext } from "../src/sky";
 import { readFileSync } from "node:fs";
 
 /**
@@ -23,18 +23,41 @@ function backdrop(w = 200, h = 200) {
   const px: string[] = new Array(w * h).fill("none");
   let fill: unknown = "none";
   const rgb = (c: string): [number, number, number] => {
+    // `#rrggbb` as well as `rgb()`. The backdrop fills its plain, and its cloud
+    // edges, with hex straight out of the palette — so a parser that only knew
+    // `rgb()` read every one of them as black. That was invisible while
+    // transparent fills were no-ops, and the moment the alpha model was fixed it
+    // came straight back: the vignette blends onto the plain, so the plain had to
+    // be readable for the vignette to be visible at all.
+    const hex = c.match(/^#([0-9a-f]{6})$/i);
+    if (hex) {
+      const v = Number.parseInt(hex[1], 16);
+      return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+    }
     const m = c.match(/rgba?\(([^)]+)\)/);
     if (!m) return [0, 0, 0];
     const p = m[1].split(",").map((n) => Number.parseFloat(n.trim()));
     return [p[0] || 0, p[1] || 0, p[2] || 0];
   };
   const alpha = (c: string): number => {
+    // "none" is unpainted; **anything that is not an rgba() is opaque**, which
+    // includes the `#rrggbb` strings `paintBackdrop` fills its plain with. The
+    // first version returned 0 for anything it could not parse, so a hex fill
+    // read as fully transparent and the plain stopped painting — caught by the
+    // vignette test, which is the one that asks whether the corners are dark.
+    if (c === "none") return 0;
     const m = c.match(/rgba?\(([^)]+)\)/);
-    if (!m) return 0;
+    if (!m) return 1;
     const p = m[1].split(",").map((n) => Number.parseFloat(n.trim()));
-    return p.length > 3 ? p[3] : 1;
+    return p.length > 3 ? (p[3] ?? 1) : 1;
   };
   const blend = (dst: string, src: string): string => {
+    // A fully transparent fill changes nothing, exactly as a real canvas behaves.
+    // The first version blended it like any other colour, which turned "nothing
+    // here yet" into opaque black wherever a gradient's outer stop was
+    // transparent — and nothing noticed until the posterise read every pixel and
+    // found a colour that was not on the ladder.
+    if (alpha(src) === 0) return dst;
     if (dst === "none") return src;
     const d = rgb(dst);
     const s = rgb(src);
@@ -81,6 +104,42 @@ function backdrop(w = 200, h = 200) {
       fillRect: rect,
       createRadialGradient: (x0: number, y0: number, r0: number, _a: number, _b: number, r1: number) => grad(x0, y0, r0, r1),
       createLinearGradient: (x0: number, y0: number) => grad(x0, y0, 0, 1),
+      // The pixel round-trip, so the posterise is part of what the harness
+      // renders. Without these the harness modelled a backdrop the sky no longer
+      // produces, and every test through it was testing the wrong picture.
+      // The harness holds colours as strings, because that is what the gradient
+      // stops are written in, so the pixel round-trip goes through bytes the way
+      // a real canvas does. Handing `posterise` the string array would have been
+      // a mock that agreed with whatever the posterise did — and a mock that
+      // cannot disagree is not a test.
+      getImageData: (_x, _y, gw, gh) => {
+        // Four bytes per pixel. The first version allocated one byte per pixel,
+        // which made `putImageData` rewrite a quarter of the frame and leave the
+        // rest as the raw gradient — so the end-to-end test found a hex colour
+        // sitting in a sky that was supposed to be posterised.
+        const data = new Uint8ClampedArray(px.length * 4);
+        for (let i = 0; i < px.length; i++) {
+          const c = px[i];
+          if (c === "none") { data[i + 3] = 0; continue; }
+          const [r, g, b] = rgb(c);
+          data[i] = r;
+          data[i + 1] = g;
+          data[i + 2] = b;
+          data[i + 3] = alpha(c);
+        }
+        return { data, width: gw, height: gh };
+      },
+      putImageData: (img) => {
+        // Stepped over `img.data`, not over `px`: the first version looped over
+        // `px` in fours, which wrote a quarter of the frame and read the wrong
+        // offsets — and a posterise that rewrote three quarters of the sky left
+        // a strip of unquantised gradient behind it.
+        for (let i = 0; i < img.data.length; i += 4) {
+          px[i / 4] = img.data[i + 3] === 0
+            ? "none"
+            : `rgb(${img.data[i]},${img.data[i + 1]},${img.data[i + 2]})`;
+        }
+      },
   };
   return { px, ctx };
 }
@@ -422,7 +481,7 @@ test("a night sky has no cloud, and that is a claim rather than a mood", () => {
   assert.ok(differs > 200, "a night sky renders the same as a day sky");
   // And the table says so, so the layer is not the only thing that knows.
   assert.equal(DAYLIGHT.night.cloud, null, "night has a cloud colour");
-  assert.equal(DAYLIGHT.day.cloud, P.skyHaze);
+  assert.equal(DAYLIGHT.day.cloud, P.plaster[3]);
 });
 
 test("a day sky is measurably brighter in its cloud band, and a night sky is not", () => {
@@ -477,4 +536,148 @@ test("the cloud field has clouds in it", () => {
   // vacuous loop is how a cloud silently stopped existing.
   assert.ok(CLOUD_COUNT > 0, "CLOUD_COUNT is zero, so every cloud test below is vacuous");
   assert.equal(CLOUD_COUNT, 7, "the cloud field's density changed; re-check how a sky reads");
+});
+
+/** A smooth horizontal gradient, which is the thing the posterise exists to fix. */
+function smoothSky(w: number, h: number): Uint8ClampedArray {
+  const d = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      d[i] = Math.round((x / (w - 1)) * 255);
+      d[i + 1] = 120;
+      d[i + 2] = Math.round((y / (h - 1)) * 255);
+      d[i + 3] = 255;
+    }
+  }
+  return d;
+}
+
+const distinct = (d: Uint8ClampedArray): Set<string> => {
+  const s = new Set<string>();
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    s.add(`${d[i]},${d[i + 1]},${d[i + 2]}`);
+  }
+  return s;
+};
+
+test("the sky is posterised, which is the only way to tell it is pixel art", () => {
+  // The claim is that the backdrop is the same *kind* of picture as the town,
+  // and a posterised gradient still looks exactly like a gradient. Counting
+  // colours is the only thing that can tell the difference.
+  const w = 160, h = 120;
+  const before = smoothSky(w, h);
+  const after = smoothSky(w, h);
+  posterise(after, w, h, skyLadder("dusk"));
+  assert.ok(
+    distinct(before).size > 1000,
+    `the fixture is not smooth, so the test proves nothing (${distinct(before).size} colours)`,
+  );
+  const got = distinct(after).size;
+  assert.ok(got <= skyLadder("dusk").length, `the sky has ${got} colours, more than its ${skyLadder("dusk").length}-step ladder`);
+  assert.ok(got > 4, `the sky collapsed to ${got} colours, which is not a gradient at all`);
+});
+
+test("every sky colour is one the palette ladder holds", () => {
+  // No invented colour. The harmony `sky.test.ts` checks between the sky keys is
+  // worth nothing if the rendered sky wanders off into midpoints it never tested,
+  // and a backdrop that invented its own steps would look equally correct.
+  const w = 120, h = 90;
+  const d = smoothSky(w, h);
+  posterise(d, w, h, skyLadder("dusk"));
+  const ladder = new Set(
+    skyLadder("dusk").map((hex) => {
+      const r = Number.parseInt(hex.slice(1, 3), 16);
+      const g = Number.parseInt(hex.slice(3, 5), 16);
+      const b = Number.parseInt(hex.slice(5, 7), 16);
+      return `${r},${g},${b}`;
+    }),
+  );
+  for (const c of distinct(d)) {
+    assert.ok(ladder.has(c), `the sky drew ${c}, which is not on its own ladder`);
+  }
+});
+
+test("the dither is ordered, so the sky is the same on every client", () => {
+  // Two runs, one frame, identical pixels. A dither built from `Math.random()`
+  // would look fine and would differ between two readers looking at the same
+  // town — which is the one thing this file has never allowed.
+  const a = smoothSky(100, 80);
+  const b = smoothSky(100, 80);
+  posterise(a, 100, 80, skyLadder("day"));
+  posterise(b, 100, 80, skyLadder("day"));
+  assert.deepEqual([...a], [...b], "two runs of the posterise disagreed");
+});
+
+test("the ladder is ordered, and spans exactly the palette it was built from", () => {
+  // "Ordered" is load-bearing: the posterise compares distances, and a ladder
+  // that wandered would still work while the sky stopped reading as a gradient.
+  //
+  // And the span is the part that matters for the palette. The steps between the
+  // keys are *blends*, so they are not themselves palette keys and asserting
+  // that they were — which the first version of this test did — would be
+  // asserting a falsehood. What has to hold is that the ladder starts at the
+  // void, ends at the cloud, and passes through the ground and the mid **exactly**:
+  // those four are the colours the harmony in this file is tested against, and a
+  // ladder that interpolated around one of them would be a sky the palette has
+  // never seen.
+  for (const phase of DAY_PHASES) {
+    const { sky, cloud } = DAYLIGHT[phase];
+    const ladder = skyLadder(phase);
+    const lum = (hex: string): number => {
+      const r = Number.parseInt(hex.slice(1, 3), 16);
+      const g = Number.parseInt(hex.slice(3, 5), 16);
+      const b = Number.parseInt(hex.slice(5, 7), 16);
+      return r + g + b;
+    };
+    for (let i = 1; i < ladder.length; i++) {
+      assert.ok(lum(ladder[i]) > lum(ladder[i - 1]), `${phase} ladder step ${i} is not brighter than step ${i - 1}`);
+    }
+    assert.equal(ladder[0], sky.void, `${phase} ladder does not start at the void`);
+    assert.ok(ladder.includes(sky.ground), `${phase} ladder misses its ground`);
+    assert.ok(ladder.includes(sky.mid), `${phase} ladder misses its mid`);
+    const brightest = ladder[ladder.length - 1];
+    assert.equal(brightest, cloud ?? sky.mid, `${phase} ladder does not end on its cloud`);
+    // And nothing in it escapes the range the palette defines.
+    for (const hex of ladder) {
+      assert.ok(
+        lum(hex) >= lum(sky.void) && lum(hex) <= lum(brightest),
+        `${phase} ladder holds ${hex}, outside the range its palette spans`,
+      );
+    }
+  }
+});
+
+test("a night sky's ladder is shorter than its day's, because it has no cloud", () => {
+  assert.ok(skyLadder("night").length < skyLadder("day").length, "a night sky grew a cloud step");
+});
+
+test("the rendered sky is posterised end to end, not half of it", () => {
+  // The mutation this exists for deleted the posterise call from `skyTexture`
+  // and **the whole suite passed**, because every test was exercising
+  // `paintBackdrop` or `posterise` and none of them was exercising the place they
+  // are combined. Two things individually right, and an unchecked seam.
+  //
+  // So this renders through `renderSky` — the same call `skyTexture` makes — and
+  // counts the colours that come out.
+  const w = 160, h = 120;
+  const { px, ctx } = backdrop(w, h);
+  renderSky(ctx, w, h, "day");
+  const seen = new Set<string>();
+  for (const c of px) if (c !== "none") seen.add(c);
+  const ladder = skyLadder("day").map((hex) => {
+    const r = Number.parseInt(hex.slice(1, 3), 16);
+    const g = Number.parseInt(hex.slice(3, 5), 16);
+    const b = Number.parseInt(hex.slice(5, 7), 16);
+    return `rgb(${r},${g},${b})`;
+  });
+  assert.ok(seen.size > 1, "the rendered sky is a single colour, so nothing was drawn");
+  for (const c of seen) {
+    assert.ok(ladder.includes(c), `the rendered sky holds ${c}, which is not on its ladder`);
+  }
+  assert.ok(
+    seen.size <= ladder.length,
+    `the rendered sky has ${seen.size} colours, more than the ${ladder.length} its ladder allows — the posterise did not run`,
+  );
 });

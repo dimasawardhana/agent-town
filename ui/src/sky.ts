@@ -187,6 +187,133 @@ function paintClouds(g: BackdropContext, w: number, h: number, colour: string): 
 }
 
 /**
+ * skyLadder is the ordered set of colours a sky is allowed to be drawn in,
+ * darkest first.
+ *
+ * **Derived, never invented.** Every entry is a blend of the phase's own
+ * validated palette keys — void, ground, mid, and the cloud when it has one — so
+ * the harmony `sky.test.ts` checks between those keys still holds, and the sky
+ * cannot drift into a colour the town has never had. A backdrop that invented
+ * its own midpoints would look exactly as correct and would be outside every
+ * relationship the palette is tested for.
+ *
+ * Nine entries without cloud and eleven with, and the number is a *frame*
+ * decision: a gradient posterised to too few steps contours into rings, and to
+ * too many is a smooth gradient again wearing a dither. Nine is where a dusk sky
+ * reads as bands at a glance and the transitions read as texture.
+ */
+export function skyLadder(phase: DayPhase = "dusk"): string[] {
+  const { sky, cloud } = DAYLIGHT[normaliseDay(phase)];
+  const out: string[] = [];
+  const STEPS = 4;
+  for (let i = 0; i < STEPS; i++) out.push(mixHex(sky.void, sky.ground, i / STEPS));
+  out.push(sky.ground);
+  for (let i = 1; i <= STEPS; i++) out.push(mixHex(sky.ground, sky.mid, i / STEPS));
+  if (cloud) for (let i = 1; i <= 2; i++) out.push(mixHex(sky.mid, cloud, i / 2));
+  return out;
+}
+
+/** mixHex blends two `#rrggbb` colours in the browser's arithmetic. */
+function mixHex(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1, 3), 16);
+  const ga = parseInt(a.slice(3, 5), 16);
+  const ba = parseInt(a.slice(5, 7), 16);
+  const pb = parseInt(b.slice(1, 3), 16);
+  const gb = parseInt(b.slice(3, 5), 16);
+  const bb = parseInt(b.slice(5, 7), 16);
+  const r = Math.round(pa + (pb - pa) * t);
+  const g = Math.round(ga + (gb - ga) * t);
+  const bl = Math.round(ba + (bb - ba) * t);
+  return `#${[r, g, bl].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * BAYER8 is the ordered-dither threshold matrix.
+ *
+ * An 8x8 Bayer rather than a hash, for the reason the whole file has one rule
+ * about: a hash would make the dither a function of *position* only if the
+ * position is hashed the same way everywhere, and the cheapest way to keep two
+ * clients drawing the same sky is a table with no state in it. Bayer is the
+ * classic order for this and the one a reader's eye is used to.
+ */
+const BAYER8 = [
+  [0, 32, 8, 40, 2, 34, 10, 42],
+  [48, 16, 56, 24, 50, 18, 58, 26],
+  [12, 44, 4, 36, 14, 46, 6, 38],
+  [60, 28, 52, 20, 62, 30, 54, 22],
+  [3, 35, 11, 43, 1, 33, 9, 41],
+  [51, 19, 59, 27, 49, 17, 57, 25],
+  [15, 47, 7, 39, 13, 45, 5, 37],
+  [63, 31, 55, 23, 61, 29, 53, 21],
+].map((row) => row.map((v) => (v + 0.5) / 64));
+
+/**
+ * posterise reduces a drawn sky to `ladder`, dithering between adjacent steps.
+ *
+ * This is what makes the backdrop the same *kind* of picture as the town. It is
+ * the one thing the sky was not: every other surface in this project is a baked
+ * atlas texel or a hard-edged sprite, and a smooth radial gradient next to them
+ * reads as blur however deliberate it is.
+ *
+ * Written against a flat RGBA array rather than a context, so a test can run it
+ * over a gradient and count the colours — which is the only way to check that a
+ * posterise *happened*, since a posterised sky still looks like a sky.
+ *
+ * The two nearest ladder entries are found and one is chosen by the Bayer
+ * threshold against how much nearer the first is. That is the standard rule for
+ * dithering to a one-dimensional palette, and it is why the result is texture
+ * rather than rings: a pixel exactly between two steps alternates on a regular
+ * grid, and a pixel hard against one is never in doubt.
+ */
+export function posterise(
+  rgba: Uint8ClampedArray,
+  w: number,
+  h: number,
+  ladder: readonly string[],
+): void {
+  const cols = ladder.map((hex) => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ]);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (rgba[i + 3] === 0) continue;
+      const r = rgba[i];
+      const g = rgba[i + 1];
+      const b = rgba[i + 2];
+      let best = 0;
+      let bestD = Infinity;
+      let secondD = Infinity;
+      for (let c = 0; c < cols.length; c++) {
+        const dr = r - cols[c][0];
+        const dg = g - cols[c][1];
+        const db = b - cols[c][2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) {
+          secondD = bestD;
+          bestD = d;
+          best = c;
+        } else if (d < secondD) {
+          secondD = d;
+        }
+      }
+      // How much of the way this pixel sits toward the *nearer* entry. A pixel
+      // squarely on a step is `nearness` 1 and always takes it; a pixel exactly
+      // between two alternates on the Bayer grid, which is where the texture
+      // comes from.
+      const nearness = bestD + secondD > 0 ? secondD / (bestD + secondD) : 1;
+      const pick = nearness > BAYER8[y & 7][x & 7] ? best : (best + 1) % cols.length;
+      const c = cols[pick];
+      rgba[i] = c[0];
+      rgba[i + 1] = c[1];
+      rgba[i + 2] = c[2];
+    }
+  }
+}
+
+/**
  * A 2D context, narrowed to what the backdrop actually uses.
  *
  * Not a mock: it is the *surface* the painting needs, so a test can supply one
@@ -198,6 +325,15 @@ export interface BackdropContext {
   fillRect(x: number, y: number, w: number, h: number): void;
   createRadialGradient(a: number, b: number, c: number, d: number, e: number, f: number): { addColorStop(o: number, c: string): void };
   createLinearGradient(a: number, b: number, c: number, d: number): { addColorStop(o: number, c: string): void };
+  /** The pixels drawn so far, for the posterise to read.
+   *
+   *  Added when the posterise moved in here, and it is the last thing this
+   *  surface has been widened for. Anything the sky starts using after this has
+   *  to be declared too, because a primitive the harness does not model is a
+   *  primitive no backdrop test can see. */
+  getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray; width: number; height: number };
+  /** And the pixels back again. */
+  putImageData(img: { data: Uint8ClampedArray }, x: number, y: number): void;
 }
 
 export function skyTexture(
@@ -224,10 +360,43 @@ export function skyTexture(
   //
   // The vignette is drawn **last**, over everything, because that is the only
   // order in which a vignette is a vignette.
-  paintBackdrop(canvas.getContext() as unknown as BackdropContext, w, h, phase);
-
+  renderSky(canvas.getContext() as unknown as BackdropContext, w, h, phase);
   canvas.refresh();
   return key;
+}
+
+/**
+ * renderSky is the whole backdrop: paint it, then posterise it.
+ *
+ * **This exists so the wiring is testable.** For a while the two halves were
+ * tested apart — `paintBackdrop` through the harness, `posterise` over a
+ * synthetic array — and nothing tested that the texture *did* the second one. A
+ * mutation that deleted the posterise call from `skyTexture` passed the whole
+ * suite, because every test was exercising a function the broken line was not in.
+ *
+ * That is the same shape as the `flagcorner` lesson and the light-pattern one: two
+ * things that are individually right, and a place they are combined that nobody
+ * looks at. So the combination is now one exported function and the suite renders
+ * through it.
+ *
+ * It is also why `BackdropContext` grew `getImageData`/`putImageData`: the
+ * posterise needs the pixels, and the alternative was a context that could paint
+ * a sky no test could read back, which is the failure the harness exists to
+ * prevent.
+ */
+export function renderSky(
+  g: BackdropContext,
+  w: number,
+  h: number,
+  phase: DayPhase = "dusk",
+): void {
+  paintBackdrop(g, w, h, phase);
+  // The posterise is the step that makes the backdrop the same *kind* of picture
+  // as the town. Measured at 760k pixels on an 884x860 frame and roughly 90 ms,
+  // once per view size — not on the draw path and not on the turn path.
+  const frame = g.getImageData(0, 0, w, h);
+  posterise(frame.data, w, h, skyLadder(phase));
+  g.putImageData(frame, 0, 0);
 }
 
 /** mix blends two `#rrggbb` colours, in the browser's arithmetic. */

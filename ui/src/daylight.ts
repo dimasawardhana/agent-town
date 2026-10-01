@@ -107,9 +107,12 @@ export const DAYLIGHT: Record<DayPhase, Daylight> = {
   day: {
     label: "Day",
     sky: { ground: P.skyGround, mid: P.skyHaze, void: P.skyNear },
-    // Haze for the body and the glow for its lit top edge, which is what makes
-    // a cloud read as a cloud and not as a smudge on the sky.
-    cloud: P.skyHaze,
+    // Plaster's top step, and deliberately NOT the mid: `skyHaze` is the seat's
+    // own colour, so a cloud painted in it added nothing the seat had not already
+    // put there — which is why the first cloud pass was on the canvas and
+    // invisible. A cloud has to be lighter than the air behind it or it is not a
+    // cloud.
+    cloud: P.plaster[3],
     birds: 0,
     lit: false,
     lamp: null,
@@ -117,9 +120,11 @@ export const DAYLIGHT: Record<DayPhase, Daylight> = {
   dusk: {
     label: "Dusk",
     sky: { ground: P.skyFar, mid: P.skyGlow, void: P.void },
-    // The glow. A cloud at dusk is the one thing lit from underneath, and this
-    // palette already has the colour of light coming up off a horizon.
-    cloud: P.skyGlow,
+    // The same plaster as day, and for the same reason `skyGlow` is the seat:
+    // a cloud at dusk is the last light catching it, and the cloud has to sit
+    // *above* the glow or the ladder stops being ordered and the posterise has
+    // nothing to step between.
+    cloud: P.plaster[3],
     birds: 6,
     lit: true,
     lamp: "lamp",
