@@ -20,14 +20,19 @@
 // fill operations, which is far cheaper than the decode of the PNG it replaces.
 
 import Phaser from "phaser";
+import { MACHINES, machineOrigin, buildMachine, type MachineKind, type MachinePose } from "./machine";
 import { P, paletteSet } from "./palette";
 import { Pix } from "./surface";
-import { buildWorker, WORKER_ORIGIN, type Tier, type WorkerState } from "./worker";
+import type { Tier, WorkerState } from "./worker";
 import {
-  STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow, capBox, shadowBox,
-  skinFor, type Stage,
+  LIGHT_PATTERNS, STAGE_ORDER, bandBox, baseBox, buildBase, buildBand, buildCap, buildShadow,
+  buildWindowLightCel, capBox, emptyWindowLightCel, shadowBox,
+  buildBaseDamageCel, buildRoofDamageCel, buildRoofFlagCel, emptyDamageCel, emptyVerifiedCel,
+  stageRank, type Stage,
 } from "./building";
-import { ROOF_KINDS, roofFor, type RoofKind } from "./roof";
+import {
+  ARCHETYPES, archetypeFor, MATERIALS, type Archetype, type MaterialName,
+} from "./roof";
 import { ALL_PROP_KINDS, buildProp, PROP_ORIGIN } from "./props";
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, type Edge, type Ground } from "./terrain";
 
@@ -68,12 +73,40 @@ export interface FrameInfo {
 /** Every frame the town draws, by name. Built by `bake` and read by the scene. */
 export type Atlas = Record<string, FrameInfo>;
 
-/** The four building footprints the analyzer emits, and the file count each
- *  step corresponds to (internal/analyzer/layout.go). */
-const SIZES: readonly { side: number; files: number }[] = [
+/**
+ * The footprints a building can be drawn at, and the file count each step
+ * corresponds to.
+ *
+ * **The join with the analyzer is a contract, not a coincidence.** The daemon
+ * decides a building's size from its file count (`buildingSize`,
+ * internal/analyzer/layout.go) and passes the result here as the cel side, so the
+ * two lists must agree exactly. Nothing in the type system ties them together
+ * across the language boundary, which is why
+ * `TestEveryEmittedFootprintIsOneTheAtlasDraws` reads *this* table out of this
+ * file and walks it through the analyzer's ladder — a join asserted rather than
+ * assumed.
+ *
+ * It had drifted: a comment here said "the four building footprints" directly
+ * above a block saying five, and the analyzer's own doc said four steps for a
+ * switch with five rungs. Found by a crew working only in the Go half.
+ *
+ * Five, and the number is a budget rather than a preference. Four left eight of
+ * this repository's fourteen buildings on the same footprint, which is what made
+ * a town of eleven archetypes read as one building repeated — the roofs differed
+ * and the mass did not.
+ *
+ * The fifth was only affordable once the verification pennant became an overlay
+ * rather than a cap axis. The sheet holds `floor(8192 / cellH) x 16` cels, and at
+ * the cell height the Chapel set (101) that is **1296** — not the 1408 an earlier
+ * budget was written against, which is the number that made five buckets look
+ * like they fitted. It is recorded here because the arithmetic is easy to redo
+ * from a stale ceiling and get wrong twice.
+ */
+export const SIZES: readonly { side: number; files: number }[] = [
   { side: 44, files: 2 },
-  { side: 60, files: 5 },
-  { side: 78, files: 9 },
+  { side: 58, files: 5 },
+  { side: 72, files: 9 },
+  { side: 86, files: 12 },
   { side: 100, files: 30 },
 ];
 
@@ -83,8 +116,9 @@ export function shadowFrame(side: number, turn = 0): string {
 }
 
 /** Frame name for a worker tier in a state's nth animation frame. */
-export function workerFrame(tier: Tier, state: WorkerState, i: number): string {
-  return `w:${tier}:${state}:${i}`;
+/** machineFrame is one pose of one machine, for one agent's kind. */
+export function machineFrame(kind: MachineKind, tier: Tier, pose: MachinePose): string {
+  return `m:${kind}:${tier}:${pose}`;
 }
 
 /** Frame name for a ground tile. */
@@ -105,29 +139,159 @@ export function groundEdgeFrame(kind: Ground, edge: Edge, variant: number): stri
  * every stage from `framed` upward, so a tower cannot grow new windows as it is
  * finished.
  */
-export function bandFrame(side: number, stage: Stage, variant: 0 | 1, turn = 0): string {
-  return turn === 0 ? `band:${side}:${stage}:${variant}` : `band:${side}:${stage}:${variant}:t${turn}`;
+export function bandFrame(side: number, material: MaterialName, stage: Stage, turn = 0): string {
+  return turn === 0
+    ? `band:${side}:${stage}:${material}`
+    : `band:${side}:${stage}:${material}:t${turn}`;
+}
+
+/**
+ * Frame name for a ground storey's rubble, laid over the base.
+ *
+ * The same move the roof damage made: a condition is a mark, not a variant of
+ * the picture it lands on. A damaged base is the base plus rubble, and the
+ * rubble is one thing per material per footprint rather than one per stage.
+ */
+export function baseDamageFrame(side: number, material: MaterialName, turn = 0): string {
+  const base = `bdmg:${side}:${material}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/** The blank an undamaged ground storey carries in place of rubble, cut from
+ *  the same box so `setFrame` cannot move the rubble when it swaps. */
+export function noBaseDamageFrame(side: number, material: MaterialName): string {
+  return `bdmg:none:${side}:${material}`;
+}
+
+/** The lit-window overlay for a storey, by footprint, pattern and turn.
+ *
+ *  `lit:` rather than a stage or a material, because it is neither: the same
+ *  picture lands on a storey of any material and at any stage that has glass
+ *  in it, and naming the axis it actually varies on is what keeps the key from
+ *  growing a component nothing reads. */
+export function windowLightFrame(side: number, pattern: number, turn = 0): string {
+  const base = `lit:${side}:${pattern}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/** The blank a storey carries when the light is off, or the building is not
+ *  glazed. Per turn, because the origin is per turn and a shared blank would
+ *  not sit on its own box. */
+export function noWindowLightFrame(side: number, turn = 0): string {
+  const base = `lit:none:${side}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
 }
 
 /** Frame name for a building's base: the ground works, the ground storey's
  *  shell, the door and plinth, and the damage visible from the ground. */
-export function baseFrame(side: number, stage: Stage, variant: 0 | 1, damaged: boolean, turn = 0): string {
-  const base = `base:${side}:${stage}:${variant}${damaged ? ":dmg" : ""}`;
+export function baseFrame(
+  side: number,
+  material: MaterialName,
+  stage: Stage,
+  turn = 0,
+): string {
+  const base = `base:${side}:${stage}:${material}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
 /**
- * Frame name for a building's cap: the roof, its rooftop furniture, the coping
- * and the roof damage.
+ * Frame name for a building's cap: the roof, its rooftop furniture and its
+ * coping. Damage is **not** an axis here — it is a separate mark laid over the
+ * cap, because baking it in doubled the whole cap family to carry one hole.
  *
- * It carries the **roof kind** where it used to carry the skin variant, and that
+ * It carries the **archetype** where it used to carry the skin variant, and that
  * is the axis swap stated in the key itself: two buildings whose paths differ only
  * in the skin's bit now share one cap frame, and two whose paths differ in the
  * roof's bit do not. A reader looking at frame names can therefore see which axis
  * the cap answers to.
+ *
+ * Below `roofed` the kind, the damage and the verification are all dropped from
+ * the key, because a cap at that stage draws nothing and every combination
+ * would be the same empty image. Measured, 320 of the 640 cap cels were that
+ * image, in 18 distinct shapes; they now share sixteen. The arguments are still
+ * accepted and still meaningful for the stages that draw, and the caller still
+ * passes them for every stage — the stack builds one child per storey and
+ * restaging swaps frames by index, so the *number* of keys must not change with
+ * the stage even though the frame they resolve to can.
  */
-export function capFrame(side: number, roof: RoofKind, stage: Stage, damaged: boolean, turn = 0): string {
-  const base = `cap:${side}:${roof}:${stage}${damaged ? ":dmg" : ""}`;
+export function capFrame(side: number, roof: Archetype, stage: Stage, turn = 0): string {
+  if (stageRank(stage) < stageRank("roofed")) {
+    const blank = `cap:${side}:${stage}`;
+    return turn === 0 ? blank : `${blank}:t${turn}`;
+  }
+  const base = `cap:${side}:${roof}:${stage}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/**
+ * Frame name for a roof's verification pennant, laid over the cap.
+ *
+ * The same move the roof damage made. Verification used to be a cap axis,
+ * which doubled the whole cap family to carry one flag, and the doubling is
+ * what stopped a fifth width bucket fitting: the sheet holds
+ * `floor(8192 / cellH) × 16` cels, and at the cell height the Chapel set that
+ * is 1296. A flag as an overlay costs 11 × sides rather than 11 × sides ×
+ * stages, and it is what buys the width.
+ *
+ * The pennant needs a roof to fly from, so it only appears from `roofed` — a
+ * building being verified is not a finished building.
+ */
+export function verifiedFrame(side: number, roof: Archetype, turn = 0): string {
+  const base = `vf:${side}:${roof}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
+}
+
+/**
+ * The blank an unverified building carries in place of the pennant.
+ *
+ * Cut from the same box as the pennant it replaces, because `setFrame` swaps a
+ * texture without moving the sprite and a flag that jumps on restaging reads as
+ * the building changing shape.
+ */
+export const NO_VERIFIED_FRAME = "vf:blank";
+
+/** The blank a building carries in place of a damage mark. See the note at the bake. */
+export const NO_DAMAGE_FRAME = "dmg:blank";
+
+/**
+ * The frame a building carries when it is **not** damaged.
+ *
+ * Every building has a damage child whether or not it is damaged, because the
+ * child count must not change when a condition does: restaging swaps frames by
+ * index, so dropping the child would slide every storey above it onto the wrong
+ * frame. An absent child is not available; a blank one is.
+ */
+/**
+ * The blank an *undamaged* building of this footprint and archetype carries.
+ *
+ * It exists per archetype rather than one blank for the whole town, and the
+ * reason is positional rather than aesthetic. `setFrame` swaps a sprite's
+ * texture **without moving the sprite**, so a blank swapped in must share the
+ * origin of the mark it replaces — otherwise the mark appears forty pixels
+ * right and thirty down of the roof it belongs to. A shared blank cannot: its
+ * box would have to be eleven roofs at once. Sixteen cels is the price of not
+ * having damage land beside the building.
+ */
+export function noDamageFrame(side: number, roof: Archetype): string {
+  return `dmg:blank:${side}:${roof}`;
+}
+
+/**
+ * Frame name for a roof's damage mark, which is drawn *over* the cap rather
+ * than baked into it.
+ *
+ * One per footprint and archetype, not one per stage, per condition and per
+ * archetype. A roof hole is the same hole at `roofed` as at `completed` — the
+ * building's stage says how finished it is, and baking the damage into every
+ * stage said it again, eleven times over.
+ *
+ * The cel is baked with the *cap's* box, so its origin is the cap's origin and
+ * the scene can lay it at the cap's position with no placement arithmetic of its
+ * own. That is the whole trick: the mark rides the roofline because it was cut
+ * from the same box the roofline was.
+ */
+export function damageFrame(side: number, roof: Archetype, turn = 0): string {
+  const base = `dmg:${side}:${roof}`;
   return turn === 0 ? base : `${base}:t${turn}`;
 }
 
@@ -177,12 +341,17 @@ export function bakedCels(turn = 0): BakedCel[] {
   // --- Workers -----------------------------------------------------------
   // The worker's origin is at its feet, so it stands on a building's ground
   // rather than on its roof.
-  for (const tier of ["chief", "sub"] as const) {
-    const sheet = buildWorker(tier);
-    for (const state of Object.keys(sheet.cels) as WorkerState[]) {
-      sheet.cels[state].forEach((pix, i) => {
-        cels.push({ key: workerFrame(tier, state, i), pix, ox: WORKER_OX, oy: WORKER_OY });
-      });
+  // The fleet, not the crew. Five kinds so a session is a machine with a
+  // silhouette a glance can separate, four poses so the pose says working /
+  // parked / moving / finished without claiming a verb the silhouette cannot
+  // support. 40 cels against the figure's 76.
+  for (const kind of MACHINES) {
+    for (const tier of ["chief", "sub"] as const) {
+      for (const pose of ["work", "idle", "travel", "done"] as const) {
+        const pix = buildMachine(kind, pose, tier, turn);
+        const box = machineOrigin(pix, turn);
+        cels.push({ key: machineFrame(kind, tier, pose), pix, ox: box.ox, oy: box.oy });
+      }
     }
   }
 
@@ -215,60 +384,164 @@ export function bakedCels(turn = 0): BakedCel[] {
     // both one storey and therefore the same size; neither reserves the roof's
     // headroom any more, which is what lowers the sheet's cell height — and the
     // cell height applies to every cel on the sheet, not just the tall ones.
-    const footBox = baseBox(side);
-    const storeyBox = bandBox(side);
+    const footBox = baseBox(side, turn);
+    const storeyBox = bandBox(side, turn);
 
-    for (const variant of [0, 1] as const) {
-      // A path whose hash lands on `variant`. `skinFor` reads only the parity,
-      // so any such path yields the same skin; these two are the shortest that
-      // do, which keeps the bake free of made-up filenames that look real.
-      const path = variant === 0 ? "b" : "a";
-      const skin = skinFor(files, path);
+    // Over the five material families rather than the two skins this used to
+    // carry. A band is one storey of wall, so a whole tower is one cel per
+    // material — the axis is priced by the families, not by the archetypes,
+    // which is what makes eleven archetypes' worth of roofs affordable on top.
+    for (const m of MATERIALS) {
       for (const stage of STAGE_ORDER) {
         cels.push({
-          key: bandFrame(side, stage, variant, turn),
-          pix: buildBand(side, skin, stage, turn),
+          key: bandFrame(side, m, stage, turn),
+          pix: buildBand(side, m, stage, turn),
           ox: storeyBox.ox,
           oy: storeyBox.oy,
         });
-        // Damage is baked for the base and the cap but NOT the band, and that
-        // falls out of where damage is drawn rather than being a saving: rubble
-        // and the crack belong to the ground storey, the hole to the roof, and
-        // both of those are single cels. A tower of twenty storeys therefore
-        // carries no extra frames for being damaged.
-        for (const damaged of [false, true]) {
-          cels.push({
-            key: baseFrame(side, stage, variant, damaged, turn),
-            pix: buildBase(side, files, path, stage, damaged, turn),
-            ox: footBox.ox,
-            oy: footBox.oy,
-          });
-        }
+        cels.push({
+          key: baseFrame(side, m, stage, turn),
+          pix: buildBase(side, m, stage, false, turn),
+          ox: footBox.ox,
+          oy: footBox.oy,
+        });
       }
     }
 
-    // The caps, once per roof kind. Outside the skin loop because a cap no longer
-    // depends on the skin, and inside the footprint loop because a roof's height
-    // and pitch scale with the building.
-    for (const roof of ROOF_KINDS) {
-      const topBox = capBox(side, roof);
-      for (const stage of STAGE_ORDER) {
-        for (const damaged of [false, true]) {
-          cels.push({
-            key: capFrame(side, roof, stage, damaged, turn),
-            pix: buildCap(side, roof, stage, damaged, turn),
-            ox: topBox.ox,
-            oy: topBox.oy,
-          });
-        }
+    // The base's rubble, as an overlay for the same reason the roof's is: a
+    // condition is a mark, not a variant of the picture it lands on. Cut from
+    // the base's own box so `setFrame` cannot move the rubble when it swaps.
+    for (const m of MATERIALS) {
+      const rubble = buildBaseDamageCel(side, m, turn);
+      cels.push({
+        key: baseDamageFrame(side, m, turn),
+        pix: rubble,
+        ox: footBox.ox,
+        oy: footBox.oy,
+      });
+      cels.push({
+        key: noBaseDamageFrame(side, m),
+        pix: new Pix(footBox.w, footBox.h),
+        ox: footBox.ox,
+        oy: footBox.oy,
+      });
+    }
+
+    // The caps. Outside the skin loop because a cap no longer depends on the
+    // skin, and inside the footprint loop because a roof's height and pitch
+    // scale with the building.
+    //
+    // Below `roofed` a cap draws nothing at all — the roof has not been built
+    // yet — so those stages are baked once per footprint rather than once per
+    // (kind, damage, verification). They still have to *exist*: the stack emits
+    // a key per storey and restaging swaps frames by index, so a building's
+    // child count must not change when its stage does. That is why the band and
+    // cap are deliberately blank before their feature exists, and it is
+    // preserved here. What is not load-bearing is baking the same empty image
+    // 320 times over — `capFrame` sends every pre-roof stage to one shared key,
+    // and this loop bakes that key once.
+    //
+    // Measured: 320 blank cels become 16, and the saving is 304 of the 1408-cel
+    // ceiling. It is the reason a twelve-archetype vocabulary fits at all.
+    for (const stage of STAGE_ORDER) {
+      if (stageRank(stage) < stageRank("roofed")) {
+        const box = capBox(side, ARCHETYPES[0], turn);
+        cels.push({
+          key: capFrame(side, ARCHETYPES[0], stage, turn),
+          pix: buildCap(side, ARCHETYPES[0], stage, turn),
+          ox: box.ox,
+          oy: box.oy,
+        });
+        continue;
+      }
+      for (const roof of ARCHETYPES) {
+        const topBox = capBox(side, roof, turn);
+        cels.push({
+          key: capFrame(side, roof, stage, turn),
+          pix: buildCap(side, roof, stage, turn),
+          ox: topBox.ox,
+          oy: topBox.oy,
+        });
       }
     }
+
+    // The pennant, and the blank it swaps with, baked once per footprint and
+    // archetype. It is an overlay rather than a cap axis because an axis costs
+    // one cel per *stage* and a flag looks the same on a roofed building and a
+    // finished one — the ladder already says which is which.
+    for (const roof of ARCHETYPES) {
+      const vBox = capBox(side, roof, turn);
+      cels.push({
+        key: verifiedFrame(side, roof, turn),
+        pix: buildRoofFlagCel(side, roof, turn),
+        ox: vBox.ox,
+        oy: vBox.oy,
+      });
+    }
+
+    // The damage marks, once per footprint and archetype rather than per
+      // stage. A hole in a roof is the same hole whether the building is roofed
+      // or completed, and baking it into every stage said so four times over for
+      // no picture anyone could tell apart. Each is cut from the cap's own box,
+      // so its origin is the cap's origin and the scene lays it at the cap's
+      // position with no arithmetic of its own — the mark rides the roofline
+      // because it was cut from the same box the roofline was.
+      for (const roof of ARCHETYPES) {
+        const dmgBox = capBox(side, roof, turn);
+        cels.push({
+          key: damageFrame(side, roof, turn),
+          pix: buildRoofDamageCel(side, roof, turn),
+          ox: dmgBox.ox,
+          oy: dmgBox.oy,
+        });
+      }
+
+      // The lit windows, three patterns per storey, cut from the band's own box.
+      //
+      // An overlay rather than a second axis on the base and band, and the
+      // budget is why: `baseBox` and `bandBox` are the same box, so one family
+      // covers the ground storey and every storey above it, and 3 patterns x 5
+      // footprints x 4 turns is 60 cels. A second axis on the base and band
+      // themselves is 400, which is over the ceiling with 187 free — so the
+      // choice was an overlay or nothing, and an overlay also means a lit
+      // window costs no extra draw on a building in daylight.
+      for (let pattern = 0; pattern < LIGHT_PATTERNS; pattern++) {
+        const lightBox = bandBox(side, turn);
+        cels.push({
+          key: windowLightFrame(side, pattern, turn),
+          pix: buildWindowLightCel(side, pattern, turn),
+          ox: lightBox.ox,
+          oy: lightBox.oy,
+        });
+      }
+      // And the blank, cut from the same box with the same origin, for the
+      // reason every overlay here is: `setFrame` moves textures without moving
+      // sprites, so a blank from a different box would leave every window a
+      // storey out of place the moment the light came on.
+      cels.push({
+        key: noWindowLightFrame(side, turn),
+        pix: emptyWindowLightCel(side, turn),
+        ox: bandBox(side, turn).ox,
+        oy: bandBox(side, turn).oy,
+      });
 
     // The ground shadow, baked once per footprint. A building without a contact
     // shadow reads as pasted onto the map rather than standing on it — which is
     // visible precisely because the workers do have one.
-    const footShadowBox = shadowBox(side);
+    const footShadowBox = shadowBox(side, turn);
     cels.push({ key: shadowFrame(side, turn), pix: buildShadow(side, files, "b", turn), ox: footShadowBox.ox, oy: footShadowBox.oy });
+  }
+
+  // The two shared blanks — what a building carries in place of a damage mark
+  // and a pennant. **One each, for the whole town**, and that is the third time
+  // this trick has paid: a blank is a blank, and `setFrame` does not move a
+  // sprite, so the blank a mark swaps *from* does not need the mark's box. The
+  // per-archetype, per-footprint blanks were 120 cels drawing nothing.
+  for (const [key, make] of [
+    [NO_DAMAGE_FRAME, () => new Pix(1, 1)],
+    [NO_VERIFIED_FRAME, () => new Pix(1, 1)],
+  ] as const) {
+    cels.push({ key, pix: make(), ox: 0, oy: 0 });
   }
 
   // --- Ground ------------------------------------------------------------
@@ -326,10 +599,11 @@ export function bake(scene: Phaser.Scene, turn = 0): Atlas {
 }
 // The origin offsets come from the art modules' own constants rather than being
 // restated. A cel anchored at the wrong pixel does not fail — it silently
-// shifts a worker off its building — so there is exactly one definition of
-// where each kind of cel's world origin sits.
-const WORKER_OX = WORKER_ORIGIN.x;
-const WORKER_OY = WORKER_ORIGIN.y;
+// shifts a mark off its building — so there is exactly one definition of where
+// each kind of cel's world origin sits. A machine's is computed from its drawn
+// footprint, in , for the same reason.
+// A machine's own origin is computed from its drawn footprint, in machine.ts, for
+// the same reason: a mark anchored at the wrong pixel drifts rather than fails.
 const PROP_OX = PROP_ORIGIN.x;
 const PROP_OY = PROP_ORIGIN.y;
 

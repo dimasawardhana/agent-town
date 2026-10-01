@@ -6,17 +6,17 @@ that actually broke, instead of landing nowhere.
 
 **Blocked by:** 02 (the failing paths must be on the event).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A whole-repo run with one failing package damages exactly that building
-- [ ] A whole-repo run with three failing packages damages all three
-- [ ] The building the *command* named is still damaged as before, so a scoped
+- [x] A whole-repo run with one failing package damages exactly that building
+- [x] A whole-repo run with three failing packages damages all three
+- [x] The building the *command* named is still damaged as before, so a scoped
       failure is unchanged
-- [ ] A failing package that resolves to no building is dropped; the event is
+- [x] A failing package that resolves to no building is dropped; the event is
       still recorded in the feed, and the town does not invent a location
-- [ ] Damage from a failure never advances a rank, and never rolls one back
+- [x] Damage from a failure never advances a rank, and never rolls one back
       (existing behaviour, asserted again because this adds a second damage path)
-- [ ] `Problems` increments once per damaged building, not once per failure
+- [x] `Problems` increments once per damaged building, not once per failure
 
 ## Why
 

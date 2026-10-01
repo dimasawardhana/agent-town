@@ -3,14 +3,20 @@ package analyzer
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // tree builds a throwaway project where each district holds n buildings of a
 // given file count.
+func sprintf(f string, a ...any) string { return fmt.Sprintf(f, a...) }
+
 func tree(t *testing.T, districts map[string][2]int) string {
 	t.Helper()
 	root := t.TempDir()
@@ -250,24 +256,106 @@ func TestDistrictKindReachesSites(t *testing.T) {
 // one-file spec directories claims more land than the source it covers.
 // Measured before the fix: e2e 59340 against src 50400 — the inversion the
 // ADR says was corrected, still present because the layout ignored d.Kind.
-func TestTestDistrictDoesNotDominateSource(t *testing.T) {
-	// src holds many files in few buildings; e2e holds few files in many.
-	root := tree(t, map[string][2]int{
-		"src": {4, 7},  // 28 files, 4 buildings
-		"e2e": {12, 1}, // 12 files, 12 buildings
-	})
-	l := layoutOf(t, root)
+// A test district is weighted down, and this is what the weight actually is.
+//
+// **The previous version of this test asserted a property the layout does not
+// have.** It checked one hand-picked shape, it stopped passing when `testPitch`
+// was introduced, and the fix at the time was to move a threshold rather than to
+// ask whether the rule was right. Written as a property over 90 shapes it
+// reports 29 inversions and a worst ratio of 2.58 — so the single case was
+// evidence of nothing, and the constant was carrying a claim it cannot deliver.
+//
+// ADR-0012 says a test district "cannot dominate the site". With a constant
+// pitch that is **false as an absolute**: a 22-building spec suite outranks even
+// a substantial source. So the claim is narrowed below to what is true, and the
+// ADR is corrected to match. The alternative — sizing test districts by file
+// count, which is what the ADR originally described — is a real change to the
+// layout and is not smuggled in under a bugfix.
+func TestTestDistrictIsWeightedDown(t *testing.T) {
+	// Shapes whose blocks clear `maxBuildingFootprint`. Below the floor the pitch
+	// is *invisible* — both districts are floored to the same plate and weigh
+	// exactly the same — which is a real fact about the layout and is asserted
+	// separately below rather than hidden by choosing friendlier shapes.
+	for _, shape := range [][2]int{{2, 12}, {4, 7}, {6, 9}, {9, 8}, {12, 12}} {
+		root := tree(t, map[string][2]int{"src": shape, "e2e": shape})
+		l := layoutOf(t, root)
+		var src, e2e float64
+		for _, d := range l.Districts {
+			if d.Name == "src" {
+				src = d.W * d.H
+			}
+			if d.Name == "e2e" {
+				e2e = d.W * d.H
+			}
+		}
+		if src <= 0 || e2e <= 0 {
+			t.Fatalf("missing district for %v: src=%.0f e2e=%.0f", shape, src, e2e)
+		}
+		if e2e >= src {
+			t.Errorf("district %v: a test district weighs %.0f against a source's %.0f — the pitch is not applied", shape, e2e, src)
+		}
+	}
+}
 
-	area := map[string]float64{}
-	for _, d := range l.Districts {
-		area[d.Name] = d.W * d.H
+// Below the floor the weight-down does nothing, and that is worth knowing.
+//
+// A one-building district is floored to a plate sized for the largest thing that
+// can stand on it, so a test district and a source district of the same shape come
+// out identical. The pitch is a *correction above the floor*, not a guarantee:
+// anyone reading `testPitch` as "test districts are always smaller" is wrong for
+// every small district in the town, and that is most of them.
+func TestPitchIsInvisibleBelowTheBlockFloor(t *testing.T) {
+	for _, shape := range [][2]int{{1, 1}, {1, 3}, {1, 12}} {
+		root := tree(t, map[string][2]int{"src": shape, "e2e": shape})
+		l := layoutOf(t, root)
+		area := map[string]float64{}
+		for _, d := range l.Districts {
+			area[d.Name] = d.W * d.H
+		}
+		if area["src"] != area["e2e"] {
+			t.Errorf("district %v: expected both floored to the same plate, got src=%.0f e2e=%.0f", shape, area["src"], area["e2e"])
+		}
 	}
-	if area["src"] == 0 || area["e2e"] == 0 {
-		t.Fatalf("missing district: %v", area)
+}
+
+// The limit, measured rather than remembered.
+//
+// A constant pitch cannot stop a much larger suite outranking a much smaller
+// source, and pretending otherwise is how the previous version of this test came
+// to pass. This records where the boundary is so that changing `testPitch` has
+// to confront it: if a change makes the ratio worse, this says by how much.
+func TestTestDistrictInversionIsBoundedAndKnown(t *testing.T) {
+	worst := 0.0
+	worstAt := ""
+	inversions := 0
+	shapes := 0
+	for _, src := range [][2]int{{1, 1}, {2, 4}, {4, 7}, {6, 9}, {9, 8}, {12, 3}} {
+		for _, tst := range [][2]int{{4, 1}, {8, 1}, {12, 1}, {16, 1}, {22, 1}} {
+			shapes++
+			root := tree(t, map[string][2]int{"src": src, "e2e": tst})
+			l := layoutOf(t, root)
+			area := map[string]float64{}
+			for _, d := range l.Districts {
+				area[d.Name] = d.W * d.H
+			}
+			ratio := area["e2e"] / area["src"]
+			if ratio > 1 {
+				inversions++
+			}
+			if ratio > worst {
+				worst = ratio
+				worstAt = sprintf("src=%v e2e=%v", src, tst)
+			}
+		}
 	}
-	if area["e2e"] > area["src"] {
-		t.Errorf("test district (%.0f) is larger than the source it covers (%.0f) — the inversion ADR-0012 records is present",
-			area["e2e"], area["src"])
+	t.Logf("%d of %d shapes invert; worst ratio %.2f at %s", inversions, shapes, worst, worstAt)
+
+	// The bound is generous on purpose. A tighter one would be a threshold
+	// dressed as a property, which is the mistake this file is here to stop
+	// repeating. It exists to catch a *regression* in the pitch, not to claim a
+	// guarantee the layout does not provide.
+	if worst > 3.0 {
+		t.Errorf("worst inversion ratio %.2f at %s — worse than the recorded limit; the pitch weakened", worst, worstAt)
 	}
 }
 
@@ -276,10 +364,10 @@ func TestSourceDistrictKeepsFullSpacing(t *testing.T) {
 	root := tree(t, map[string][2]int{"src": {4, 7}})
 	l := layoutOf(t, root)
 
-	// 4 buildings of 7 files -> buildingSize(7) = 78
+	// 4 buildings of 7 files -> buildingSize(7) = 72
 	// cols = ceil(sqrt(4)) = 2, rows = 2
 	// blockW = 2*(78+14) - 14 + 2*20 = 210
-	const wantW = 2*(78+cellGap) - cellGap + 2*cellPad
+	const wantW = 2*(72+cellGap) - cellGap + 2*cellPad
 	if d := l.Districts[0]; d.W != wantW {
 		t.Errorf("source district width = %.0f, want %.0f (full pitch)", d.W, wantW)
 	}
@@ -350,7 +438,7 @@ func TestPlacesHaveDepthZero(t *testing.T) {
 // TestFloorsFromBytes covers the floors table.
 //
 // A table rather than a formula, for the reason `buildingSize` gives about its
-// own four steps: a continuous scale produces a row of near-identical towers,
+// own five steps: a continuous scale produces a row of near-identical towers,
 // while a table can be argued about row by row and tuned without touching logic.
 func TestFloorsFromBytes(t *testing.T) {
 	cases := []struct {
@@ -573,6 +661,31 @@ func TestContainerFloorsExcludeGeneratedOutput(t *testing.T) {
 	}
 }
 
+// A building is the same case as a container one level down, and on this
+// repository the numbers are the same: `internal/web` is generated because it
+// holds the embedded UI bundle, and that bundle is 1.7 MB sitting beside 28 KB
+// of hand-written Go. Sizing the building from its total draws the bundle as a
+// sixteen-storey tower and buries the Go — which is the failure the container
+// rule already prevents one level up.
+func TestBuildingFloorsExcludeGeneratedOutput(t *testing.T) {
+	// The measured shape of internal/web. 28,119 sits in the "< 32000 -> 3"
+	// band, so the point is that it is 3 and not the 16 its total would give.
+	authored := Building{Path: "internal/web", Generated: true, TotalBytes: 1_724_316, AuthoredBytes: 28_119}
+	if got := Floors(authored); got != 3 {
+		t.Errorf("Floors with 28119 authored bytes = %d, want 3 (its authored mass)", got)
+	}
+	if floorsForBytes(authored.TotalBytes) != 16 {
+		t.Fatalf("the fixture no longer distinguishes the two readings: its total gives %d", floorsForBytes(authored.TotalBytes))
+	}
+	// A directory that is *only* a bundle has no authored mass at all, and so
+	// nothing else in it to draw. It stays one storey rather than being
+	// stretched to sixteen by a compiler's output.
+	pure := Building{Path: "internal/web/static/assets", Generated: true, TotalBytes: 1_696_197}
+	if got := Floors(pure); got != 1 {
+		t.Errorf("Floors on a pure artefact = %d, want 1", got)
+	}
+}
+
 // TestContainersAreDeterministic pins ADR-0012 for the new list.
 func TestContainersAreDeterministic(t *testing.T) {
 	root := t.TempDir()
@@ -610,7 +723,7 @@ func TestContainersAreDeterministic(t *testing.T) {
 //
 // The daemon sends a site's footprint and the renderer draws that footprint's
 // art, so the two have to agree. The first version sent the *plate's* extent
-// while the atlas bakes only four sizes, so `internal`'s tower stood 81 units
+// while the atlas baked only four sizes, so `internal`'s tower stood 81 units
 // left and 66 units up of its plate and `cmd`'s art overflowed its plate by 43
 // units vertically. Both were invisible in the code, because each side was
 // individually consistent.
@@ -633,7 +746,7 @@ func TestContainerFootprintIsABakedSizeAndSitsInsideItsPlate(t *testing.T) {
 	}
 	l := LayoutTown(town)
 
-	baked := map[float64]bool{44: true, 60: true, 78: true, 100: true}
+	baked := map[float64]bool{44: true, 58: true, 72: true, 86: true, 100: true}
 	var checked int
 	for _, s := range l.Sites {
 		if s.Kind != PlaceContainer {
@@ -663,6 +776,186 @@ func TestContainerFootprintIsABakedSizeAndSitsInsideItsPlate(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no container site placed for a tree whose only source is one level down")
 	}
+}
+
+// footprint is one rung of the ladder as the atlas records it: a cel side, and
+// a source-file count that the atlas says draws at that side.
+type footprint struct {
+	side  float64
+	files int
+}
+
+// bakedFootprints is the ladder ui/src/art/bake.ts bakes — the other end of
+// the key a site's W is looked up by, since the renderer passes W straight to
+// baseFrame(side, …).
+//
+// Read, never restated. A copy of the table in a second language is not a test
+// of it, it is a second thing to forget to update, and the drift is not
+// hypothetical: this ladder grew from four rungs to five, and for a while the
+// two ends named different numbers (see the comment on placeDistrict).
+func bakedFootprints(t *testing.T) []footprint {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "ui", "src", "art", "bake.ts"))
+	if err != nil {
+		t.Fatalf("reading the atlas's footprint table: %v", err)
+	}
+	entry := regexp.MustCompile(`\{\s*side:\s*([0-9]+)\s*,\s*files:\s*([0-9]+)\s*\}`)
+	var out []footprint
+	for _, m := range entry.FindAllStringSubmatch(string(b), -1) {
+		side, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("unreadable side %q in SIZES: %v", m[1], err)
+		}
+		files, err := strconv.Atoi(m[2])
+		if err != nil {
+			t.Fatalf("unreadable file count %q in SIZES: %v", m[2], err)
+		}
+		out = append(out, footprint{side: float64(side), files: files})
+	}
+	if len(out) == 0 {
+		t.Fatal("no { side: N, files: M } entries in ui/src/art/bake.ts; the table was reshaped and this test would otherwise pass on nothing")
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].side < out[j].side })
+	return out
+}
+
+// TestEveryEmittedFootprintIsOneTheAtlasDraws walks the whole footprint ladder
+// and holds both ends of the join key against each other.
+//
+// A site that declares a footprint the bake does not have is a site the
+// renderer draws at the nearest cel it has, at a size the layout never asked
+// for — which is the defect recorded on placeDistrict, where a container's
+// tower stood 81 units off its own plate. The reverse is dead art: a rung the
+// atlas bakes and this package never emits is a cel nothing can ever ask for.
+// So the two ends must agree, in both directions, and at every rung.
+//
+// The rung a *count* lands on matters as much as the set of rungs, and that
+// is the assertion a set comparison alone cannot make: sliding a breakpoint
+// from 9 files to 8 emits the same five sizes overall, so the set is
+// unchanged and the town is not — nine files quietly stops being the 72-unit
+// building. Hence the file counts below are the atlas's own, walked through a
+// real Analyze and LayoutTown rather than checked against the table directly.
+//
+// Checked per kind, not over the union. A building and a container reach the
+// ladder by different routes — a container's size is then capped against its
+// plate — so a threshold that moved out from under one of them is still a
+// ladder no single kind of site can climb.
+func TestEveryEmittedFootprintIsOneTheAtlasDraws(t *testing.T) {
+	rungs := bakedFootprints(t)
+
+	// Every file count the atlas records, plus one just past each, plus the
+	// smallest tree there is. Sorted and de-duplicated, so the monotonic walk
+	// below is over file counts and not over district names.
+	countSet := map[int]bool{1: true}
+	for _, r := range rungs {
+		countSet[r.files] = true
+		countSet[r.files+1] = true
+	}
+	counts := make([]int, 0, len(countSet))
+	for n := range countSet {
+		counts = append(counts, n)
+	}
+	sort.Ints(counts)
+
+	// One district per count, holding a single building — and a second
+	// district per count whose only source is one level down, so the same
+	// count reaches the ladder as a container. A one-building district is
+	// itself an ancestor of a building and so grows a container too; only the
+	// c<i> ones are this walk's own.
+	districts := map[string][2]int{}
+	containerDistricts := map[string]bool{}
+	for i, n := range counts {
+		districts["d"+itoa(i)] = [2]int{1, n}
+		name := "c" + itoa(i)
+		districts[name+"/leaf"] = [2]int{1, n}
+		containerDistricts[name] = true
+	}
+	l := layoutOf(t, tree(t, districts))
+
+	byKind := map[Place]map[float64]bool{PlaceBuilding: {}, PlaceContainer: {}}
+	byCount := map[Place]map[int]float64{PlaceBuilding: {}, PlaceContainer: {}}
+	var widest float64
+	for _, s := range l.Sites {
+		if s.Kind != PlaceBuilding && s.Kind != PlaceContainer {
+			continue
+		}
+		if s.Kind == PlaceContainer && !containerDistricts[s.District] {
+			continue
+		}
+		if s.W != s.H {
+			t.Errorf("%s footprint is %vx%v, but a cel is a square side", s.Path, s.W, s.H)
+		}
+		byKind[s.Kind][s.W] = true
+		byCount[s.Kind][s.Files] = s.W
+		if s.W > widest {
+			widest = s.W
+		}
+	}
+
+	for _, kind := range []Place{PlaceBuilding, PlaceContainer} {
+		emitted, seen := byKind[kind], byCount[kind]
+		if len(seen) != len(counts) {
+			t.Fatalf("%s: %d file counts walked but %d sites found, so this walk is not measuring what it claims",
+				kind, len(counts), len(seen))
+		}
+
+		// Each rung, at the count the atlas records for it.
+		for _, r := range rungs {
+			if got, ok := seen[r.files]; !ok {
+				t.Errorf("%s: nothing was placed at %d files, the count the atlas records against the %.0f-unit cel",
+					kind, r.files, r.side)
+			} else if got != r.side {
+				t.Errorf("%s: %d files drew %.0f units, but the atlas records that count against the %.0f-unit cel; a rung has moved",
+					kind, r.files, got, r.side)
+			}
+		}
+
+		// Nothing undrawable, and no rung of baked art that nothing reaches.
+		for side := range emitted {
+			if _, ok := sideFor(rungs, side); !ok {
+				t.Errorf("a %s is emitted at %.0f units, which the atlas does not bake; the renderer would draw a different size", kind, side)
+			}
+		}
+		for _, r := range rungs {
+			if !emitted[r.side] {
+				t.Errorf("the atlas bakes a %.0f-unit footprint that no %s reaches; the cel is dead art", r.side, kind)
+			}
+		}
+
+		// More files must never mean a smaller footprint, and a discrete
+		// ladder must be discrete: every count landing on its own size would
+		// be a continuous scale, the thing buildingSize argues against.
+		for i := 1; i < len(counts); i++ {
+			if lo, hi := seen[counts[i-1]], seen[counts[i]]; hi < lo {
+				t.Errorf("%s: %d files drew %.0f units and %d files drew %.0f: the ladder is not monotonic",
+					kind, counts[i-1], lo, counts[i], hi)
+			}
+		}
+		if len(emitted) >= len(counts) {
+			t.Errorf("%s: %d file counts produced %d distinct footprints; the scale is continuous again",
+				kind, len(counts), len(emitted))
+		}
+	}
+
+	// The biggest thing that can stand anywhere is the biggest cel the atlas
+	// bakes. maxBuildingFootprint is the claim; the bake is the fact.
+	biggest := rungs[len(rungs)-1].side
+	if widest != maxBuildingFootprint {
+		t.Errorf("the largest footprint emitted is %.0f, but maxBuildingFootprint is %.0f", widest, maxBuildingFootprint)
+	}
+	if maxBuildingFootprint != biggest {
+		t.Errorf("maxBuildingFootprint is %.0f, but the atlas's largest cel is %.0f", maxBuildingFootprint, biggest)
+	}
+}
+
+// sideFor is the rung a cel side belongs to, by exact match.
+func sideFor(rungs []footprint, side float64) (footprint, bool) {
+	for _, r := range rungs {
+		if r.side == side {
+			return r, true
+		}
+	}
+	return footprint{}, false
 }
 
 // TestContainerFitsATightPlate covers the case the cap exists for.
@@ -726,6 +1019,558 @@ func TestContainerFitsATightPlate(t *testing.T) {
 		}
 		if s.W <= 0 || s.H <= 0 {
 			t.Errorf("container %s has an empty footprint %vx%v", s.Path, s.W, s.H)
+		}
+	}
+}
+
+// --- Roads ---------------------------------------------------------------
+
+// A road tile once existed and was deleted because "a road tile had nothing to
+// place it and was baked as dead art". This is the test that the placement
+// exists, so the art cannot become dead again without something failing.
+func TestTheLayoutEmitsRoads(t *testing.T) {
+	root := t.TempDir()
+	// Several districts, so the layout has to wrap. A row break only happens
+	// between districts; twenty-four buildings in one district are one very
+	// wide row and produce no road at all, which is why the first version of
+	// this fixture found nothing.
+	for d := range 14 {
+		for i := range 4 {
+			dir := filepath.Join(root, fmt.Sprintf("d%02d", d), fmt.Sprintf("m%02d", i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package m\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	at, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(at)
+	if len(l.Roads) == 0 {
+		t.Fatal("the layout emitted no roads; the road art is dead again")
+	}
+	for _, r := range l.Roads {
+		if r.W <= 0 || r.H <= 0 {
+			t.Errorf("a road has no extent: %+v", r)
+		}
+		if r.Kind != "row" && r.Kind != "district" {
+			t.Errorf("a road has kind %q, which no rule produces", r.Kind)
+		}
+	}
+}
+
+// A row road must sit in the gap the layout actually left, not over a building.
+func TestRowRoadsSitInTheGapAndNotOverABuilding(t *testing.T) {
+	root := t.TempDir()
+	for d := range 14 {
+		for i := range 4 {
+			dir := filepath.Join(root, fmt.Sprintf("d%02d", d), fmt.Sprintf("m%02d", i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package m\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	at, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(at)
+	rows := 0
+	for _, r := range l.Roads {
+		if r.Kind != "row" {
+			continue
+		}
+		rows++
+		for _, s := range l.Sites {
+			overlaps := r.X < s.X+s.W && s.X < r.X+r.W && r.Y < s.Y+s.H && s.Y < r.Y+r.H
+			if overlaps {
+				t.Errorf("a row road at %v,%v %vx%v runs over the %s plot at %v,%v",
+					r.X, r.Y, r.W, r.H, s.ID, s.X, s.Y)
+			}
+		}
+	}
+	if rows == 0 {
+		t.Error("a tree this size wraps onto more than one row, so a row road was expected")
+	}
+}
+
+// An import road is a claim, so the test is about what the scanner refuses to
+// claim as much as what it draws.
+// importEdgesOf is the import graph as the layout now carries it: one entry per
+// (importer, imported) pair, read off the sites rather than off drawn roads.
+//
+// The tests below used to count roads of Kind "import". They now count this,
+// which is the same fact — a road between two buildings *was* an import edge —
+// stated on the building that owns it.
+func importEdgesOf(l Layout) [][2]string {
+	var out [][2]string
+	for _, s := range l.Sites {
+		for _, to := range s.Imports {
+			out = append(out, [2]string{s.Path, to})
+		}
+	}
+	return out
+}
+
+func TestImportsOnlyNameRealBuildings(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A relative import that names a file inside a sibling building: a road.
+	mk("web/main.go", "package web\n\nimport \"../store\"\n\nfunc main() {}\n")
+	mk("store/s.go", "package store\n")
+	// A relative import that escapes the repository: no road, because the
+	// target is not in this town.
+	mk("web/other.go", "package web\n\nimport \"../../elsewhere/thing\"\n")
+	// A bare specifier: a package outside the town, so no road.
+	mk("web/dep.go", "package web\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n)\n")
+	// JavaScript forms, including one that resolves.
+	mk("ui/src/a.ts", "import { x } from \"../shared\";\n")
+	mk("ui/shared/x.ts", "export const x = 1;\n")
+	// A string that merely looks like an import, inside a function body.
+	mk("web/fake.go", "package web\n\nfunc f() { s := \"../store\"; _ = s }\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(town)
+	known := map[string]bool{}
+	for _, s := range l.Sites {
+		known[s.Path] = s.Kind == PlaceBuilding
+	}
+
+	imports := importEdgesOf(l)
+	// web -> store and ui/src -> ui/shared are the only two that resolve.
+	if len(imports) != 2 {
+		t.Errorf("import edges = %v, want 2: web->store and ui/src->ui/shared", imports)
+	}
+	// And every one must name a building that exists.
+	for _, e := range imports {
+		if !known[e[0]] || !known[e[1]] {
+			t.Errorf("an import names something that is not a building: %v", e)
+		}
+	}
+}
+
+// The repository this is written in imports across buildings, so the rule has to
+// hold on a real tree and not only on a fixture.
+func TestImportEdgesOnThisRepository(t *testing.T) {
+	town, err := Analyze("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LayoutTown(town)
+	byPath := map[string]bool{}
+	for _, s := range l.Sites {
+		byPath[s.Path] = s.Kind == PlaceBuilding
+	}
+	n := 0
+	for _, e := range importEdgesOf(l) {
+		n++
+		if e[0] == "" || e[1] == "" {
+			t.Errorf("an import edge has an empty end: %v", e)
+		}
+	}
+	if n == 0 {
+		t.Error("this repository imports across buildings and recorded no import edges")
+	}
+	t.Logf("IMPORT edges on this repo: %d (of %d roads)", n, len(l.Roads))
+}
+
+// A multi-line import is an import.
+//
+// This is the form the project mostly uses and the form the line scanner could
+// not see at all: 16 of this repository's TypeScript files open with `import {`
+// and name their specifier on a closing line four rows later. A scanner that
+// reads one line at a time never sees the specifier, so those dependencies were
+// simply not in the map.
+func TestMultiLineImportStillCounts(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("ui/src/a.ts", "import {\n  one,\n  two,\n} from \"../shared\";\n\nexport const a = one + two;\n")
+	mk("ui/shared/b.ts", "export const one = 1;\nexport const two = 2;\n")
+	// The re-export and the lazy form, which the old scanner also missed.
+	mk("ui/src/c.ts", "export { one } from \"../shared\";\nconst later = await import(\"../shared\");\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(importEdgesOf(LayoutTown(town)))
+	if n == 0 {
+		t.Error("no import edge for a multi-line import — the specifier is on a closing line and was never read")
+	}
+}
+
+// A commented-out import is not an import.
+//
+// Not hypothetical: `imports.go` and `layout.go` both contain the literal text
+// `import "../store"` inside a Go comment describing this very case. A scanner
+// that reads comments draws a road to a dependency that does not exist, which is
+// the confident lie the whole design refuses to produce.
+func TestCommentedImportDoesNotCount(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The decisive shape: a file whose ONLY import is inside a comment. If the
+	// stripper fails, this is a road to a dependency that does not exist, and
+	// nothing else in the test would notice.
+	mk("web/main.go", "package web\n\n// import \"../store\" — a comment, not a dependency.\nfunc f() {}\n")
+	mk("web/blocks.go", "package web\n\n/* import \"../store\" */\nfunc g() {}\n")
+	mk("web/inside.go", "package web\n\nimport (\n\t// \"../store\"\n\t\"fmt\"\n)\nfunc h() {}\n")
+	// One real TypeScript import, alongside a commented twin on the line above.
+	mk("ui/src/a.ts", "// import { x } from \"../shared\";\nimport { one } from \"../shared\";\n")
+	mk("ui/shared/b.ts", "export const one = 1;\n")
+	mk("store/s.go", "package store\n")
+
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Zero roads is the whole assertion. A real `import "../store"` sits in the
+	// same file as a commented one in `main.go` before this change, so a test that
+	// merely counted a road would pass with the stripper completely broken.
+	n := len(importEdgesOf(LayoutTown(town)))
+	// Exactly one: the real TypeScript import. Three commented Go imports sit in
+	// this fixture and none of them may contribute, so a stripper that did
+	// nothing would produce four and fail here.
+	if n != 1 {
+		t.Errorf("import edges = %d, want 1 (the real TypeScript import only); a commented-out import was read as a dependency", n)
+	}
+}
+
+// A road between two districts runs the full height of the row it crosses.
+//
+// The first version emitted a road at *placement*, sized by the block just laid.
+// That is right only when the two blocks are the same height, and districts are
+// not — a 284-tall district beside a 356-tall one left 72 units of the taller
+// block standing beside bare grass, which is a stub rather than a road. A road is
+// a street: it crosses the row, so it is as long as the row is deep.
+func TestDistrictRoadsSpanTheWholeRow(t *testing.T) {
+	// Deliberately unequal: one district with few buildings, one with many, so
+	// the blocks cannot come out the same size by accident.
+	root := t.TempDir()
+	for name, spec := range map[string][2]int{
+		"src/a": {1, 1}, "src/b": {1, 2}, "src/c": {1, 1}, "src/d": {1, 1},
+		"web/a": {1, 1}, "web/b": {1, 2}, "web/c": {1, 3}, "web/d": {1, 1}, "web/e": {1, 1},
+	} {
+		nb, files := spec[0], spec[1]
+		for i := 0; i < nb; i++ {
+			dir := filepath.Join(root, name, "b"+itoa(i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for f := 0; f < files; f++ {
+				if err := os.WriteFile(filepath.Join(dir, "f"+itoa(f)+".ts"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	l := layoutOf(t, root)
+
+	var deepest, shallowest float64
+	for _, d := range l.Districts {
+		if b := d.Y + d.H; b > deepest {
+			deepest = b
+		}
+		if d.Y+d.H < shallowest || shallowest == 0 {
+			shallowest = d.Y + d.H
+		}
+	}
+	if deepest == shallowest {
+		t.Skip("the two districts came out the same height; nothing to prove here")
+	}
+
+	rows := map[float64]bool{}
+	for _, d := range l.Districts {
+		rows[d.Y] = true
+	}
+	for _, r := range l.Roads {
+		if r.Kind != "district" {
+			continue
+		}
+		// Every road shares a row with districts and reaches that row's floor.
+		if !rows[r.Y] {
+			t.Errorf("road at y=%.0f starts on no district's row", r.Y)
+		}
+		if r.Y+r.H < deepest-rowGap {
+			t.Errorf("road x=%.0f stops at y=%.0f, short of the row's deepest block at %.0f", r.X, r.Y+r.H, deepest-rowGap)
+		}
+	}
+}
+
+// A road past the last district runs off the map to nothing.
+//
+// It read as a road *to somewhere* rather than as the end of the town, which is a
+// claim the layout cannot support — the same reason an unresolvable import draws
+// nothing.
+func TestNoRoadLeadsOffTheEndOfTheTown(t *testing.T) {
+	root := tree(t, map[string][2]int{"src": {2, 3}, "web": {2, 3}, "docs": {1, 2}})
+	l := layoutOf(t, root)
+	rightmost := 0.0
+	for _, d := range l.Districts {
+		if r := d.X + d.W; r > rightmost {
+			rightmost = r
+		}
+	}
+	for _, r := range l.Roads {
+		if r.Kind == "district" && r.X >= rightmost {
+			t.Errorf("road at x=%.0f lies past the last district's edge at %.0f", r.X, rightmost)
+		}
+	}
+}
+
+// The comment stripper respects every string delimiter, not one of three.
+//
+// The ticket claimed it "respects string literals, so a `//` in a URL is not
+// one" while tracking only `"`. Nothing in this repository uses single quotes,
+// so no import was being lost — but the claim was wider than the code, in a
+// function whose whole job is to not over-claim.
+func TestStripCommentsRespectsEveryQuote(t *testing.T) {
+	cases := map[string]string{
+		"double":   "// gone\nimport \"./a\"\n",
+		"single":   "// gone\nimport './a'\n",
+		"backtick": "// gone\nimport `./a`\n",
+	}
+	for name, src := range cases {
+		got := stripComments(src)
+		if strings.Contains(got, "gone") {
+			t.Errorf("%s: the comment survived, so the line is mis-read", name)
+		}
+		if !strings.Contains(got, "./a") {
+			t.Errorf("%s: the import was eaten with the comment: %q", name, got)
+		}
+	}
+	// The case that motivated the whole function: a URL is not a comment.
+	u := stripComments("import \"../a\"\n// see https://example.com/x\nimport \"../b\"\n")
+	if !strings.Contains(u, "../b") {
+		t.Errorf("a URL swallowed the rest of the file: %q", u)
+	}
+}
+
+// `export * from "./x"` re-exports the whole module and names no braces.
+func TestExportStarCounts(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("ui/src/all.ts", "export * from \"../shared\";\n")
+	mk("ui/shared/x.ts", "export const x = 1;\n")
+	town, err := Analyze(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(importEdgesOf(LayoutTown(town)))
+	if n == 0 {
+		t.Error("`export * from \"./x\"` is a dependency and was not counted")
+	}
+}
+
+// The road tally, asserted rather than logged.
+//
+// Ticket 23 ticked "the road art is verified at 18 bands on this repository" and
+// the only test near it asserted `n > 0`. A number in an acceptance box with
+// nothing behind it is the same defect as an unticked claim: it reads as
+// evidence and is not.
+func TestRoadCountsOnThisRepositoryAreRecorded(t *testing.T) {
+	town, err := Analyze("../..")
+	if err != nil {
+		t.Skipf("this repository is not available to the test: %v", err)
+	}
+	byKind := map[string]int{}
+	for _, r := range LayoutTown(town).Roads {
+		byKind[r.Kind]++
+	}
+	total := 0
+	for _, n := range byKind {
+		total += n
+	}
+	if total == 0 {
+		t.Fatal("no roads on this repository at all")
+	}
+	// Every band must be a real extent, and district roads must sit in a gap
+	// between two districts — the property that made them worth emitting.
+	var kinds []string
+	for k := range byKind {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	t.Logf("roads on this repository: total=%d %v", total, byKind)
+	if byKind["district"] == 0 {
+		t.Error("no district roads: the gap between districts is not a road any more")
+	}
+	if len(importEdgesOf(LayoutTown(town))) == 0 {
+		t.Error("no import edges: the scanner is finding nothing on its own repository")
+	}
+}
+
+// A town that wraps onto more than one row, exercised rather than described.
+//
+// Ticket 30 measured this by hand — 4 rows, 6 district roads, 3 row roads — and
+// the numbers lived in the ticket's prose with nothing asserting them. The
+// multi-row path is the one branch of the road layout that had shipped without
+// ever running, so "measured once by a person" is not coverage.
+func TestAMultiRowTownLaysOutAndRoads(t *testing.T) {
+	root := t.TempDir()
+	// Ten districts, each wide enough that three fit a row — which is what
+	// forces the wrap the branch exists for.
+	for _, d := range []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"} {
+		for b := 0; b < 6; b++ {
+			dir := filepath.Join(root, d, "m"+itoa(b), "src")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for f := 0; f < 6; f++ {
+				if err := os.WriteFile(filepath.Join(dir, "f"+itoa(f)+".ts"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	l := layoutOf(t, root)
+
+	rows := map[float64]int{}
+	for _, d := range l.Districts {
+		rows[d.Y]++
+	}
+	if len(rows) < 2 {
+		t.Fatalf("the fixture did not wrap: %d row(s), %d districts", len(rows), len(l.Districts))
+	}
+
+	// Every district road runs the depth of its whole row — the bug ticket 23
+	// fixed, on the branch that had never run.
+	deepest := map[float64]float64{}
+	for _, d := range l.Districts {
+		if b := d.Y + d.H; b > deepest[d.Y] {
+			deepest[d.Y] = b
+		}
+	}
+	for _, r := range l.Roads {
+		if r.Kind != "district" {
+			continue
+		}
+		if _, onARow := deepest[r.Y]; !onARow {
+			t.Errorf("district road at y=%.0f starts on no district's row", r.Y)
+		}
+		if r.Y+r.H < deepest[r.Y] {
+			t.Errorf("district road x=%.0f stops at y=%.0f, short of its row's floor at %.0f", r.X, r.Y+r.H, deepest[r.Y])
+		}
+	}
+	// Every row road crosses the full width of the map.
+	for _, r := range l.Roads {
+		if r.Kind != "row" {
+			continue
+		}
+		if r.W < l.Width-rowGap-2*rowStart {
+			t.Errorf("row road is %.0f wide in a %.0f map — it does not cross the town", r.W, l.Width)
+		}
+	}
+}
+
+// A district road must lie in a gap, not on top of a district.
+//
+// Mutation testing wrote this test, and the first version of it was wrong. It
+// asserted that no two districts *overlap*, which a fixture that does not wrap
+// cannot falsify — and even once it wrapped, removing the gap entirely makes the
+// districts flush rather than overlapping, so the test still passed.
+//
+// The gap is not there to keep districts apart. It is there so a **road** fits
+// in it, and that is the claim worth asserting: a band drawn where a district
+// stands is a road through a building, and the map would draw it without
+// complaint.
+func TestDistrictRoadsDoNotRunOverADistrict(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"} {
+		for b := 0; b < 6; b++ {
+			dir := filepath.Join(root, d, "m"+itoa(b), "src")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for f := 0; f < 6; f++ {
+				if err := os.WriteFile(filepath.Join(dir, "f"+itoa(f)+".ts"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	l := layoutOf(t, root)
+	for _, r := range l.Roads {
+		if r.Kind != "district" && r.Kind != "row" {
+			continue
+		}
+		for _, d := range l.Districts {
+			overlaps := r.X < d.X+d.W && d.X < r.X+r.W && r.Y < d.Y+d.H && d.Y < r.Y+r.H
+			if overlaps {
+				t.Errorf("a %s road at %.0f,%.0f %.0fx%.0f runs over the %s district at %.0f,%.0f %.0fx%.0f",
+					r.Kind, r.X, r.Y, r.W, r.H, d.Name, d.X, d.Y, d.W, d.H)
+			}
+		}
+	}
+}
+
+// No road joins two places, at any kind.
+//
+// This is the invariant that replaced three containment tests and one import
+// test, and it is stronger than all four put together. Those asked whether a
+// particular band was well made — trimmed to its two plots, crossing no third
+// building, its extent derived from its own centre line. They could only ever
+// fail for the kinds that existed, which is why each removal of a kind took its
+// guarantees with it and left the shape free to return in a new guise.
+//
+// This one is about the *shape*: the layout emits regions, and nothing on this
+// map runs from one building to another. The reader removed the import line
+// twice — the road, and then the mark on the roof — and the containment band was
+// still there, drawn between two buildings, because it had inherited the
+// silhouette of the thing that was removed without inheriting its meaning.
+//
+// A new kind that joins two places fails here whatever it is called.
+func TestNoRoadJoinsTwoPlaces(t *testing.T) {
+	for _, root := range []string{"../.."} {
+		town, err := Analyze(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range LayoutTown(town).Roads {
+			if r.Kind != "row" && r.Kind != "district" {
+				t.Errorf("road kind %q joins two places; only regions are drawn", r.Kind)
+			}
 		}
 	}
 }

@@ -127,7 +127,10 @@ const proj = (x: number, y: number) => ({ x: (x - y) / 2, y: (x + y) / 4 });
 const unproj = (x: number, y: number) => ({ x: 2 * y + x, y: 2 * y - x });
 
 test("the land box is the layout's own extent, padded", () => {
-  const box = landBox(948, 610, 48, proj);
+  // The back margin is passed explicitly rather than left at its default. It
+  // defaults to **zero** because the scene's field reaches forward and only a
+  // few tiles back, and these two tests are about a symmetric pad.
+  const box = landBox(948, 610, 48, proj, 48);
   // The four world corners of the padded land, projected.
   const want = [
     proj(-48, -48),
@@ -153,7 +156,7 @@ test("the land box covers the whole rectangle, not a pair of corners", () => {
   const width = 948;
   const height = 610;
   const pad = 48;
-  const box = landBox(width, height, pad, proj);
+  const box = landBox(width, height, pad, proj, pad);
   // A projected rectangle spans exactly (w + h) / 2 in x — every world corner
   // contributes to that, so a two-corner derivation comes up short whenever the
   // rectangle is not square.

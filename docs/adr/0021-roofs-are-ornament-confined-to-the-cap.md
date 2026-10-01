@@ -90,22 +90,55 @@ Base and cap are `4 sizes × 8 stages × 2 damaged = 64` per axis value.
 
 The atlas is `nextPow2(16 × cellW) × nextPow2(ceil(cels/16) × cellH)`.
 
-**The ceiling moved after this ADR was written, upward.** It was first costed at a
+**The ceiling moved after this ADR was written, twice.** It was first costed at a
 tallest cel of 113 px, which put 8192 at 72 rows = 1152 cels, and the ten-roof row
 above was the ceiling at the time. Separating each cel to the height it actually
-drawn — the base needed no roof headroom, and the ground shadow none at all —
-lowered the tallest cel to **91 px** and the cell height to **93**, which raises the
-ceiling to **88 rows = 1408 cels**. So the original cost is conservative:
-**fourteen roofs fit, fifteen do not**, where ten was the figure when this was
-written. The five kinds that shipped occupy **820 cels** at a sheet of 2048×8192.
+drew — the base needed no roof headroom, and the ground shadow none at all —
+lowered the tallest cel to **91 px** and the cell height to **93**, which raised the
+ceiling to **88 rows = 1408 cels**. So the original cost is conservative in that
+direction: fourteen roofs fit where ten was the figure when this was written.
+
+It then moved the other way. The verified pennant (`.scratch/honest-ladder`,
+ticket 04) is a second bake of the whole cap family — **+320 cels**, 820 becoming
+**1140** — which leaves 268 spare and takes the roof ceiling to **nine kinds**:
+N=9 is 1396 and fits, N=10 is 1460 and does not. The flag cost *no* height, which
+was the thing that had to be checked rather than assumed: it is drawn inside the
+eight units above the roof that the pitched chimney already occupied, so it grew
+no cel. Had it reached one unit higher it would have cost the ceiling roughly 110
+cels for the privilege, which is what paying per-ornament looks like.
+
+The ceiling has since moved a third time, and this time because of an
+*archetype* rather than an ornament. The Chapel is 30 units tall at the largest
+footprint, which puts the tallest cel at 99 px and `cellH` at 101 — so the
+ceiling is **1296**, not 1408. That is the same arithmetic as paying per-ornament
+and it was taken on purpose: a spire that is not the tallest thing on the skyline
+is not a spire, and the Chapel is the town's only vertical accent. 204 cels
+remain, and the lesson generalises — the next thing taller than the current
+tallest cel costs about 110 cels however innocent it sounds.
+
+With **eleven** archetypes the atlas holds **956 cels** against that 1296
+ceiling — damage became a mark laid over the cap rather than a variant of it,
+and the body became keyed on **five material families** rather than two skins, so
+a Chapel is stone and a Tower is glass. Verification then became a third overlay
+on the roof, which paid for a fifth width bucket, and the Restaurant was then redrawn
+under a canopy rather than an awning. The atlas holds **1161 cels**
+against the **1296** ceiling, 135 spare, at cell height 101 — the condition
+blanks are one cel each for the whole town rather than one per archetype.
+
+The ceiling is `floor(8192 / cellH) × 16` and moves whenever a taller archetype
+does. It was 1408 at cellH 93 and is 1296 at 101, and two budgets in this
+project were costed against the older number before anyone noticed. One archetype was cut on the way: a Restaurant whose identity
+was an awning could not be drawn, because a gable's ridge is a *line* and
+anything placed on or across it either straddles the two slopes or floats above
+them. The enclosed-hole invariant caught four attempts. Every other archetype
+carries roof furniture without a hole, because their roofs have areas rather
+than lines — which is worth knowing before the next ornament is designed.
 
 The alternative — letting a roof kind multiply with the skin axis rather than
 replacing it on the cap — gives `4 × 2 × N × 8 × 2` cap cels. At N=4 that is
-**1012 cels against 756**, and against the same 1408 ceiling it runs out at eight
-where replacing still has room for fourteen. Rule 3 exists to prevent exactly that:
-it buys the same four looks for 256 cels instead of 512, which is the difference
-between a feature that can grow to fourteen roofs and one that is out of room at
-seven.
+**1012 cels against 756**, and against the same 1408 ceiling it runs out at seven
+where replacing had room for fourteen. Rule 3 exists to prevent exactly that: it
+buys the same four looks for 256 cels instead of 512.
 
 A roof taller than today's (a spire) also raises `cellH` for *every* cel in the
 sheet. At the current cell height that costs roughly **160 cels of ceiling per

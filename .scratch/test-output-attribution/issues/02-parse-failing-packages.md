@@ -6,16 +6,16 @@ building failed.
 
 **Blocked by:** 01 (the output must arrive first).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A `go test` result with one failing package yields that package path
-- [ ] A result with several failing packages yields all of them, in output order
-- [ ] A passing result yields none
-- [ ] A result whose text is not `go test` output yields none, and does not
+- [x] A `go test` result with one failing package yields that package path
+- [x] A result with several failing packages yields all of them, in output order
+- [x] A passing result yields none
+- [x] A result whose text is not `go test` output yields none, and does not
       throw
-- [ ] The paths are repo-relative after resolution, and a path that resolves to
+- [x] The paths are repo-relative after resolution, and a path that resolves to
       no building is dropped rather than filed in the Yard
-- [ ] Verified against the real command: inject a failing test, run
+- [x] Verified against the real command: inject a failing test, run
       `go test ./...`, and confirm the damaged building is the one that failed
 
 ## Why

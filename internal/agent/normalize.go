@@ -85,6 +85,7 @@ func normalizeToolHook(f Frame) []UnifiedAgentEvent {
 			Command: ExtractCommand(f.Args),
 		},
 		Result:    result,
+		Output:    f.Result,
 		Timestamp: f.Time,
 	}}
 }

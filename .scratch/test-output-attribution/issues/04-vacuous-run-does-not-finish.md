@@ -5,14 +5,14 @@ no tests. Today three vacuous runs take a building from `roofed` to `completed`.
 
 **Blocked by:** 01 (the output must arrive first).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A result containing `[no tests to run]` sets `NoTests` on the event
-- [ ] A `NoTests` test event does **not** advance the finish ranks, at any rank
-- [ ] A `NoTests` event still counts as a success for repair: a damaged building
+- [x] A result containing `[no tests to run]` sets `NoTests` on the event
+- [x] A `NoTests` test event does **not** advance the finish ranks, at any rank
+- [x] A `NoTests` event still counts as a success for repair: a damaged building
       whose vacuous run passes is repaired, because the command did succeed
-- [ ] A genuine passing run still advances exactly one rank
-- [ ] Verified end to end: three `go test -run TestThatDoesNotExist ./pkg` runs
+- [x] A genuine passing run still advances exactly one rank
+- [x] Verified end to end: three `go test -run TestThatDoesNotExist ./pkg` runs
       leave a `roofed` building at `roofed`, not `completed`
 
 ## Why

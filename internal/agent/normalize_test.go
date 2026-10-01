@@ -321,3 +321,50 @@ func TestToolHookWithoutTimeDoesNotReportEpoch(t *testing.T) {
 		t.Errorf("Timestamp = %d; the receiver is responsible for the fallback", evs[0].Timestamp)
 	}
 }
+
+// The frame's `result` is the only place a whole-repo test run can name the
+// building that broke, so it has to survive normalization rather than being
+// dropped on the way in.
+func TestToolOutputSurvivesNormalization(t *testing.T) {
+	f := Frame{
+		Kind: "tool.after", Agent: "omp", Tool: "bash", CallID: "c1",
+		IsError: true,
+		Result:  "ok  \t…/internal/agent\n--- FAIL: T\nFAIL\nFAIL\t…/internal/analyzer\t0.336s",
+	}
+	evs := normalizeToolHook(f)
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	e := evs[0]
+	if !contains(e.Output, "internal/analyzer") {
+		t.Errorf("the failing package did not survive: %q", e.Output)
+	}
+	if e.Result != "error" {
+		t.Errorf("Result = %q, want error — carrying output must not change the verdict", e.Result)
+	}
+}
+
+// An agent that sends no output is exactly as it was: the field is optional and
+// nothing may come to depend on it being there.
+func TestAFrameWithNoResultIsUnchanged(t *testing.T) {
+	evs := normalizeToolHook(Frame{Kind: "tool.after", Agent: "omp", Tool: "bash", CallID: "c1"})
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	if evs[0].Output != "" {
+		t.Errorf("Output = %q, want empty for a frame that carries none", evs[0].Output)
+	}
+}
+
+func contains(hay, needle string) bool {
+	return len(hay) >= len(needle) && (hay == needle || indexOf(hay, needle) >= 0)
+}
+
+func indexOf(hay, needle string) int {
+	for i := 0; i+len(needle) <= len(hay); i++ {
+		if hay[i:i+len(needle)] == needle {
+			return i
+		}
+	}
+	return -1
+}

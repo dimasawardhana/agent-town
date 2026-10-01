@@ -220,6 +220,33 @@ export default function (pi: any) {
     if (e?.toolCallId) pendingArgs[e.toolCallId] = e?.args;
   });
 
+  // toolOutput flattens a tool result to the text it printed, and gives up
+  // rather than throwing.
+  //
+  // The extension is observation-only and must not be able to break the agent
+  // (docs/adr/0011), so a result whose shape is not what we expect becomes "no
+  // output" instead of an exception. Truncation is the sender's job rather than
+  // the daemon's, because a frame that never leaves is cheaper than a frame that
+  // arrives enormous: measured across 1,637 real tool results, the median is
+  // 559 bytes and the largest 49 kB, so 64 kB is generous but bounded.
+  const OUTPUT_LIMIT = 64 * 1024;
+  const toolOutput = (result: any): string | undefined => {
+    try {
+      const parts = result?.content;
+      if (!Array.isArray(parts)) return undefined;
+      const text = parts
+        .filter((p: any) => p?.type === "text" && typeof p?.text === "string")
+        .map((p: any) => p.text)
+        .join("\n");
+      if (!text) return undefined;
+      return text.length > OUTPUT_LIMIT
+        ? text.slice(0, OUTPUT_LIMIT) + "\n[truncated at " + OUTPUT_LIMIT + " bytes]"
+        : text;
+    } catch {
+      return undefined;
+    }
+  };
+
   pi.on("tool_execution_end", async (e: any, ctx: any) => {
     const args = pendingArgs[e?.toolCallId] ?? e?.args;
     delete pendingArgs[e?.toolCallId];
@@ -233,6 +260,7 @@ export default function (pi: any) {
       tool: e?.toolName,
       args,
       isError: e?.isError === true,
+      result: toolOutput(e?.result),
       // The moment the extension observed the action, in Unix milliseconds.
       // The daemon falls back to receipt time if this is absent, but sending
       // it keeps the timeline honest about when work actually happened.

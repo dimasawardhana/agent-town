@@ -57,9 +57,26 @@ func (t *Town) Load(path string) error {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.buildings = make(map[string]*BuildingState, len(s.Buildings))
 	for i := range s.Buildings {
 		b := s.Buildings[i]
+		seed, known := t.buildings[b.Path]
+		if !known {
+			// The path is no longer in the tree. The stored entry describes
+			// something the map cannot paint, and keeping it would have the
+			// snapshot claim buildings that do not exist — the same reason
+			// geometry is not stored.
+			continue
+		}
+		// History wins, but the tree sets the floor. A stored rank below the
+		// seed is corrected upward rather than preserved: the finishing half
+		// is real history and survives untouched, but the structural half is
+		// recomputed on every start, so a stale one is not history at all. It
+		// is an older reading of a tree that has since been measured
+		// properly, and restoring it would undo the correction on every start
+		// and leave the town stuck showing a size it no longer has.
+		if rank(seed.Status) > rank(b.Status) {
+			b.Status = seed.Status
+		}
 		t.buildings[b.Path] = &b
 	}
 	return nil

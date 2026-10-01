@@ -26,12 +26,13 @@
 // buildings by file count at all.
 
 import { P, type Ramp } from "./palette";
-import { IsoPix } from "./iso";
+import { IsoPix, type Face } from "./iso";
 import { normaliseTurn, turnPoint } from "../view";
 import { STOREY, bandHeight, towerTop } from "./stack";
-import { type Pix } from "./surface";
+import { Pix } from "./surface";
 import {
-  buildRoof, buildRoofDamage, buildRoofStack, buildRoofTrim, hashPath, roofFor, roofHeight, type RoofKind,
+  ARCHETYPES, buildRoof, buildRoofDamage, buildRoofFlag, buildRoofStack, buildRoofTrim, hashPath,
+  archetypeFor, archetypeHeight, material, materialByName, materialFor, type Archetype, type MaterialName,
 } from "./roof";
 /**
  * How far a building has been built. These are exactly internal/town's Status
@@ -261,7 +262,7 @@ function footprintBox(side: number, zTop: number, turn = 0): BuildingBox {
  * The height is a parameter because floors are: the same building stands one storey
  * or twenty, and a cel sized for one storey would clip a tower.
  */
-export function boxFor(side: number, roof: RoofKind, floors = 1, turn = 0): BuildingBox {
+export function boxFor(side: number, roof: Archetype, floors = 1, turn = 0): BuildingBox {
   return footprintBox(side, bandHeight(floors) + capTop(side, roof), turn);
 }
 
@@ -352,13 +353,13 @@ export function bandBox(side: number, turn = 0): BuildingBox {
 /**
  * capTop is how far above the wall top the cap's cel must reach.
  *
- * It composes two things that are deliberately separate: the roof kind's own rise,
+ * It composes two things that are deliberately separate: the archetype's own rise,
  * and the 6px the box adds on every side. Keeping the `+ 6` here rather than inside
  * each kind means a kind only ever states the rise of its *artwork*, and the
  * margin stays a property of the projection — which is what it is.
  */
-function capTop(side: number, roof: RoofKind): number {
-  return roofHeight(roof, side) + 6;
+function capTop(side: number, roof: Archetype): number {
+  return archetypeHeight(roof, side) + 6;
 }
 
 /**
@@ -372,7 +373,7 @@ function capTop(side: number, roof: RoofKind): number {
  * building. Sharing one height between them would have meant the taller kind's cel
  * sizing the shorter kind's art.
  */
-export function capBox(side: number, roof: RoofKind, turn = 0): BuildingBox {
+export function capBox(side: number, roof: Archetype, turn = 0): BuildingBox {
   return footprintBox(side, capTop(side, roof), turn);
 }
 
@@ -397,7 +398,7 @@ function storeyShell(iso: IsoPix, side: number, skin: BuildingSkin, stage: Stage
   // from the ladder's "one part per rank" reading of a facade: a tower with a
   // single row of windows at the top reads as a mistake, and the band is the
   // only part that repeats, so a per-storey window has to live in it.
-  if (want >= stageRank("glazed")) windows(iso, side, STOREY, side >= 60 ? 3 : 2);
+  if (want >= stageRank("glazed")) windows(iso, side, STOREY, windowsPerStorey(side));
   if (want >= stageRank("completed")) cornerBoards(iso, side, skin);
   if (hasScaffold(stage)) scaffold(iso, side, STOREY + 8);
 }
@@ -428,15 +429,24 @@ function cornerBoards(iso: IsoPix, side: number, skin: BuildingSkin): void {
  * course of the wall's footing; drawing it per storey would put a step at the
  * base of every floor and a tower would gain a ring at each.
  */
+/**
+ * buildBase is a building's ground storey, in the material its archetype is
+ * made of.
+ *
+ * The material comes from the archetype and not from the file count, which is
+ * what changed: a directory's size says how *big* a building is, and the
+ * archetype says what *kind* of thing it is. Sizing the wall off the file
+ * count made every large building stone and every small one plaster whatever
+ * either was called.
+ */
 export function buildBase(
   side: number,
-  files: number,
-  path: string,
+  materialName: MaterialName,
   stage: Stage,
   damaged = false,
   turn = 0,
 ): Pix {
-  const skin = skinFor(files, path);
+  const skin = materialByName(materialName);
   // The base's own box, not the whole building's: `buildBase` draws one storey and
   // no roof, so a cel carrying roof headroom would be taller than its contents —
   // and this cel is the tallest on the sheet, which makes its height the sheet's
@@ -478,7 +488,13 @@ export function buildBase(
  * Its height is exactly `STOREY`, and `art/stack.ts` proves a storey is an exact
  * vertical repeat, so stamping this cel up a tower leaves no seam.
  */
-export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn = 0): Pix {
+export function buildBand(
+  side: number,
+  materialName: MaterialName,
+  stage: Stage,
+  turn = 0,
+): Pix {
+  const skin = materialByName(materialName);
   const box = bandBox(side, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   storeyShell(iso, side, skin, stage);
@@ -494,7 +510,7 @@ export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn =
  * `STOREY` here as well would raise the roof a second time and leave a storey of
  * sky between the wall and its roof.
  *
- * **The cap takes the roof kind and not the skin.** This is the cap's whole
+ * **The cap takes the archetype and not the skin.** This is the cap's whole
  * appearance: shape, material, height, furniture and damage all come from the kind,
  * and the wall material the rest of the building wears deliberately does not reach
  * here. ADR-0021 records why — the skin's cap contribution was measured mostly
@@ -507,7 +523,12 @@ export function buildBand(side: number, skin: BuildingSkin, stage: Stage, turn =
  * not already look finished, which is precisely the confusion the ladder exists to
  * remove.
  */
-export function buildCap(side: number, roof: RoofKind, stage: Stage, damaged: boolean, turn = 0): Pix {
+export function buildCap(
+  side: number,
+  roof: Archetype,
+  stage: Stage,
+  turn = 0,
+): Pix {
   const box = capBox(side, roof, turn);
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   const want = stageRank(stage);
@@ -517,7 +538,11 @@ export function buildCap(side: number, roof: RoofKind, stage: Stage, damaged: bo
     buildRoofTrim(iso, roof, side);
     buildRoofStack(iso, roof, side, 0);
   }
-  if (damaged && want >= stageRank("roofed")) roofDamage(iso, side, roof);
+  // The flag rides the roof, so it appears with the roof rather than with the
+  // finishing trades: a building whose tests pass is verified whether it is
+  // roofed or still being dressed, and a pennant that waited for `completed`
+  // would report the opposite of what it means — that the work is unfinished
+  // *and* unverified, when the tests do not care how finished it is.
 
   return iso.outline(P.ink);
 }
@@ -683,6 +708,47 @@ function plinth(iso: IsoPix, side: number, skin: BuildingSkin): void {
  * the two faces of one building do not read as a printed pattern.
  */
 function windows(iso: IsoPix, side: number, height: number, count: number): void {
+  const litWall = iso.litWall(side);
+  eachWindow(iso, side, height, count, (wall, at, z, part) => {
+    if (part === "frame") {
+      iso.wallPlot(wall, at, z, P.wood[0]);
+      return;
+    }
+    // One ramp step brighter on the wall that catches the light, because glass
+    // on that wall catches it too; the shadow wall's glass is a step darker
+    // because it faces away from it, like the wall it sits in.
+    iso.wallPlot(wall, at, z, wall === litWall ? P.glass[2] : P.glass[1]);
+  });
+}
+
+/** Which part of a window a pixel belongs to. `frame` is the one-unit edge
+ *  above and below the glass run, and it is what gives the glass an edge
+ *  without a second outline pass. */
+export type WindowPart = "glass" | "frame";
+
+/**
+ * eachWindow walks every window on both visible walls and hands each pixel to
+ * `paint`, with its **absolute** z already resolved.
+ *
+ * **This is the only place a window's position is decided.** `windows` draws
+ * them in glass and the dusk overlay lights a subset of them in lamp. If those
+ * two disagreed by a single unit the light would paint over the wall *beside*
+ * the glass — a warm smear rather than a lit window, which reads as a mistake
+ * at 1x and takes an hour to find. So the placement lives here once, and both
+ * callers walk it. `index` is the window's own number, 1-based, which is what
+ * lets the dusk overlay light a subset without re-deriving where they are.
+ *
+ * The count is per storey and is 2 or 3, so "a subset" is a subset of two or
+ * three: that is the whole variation budget, and it is why three patterns per
+ * storey already read as a different building each.
+ */
+function eachWindow(
+  iso: IsoPix,
+  side: number,
+  height: number,
+  count: number,
+  paint: (wall: Face, at: number, z: number, part: WindowPart, index: number) => void,
+): void {
   const h = Math.max(3, Math.round(height / 5));
   const span = Math.max(2, Math.round(side / 16));
   const y = Math.round(height * 0.45);
@@ -698,21 +764,15 @@ function windows(iso: IsoPix, side: number, height: number, count: number): void
 
   for (let i = 1; i <= count; i++) {
     const at = Math.round(gap * i);
-    // The lit wall, stepped along its own run. One ramp step brighter, because
-    // glass on the wall that catches the light catches it too.
     for (let dx = -span; dx <= span; dx++) {
-      for (let z = 0; z < h; z++) iso.wallPlot(lit, at + dx, y + z, P.glass[2]);
-      // Frame: one darker step above and below, which is what gives the glass
-      // an edge without a second outline pass.
-      iso.wallPlot(lit, at + dx, y - 1, P.wood[0]);
-      iso.wallPlot(lit, at + dx, y + h, P.wood[0]);
+      for (let z = 0; z < h; z++) paint(lit, at + dx, y + z, "glass", i);
+      paint(lit, at + dx, y - 1, "frame", i);
+      paint(lit, at + dx, y + h, "frame", i);
     }
-    // The shadow wall, one ramp step darker because it faces away from the
-    // light, like the wall it sits in.
     for (let dy = -span; dy <= span; dy++) {
-      for (let z = 0; z < h; z++) iso.wallPlot(shadow, at + dy, y + z, P.glass[1]);
-      iso.wallPlot(shadow, at + dy, y - 1, P.wood[0]);
-      iso.wallPlot(shadow, at + dy, y + h, P.wood[0]);
+      for (let z = 0; z < h; z++) paint(shadow, at + dy, y + z, "glass", i);
+      paint(shadow, at + dy, y - 1, "frame", i);
+      paint(shadow, at + dy, y + h, "frame", i);
     }
   }
 }
@@ -794,8 +854,152 @@ function crack(iso: IsoPix, side: number): void {
  * a pitched roof is holed through a slope, and a flat roof's bay collapses. One
  * shared hole would have put a puncture in a lid, which reads as neither.
  */
-function roofDamage(iso: IsoPix, side: number, roof: RoofKind): void {
-  buildRoofDamage(iso, roof, side, 0);
+/**
+ * buildRoofDamageCel is a roof's damage mark on its own, in a cel of the cap's
+ * size and origin.
+ *
+ * Cut from the same box the cap is, which is what lets the scene lay it at the
+ * cap's position with no arithmetic of its own. `buildBuilding` — the composite
+ * the turn-dependence suite exercises — no longer draws damage at all: a
+ * composite is not a thing the town draws, and a mark floating on one was always
+ * standing in for the real cel.
+ */
+export function buildRoofDamageCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  if (stageRank("roofed") >= stageRank("roofed")) buildRoofDamage(iso, roof, side, 0);
+  return iso.outline(P.ink);
+}
+
+/**
+ * The blank every undamaged building carries in place of a damage mark.
+ *
+ * Cut at the *same* box as the mark it stands in for, origin included. The
+ * origin is the whole point: `setFrame` does not move a sprite, so a blank
+ * with a different origin would leave every mark forty pixels right and thirty
+ * down of its roof the moment a building was damaged.
+ */
+/**
+ * buildRoofFlagCel is a roof's verification pennant on its own.
+ *
+ * Cut from the cap's own box, for the reason every overlay in this project is:
+ * `setFrame` moves textures without moving sprites, so a mark and the blank
+ * that replaces it must agree about where they sit. The flag rises out of the
+ * roof, so it is drawn from `roofed` — verification is a fact about the tests,
+ * not a statement that the building is finished.
+ */
+export function buildRoofFlagCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  buildRoofFlag(iso, roof, side, 0);
+  return iso.outline(P.ink);
+}
+
+/** The blank an unverified roof carries in place of its pennant. */
+export function emptyVerifiedCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  return new Pix(box.w, box.h);
+}
+
+export function emptyDamageCel(side: number, roof: Archetype, turn = 0): Pix {
+  const box = capBox(side, roof, turn);
+  return new Pix(box.w, box.h);
+}
+
+/** How many lit-window patterns a storey can be in.
+ *
+ *  Three, and the number is the variation budget rather than a choice: a
+ *  storey carries two windows on a small building and three on a large one, so
+ *  three patterns already give every storey a distinguishable arrangement, and
+ *  a fourth would be a pattern no storey could distinguish from one of the
+ *  first three. Patterns are per *storey*, so a tower walks them as it rises
+ *  and no two storeys of one building are lit the same way twice running. */
+export const LIGHT_PATTERNS = 3;
+
+/** Which of a storey's windows each pattern lights, indexed by window count and
+ *  then by pattern. Window numbers are 1-based, matching `eachWindow`'s loop.
+ *
+ *  **Every pattern lights at least one window at every count the town draws.**
+ *  That is the whole reason this is a table and not a modulo: a single-storey
+ *  building is the common case — most directories hold one file — and it has
+ *  exactly one pattern to show, so a pattern that lit nothing would read as a
+ *  building with no glass rather than a building with no light in. */
+const LIT_WINDOWS: Record<number, readonly (readonly number[])[]> = {
+  2: [[1], [2], [1, 2]],
+  3: [[1], [2], [3]],
+};
+
+/** windowsPerStorey is how many windows a footprint carries, per storey. */
+function windowsPerStorey(side: number): number {
+  return side >= 60 ? 3 : 2;
+}
+
+/**
+ * buildWindowLightCel is one storey's lit windows, as an overlay.
+ *
+ * Cut from the *band's* box, which `baseBox` and `bandBox` turn out to be the
+ * same box — measured identical at every footprint and every turn, so one family
+ * of cels serves the ground storey and every storey above it. That is what keeps
+ * this affordable: 3 patterns x 5 footprints x 4 turns is 60 cels, where a second
+ * axis on the base and band themselves would be 400 and would not fit under the
+ * atlas ceiling at all.
+ *
+ * **It is an overlay rather than a variant for the reason the damage marks and
+ * the pennant are.** `setFrame` moves textures without moving sprites, so a mark
+ * and the blank that replaces it must be cut from the same box and agree about
+ * their origin — which is also the exact bug that floated the pennant for a week
+ * (issue 37). One family of origins, one place to be right.
+ *
+ * Only the *glass* is painted. The frame is left alone, so a lit window keeps
+ * its edge instead of becoming a warm rectangle with a hole in the middle of it.
+ */
+export function buildWindowLightCel(
+  side: number,
+  pattern: number,
+  turn = 0,
+  lamp: "lamp" = "lamp",
+): Pix {
+  const box = bandBox(side, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  const count = windowsPerStorey(side);
+  const lit = (LIT_WINDOWS[count] ?? LIT_WINDOWS[2])[pattern % LIGHT_PATTERNS];
+  eachWindow(iso, side, STOREY, count, (wall, at, z, part, index) => {
+    if (part !== "glass") return;
+    if (!lit.includes(index)) return;
+    iso.wallPlot(wall, at, z, P[lamp]);
+  });
+  return iso.outline(P.ink);
+}
+
+/**
+ * lightPattern is which of a storey's lit-window patterns a building uses.
+ *
+ * **Wrapping is load-bearing, and it is here rather than at the call site so it
+ * can be tested.** `hashPath` ends in `| 0` and is therefore signed, so about
+ * half of all paths are negative — `ui/src` is -846872599, `ui/test` is
+ * -483228883 — and `(negative) % 3` in JavaScript is -1 or -2. Unwrapped, that
+ * composed a frame name of `lit:100:-1`, which was never baked; the missing
+ * frame was then skipped by the container, which moved every child after it down
+ * a slot, and the town drew machine sprites inside buildings and bands
+ * displaced 56 pixels sideways.
+ *
+ * The first version of the test for this computed the wrap itself rather than
+ * calling this, so it passed on the broken code — the same mistake as
+ * `test:flagcorner`'s first version, and the reason the function is exported.
+ */
+export function lightPattern(path: string, storey: number): number {
+  const raw = (hashPath(path) + storey) % LIGHT_PATTERNS;
+  return ((raw % LIGHT_PATTERNS) + LIGHT_PATTERNS) % LIGHT_PATTERNS;
+}
+
+/** The blank a storey carries when its windows are not lit.
+ *
+ *  Cut from the same box as the light it stands in for, origin included, for
+ *  the reason every overlay in this project is: a blank with a different origin
+ *  would leave every window a storey out of place the moment the light came on. */
+export function emptyWindowLightCel(side: number, turn = 0): Pix {
+  const box = bandBox(side, turn);
+  return new Pix(box.w, box.h);
 }
 
 /** hasDamage is whether the stage has anything standing to be damaged. */
@@ -828,7 +1032,7 @@ export function buildBuilding(
 ): Pix {
   // The roof comes from the path, like every other path-chosen appearance, so the
   // composite shows the same roof the scene will draw for that building.
-  const roof = roofFor(path);
+  const roof = archetypeFor(undefined, path);
   const box = boxFor(side, roof, 1);
   // The composite is a test-only convenience, so its own IsoPix is never plotted
   // into — the blits below carry the turn themselves. It is still constructed with
@@ -847,12 +1051,12 @@ export function buildBuilding(
 
   // The base is the ground storey: its world origin is z = 0, which is the
   // composite's own origin row, `box.oy`.
-  iso.pix.blit(buildBase(side, files, path, stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
+  iso.pix.blit(buildBase(side, materialFor(archetypeFor(undefined, path)), stage, damaged, turn), box.ox - footBox.ox, box.oy - footBox.oy);
   // The cap sits on top of one storey, so its base is at z = STOREY. Its cel's
   // origin is already the top of the wall rather than the ground (`capBox` uses the
   // roof's rise, not `STOREY` plus it), which is exactly why the offset for it comes
   // out as `box.oy - STOREY - topBox.oy` rather than a whole storey more.
-  iso.pix.blit(buildCap(side, roof, stage, damaged, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
+  iso.pix.blit(buildCap(side, roof, stage, turn), box.ox - topBox.ox, box.oy - towerTop(1) - topBox.oy);
 
   return iso.pix;
 }
@@ -869,4 +1073,22 @@ export function buildShadow(side: number, files: number, path: string, turn = 0)
   const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
   iso.footprint(2, 3, side + 3, side + 3, 0, P.grass[0]);
   return iso.pix;
+}
+
+/**
+ * buildBaseDamageCel is a ground storey's rubble on its own, in a cel of the
+ * base's size and origin.
+ *
+ * Cut from the same box as the base it lands on, for the reason the roof damage
+ * is: `setFrame` moves textures without moving sprites, so a mark and the blank
+ * that replaces it have to agree on where they sit.
+ */
+export function buildBaseDamageCel(side: number, materialName: MaterialName, turn = 0): Pix {
+  const box = baseBox(side, turn);
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, turn);
+  // Rubble is a condition, so it is drawn whatever the stage. A plot that is
+  // staked out has nothing to pile against, so the mark waits for the base to
+  // exist — the same reason the roof's hole waits for `roofed`.
+  iso.footprint(Math.round(side * 0.18), Math.round(side * 0.62), Math.max(5, Math.round(side / 6)), Math.max(4, Math.round(side / 8)), 1, P.earth[0]);
+  return iso.outline(P.ink);
 }

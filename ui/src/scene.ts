@@ -10,7 +10,7 @@
 // what lets the transport stay one-way.
 
 import Phaser from "phaser";
-import { P } from "./art/palette";
+import { P, crewColour } from "./art/palette";
 import {
   ATLAS,
   type Atlas,
@@ -20,28 +20,65 @@ import {
   baseFrame,
   bandFrame,
   capFrame,
+  baseDamageFrame,
+  noBaseDamageFrame,
+  NO_VERIFIED_FRAME,
+  verifiedFrame,
+  damageFrame,
+  NO_DAMAGE_FRAME,
   groundFrame,
   groundEdgeFrame,
   propFrame,
+  windowLightFrame,
+  noWindowLightFrame,
 } from "./art/bake";
-import { TURN_COUNT, type Turn, normaliseTurn, turnLayout } from "./view";
-import { type Stage, skinVariant } from "./art/building";
-import { roofFor, type RoofKind } from "./art/roof";
+import { TURN_COUNT, type Turn, normaliseTurn, roadsAsLines, turnLayout } from "./view";
+import { Chimneys, SMOKES } from "./smoke";
+import { Embers } from "./embers";
+import { Birds } from "./birds";
+import { Clouds } from "./clouds";
+import { SKY_DEPTH, skyTexture } from "./sky";
+import { type Stage, lightPattern, stageRank, skinVariant } from "./art/building";
+import { ARCHETYPES, archetypeFor, archetypeHeight, hashPath, materialFor, type Archetype } from "./art/roof";
 import { STOREY, clampFloors, towerTop } from "./art/stack";
-import { boxContains, labelVisible, landBox, visibleAt } from "./visibility";
+import { LAND_APRON, LAND_BACK, boxContains, labelVisible, landBox, visibleAt } from "./visibility";
+import { PLAN_PAD, planBox, planCrewMark, planCrewSignature, planFloors, type PlanBox, type ViewMode } from "./plan";
+import { DAYLIGHT, normaliseDay, type DayPhase } from "./daylight";
+
+/**
+ * One child of a building's container: the atlas frame, and the height it sits
+ * at. Height is carried rather than inferred, because an overlay belongs *on*
+ * the storey it belongs to rather than wherever its position in the stack puts
+ * it.
+ */
+interface StackPart {
+  key: string;
+  z: number;
+}
+
+/** The frame a part falls back to when its own is missing from the atlas.
+ *
+ *  1x1 and transparent, and it exists already: `NO_DAMAGE_FRAME` is a shared
+ *  blank the bake registers for exactly this reason. A real stand-in rather than
+ *  a skipped child, because a skipped child renumbers the stack. */
+const NO_STAND_IN_FRAME = NO_DAMAGE_FRAME;
+
 import { type Ground, tileVariant } from "./art/terrain";
 import { PLACE_PROPS } from "./art/props";
 import { PLACARD, type PlacardRole, placard } from "./art/placard";
 import { KERB, kerbRuns } from "./art/kerb";
 import { PLACE_INFO, type PlaceInfo, isPlaceKind, placeInfoFor } from "./place";
 import { actionInfo, targetOf } from "./actions";
-import { SITE_ID_BUILDING_PREFIX, type Layout, type Site, useTown } from "./store";
+import { SITE_ID_BUILDING_PREFIX, type Layout, type Road, type Site, useTown } from "./store";
 import { WorkerLayer } from "./workers";
 
 /** The world-space edge of one ground tile, in world units. Mirrors the terrain
  *  module's own constant; the tile *pixels* and origin come from the atlas
  *  rather than from here, so only the tiling pitch is restated. */
 const TILE = 16;
+
+
+
 
 /** The id prefix a district's plate label is registered under. A district is not
  *  a site, so it needs its own namespace; the prefix is what keeps it from ever
@@ -76,9 +113,53 @@ interface GroundRegion {
  * ordered among itself by screen position, so its depth is the y of the point
  * it stands on; labels are above all of it.
  */
+/**
+ * PLAN_STEP maps a construction rank to a step on an authored ramp.
+ *
+ * **A ramp, not eight invented colours.** The first plan palette was eight
+ * hand-picked hexes that were in no ramp and in no `P`, which is precisely what
+ * DESIGN.md's palette allowlist exists to prevent — "a hex typed into a sprite
+ * by hand is automatically not [allowed]". A plan is a second drawing of this
+ * town and it has no palette of its own: the plot's brightness is the **rank**,
+ * stepped along `P.plaster`, the same warm neutral the lower-tier walls take.
+ *
+ * Four steps, and the ladder has eight ranks, so two ranks share a step. That is
+ * the intended trade: the plan says *how far along* a building is, not which
+ * part it has, and a reader who needs the exact part clicks it.
+ */
+const PLAN_STEP: Record<string, number> = {
+  planned: 0,
+  foundation: 0,
+  framed: 1,
+  walled: 1,
+  roofed: 2,
+  glazed: 2,
+  doored: 3,
+  completed: 3,
+};
+
 const DEPTH = {
   ground: -100000,
+  /** Above every building, so a puff is never half-hidden behind a roof, and
+   *  below the labels, so a puff is never half-hidden behind a name. */
+  smoke: 80000,
   label: 90000,
+  /** Below the labels: a name must never be half-hidden by a glow. */
+  ember: 85000,
+  /** In front of the sky and behind the ground.
+   *
+   *  A bird is *in* the sky, so it is behind the island: at any other depth a
+   *  bird could be half-hidden by a roof, and a mark on a building is a claim
+   *  about the building. The one place it is ahead of the ground is a bird that
+   *  has drifted below the horizon, which is a bird the sky has already lost. */
+  bird: SKY_DEPTH + 1,
+  /** Cloud, behind the birds.
+   *
+   *  A bird is nearer than a cloud, and that ordering is the depth read: the
+   *  whole sky is a flat plane otherwise, and a bird crossing in front of a
+   *  cloud is the one thing that tells a reader the sky has a near side and a
+   *  far one. Both are behind the island for the same reason. */
+  cloud: SKY_DEPTH + 1,
 } as const;
 
 export class TownScene extends Phaser.Scene {
@@ -93,6 +174,32 @@ export class TownScene extends Phaser.Scene {
   private atlas: Atlas = {};
   /** The orientation `atlas` holds, so `ensureAtlas` knows when to swap. */
   private atlasTurn: number = 0;
+
+  /** How many parts have asked for a frame the atlas does not hold.
+   *
+   *  Counted rather than swallowed, because the alternative is a town that
+   *  renders wrong and a suite that is green: the first version skipped the
+   *  child and the misalignment was invisible to every test. Read by the
+   *  standing assertion, which fails a build that ever needs one. */
+  private missingFrames = 0;
+
+  /** The key light the town is drawn under, as a phase. Held here as well as in
+   *  the store so the sky and the windows cannot read different ones. */
+  private day: DayPhase = "dusk";
+
+  /** Iso or plan. Held here as well as in the store so the projection and the
+   *  store can never disagree about which one is being drawn. */
+  private view: ViewMode = "iso";
+
+  /** Each building's plot box in the plan view, kept so the worker's marks can be
+   *  redrawn on a tick without re-deriving the projection every frame. */
+  private planBoxes = new Map<string, PlanBox>();
+  /** The plan's worker layer. Separate from the plan's own Graphics because it
+   *  changes on every event and the plan only on a layout change. */
+  private planCrew: Phaser.GameObjects.Graphics | null = null;
+  /** Who is standing where, as one string. The crew layer is rebuilt when this
+   *  changes and not on every frame. */
+  private planCrewSignature = "";
   /**
    * Every orientation baked so far, by turn.
    *
@@ -114,6 +221,74 @@ export class TownScene extends Phaser.Scene {
    */
   private sourceLayout: Layout | null = null;
   private workers: WorkerLayer | null = null;
+  /**
+   * The emitters off the roofs that have chimneys, rebuilt with the map.
+   *
+   * Held rather than left to Phaser's scene lifetime because a redraw happens
+   * on every event, and an emitter that outlives its draw is how a session
+   * ends up with four hundred chimneys.
+   */
+  private chimneys: Chimneys | null = null;
+  /**
+   * The recent-activity layer, ticked rather than event-driven.
+   *
+   * Separate from the building's container on purpose: restaging swaps frames
+   * by index, so anything that changes a stack's child count is a bug waiting
+   * for the next event. An ember has to *cool*, which means no event to hang it
+   * off, which means it could not be an event-driven child either.
+   */
+  private embers: Embers | null = null;
+
+  /** The dusk flock. Rebuilt with the map, and sized by the phase alone. */
+  private birds: Birds | null = null;
+
+  /** The drifting cloud. Same terms as the flock: sized by the phase alone. */
+  private clouds: Clouds | null = null;
+  /** Cars on the import roads. Generated, so no atlas cost, and re-synced with
+   *  the draw so a turn re-routes them against the turned roads. */
+  /** The backdrop, pinned to the camera. Resized with the view and no further. */
+  private sky: Phaser.GameObjects.Image | null = null;
+
+  /**
+   * ensureSky creates the backdrop, replacing any existing one.
+   *
+   * It exists rather than a one-line `add.image` at the call site because the
+   * sky has to exist in two places: once on `create`, and once after every
+   * redraw, which calls `removeAll` and takes the sky with it. One method, so
+   * there is one answer to "where does the backdrop come back".
+   */
+  private ensureSky(): void {
+    this.sky?.destroy();
+    this.sky = this.add
+      .image(0, 0, skyTexture(this, this.scale.width, this.scale.height, this.day))
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(SKY_DEPTH);
+  }
+
+  /**
+   * resizeSky repaints the backdrop for a new view size.
+   *
+   * Regenerated rather than stretched, because a stretched gradient is a
+   * gradient that has been resampled, and a resampled gradient bands. This is
+   * also the only place the old texture key is dropped — `ensureSky` destroys
+   * the *sprite*, not the texture it was showing, so without this line the
+   * cache would accumulate one canvas per resize.
+   */
+  private resizeSky(): void {
+    // The flock is placed against the frame, so a resize has to re-place it —
+    // the same reason the sky itself is repainted here rather than stretched.
+    const day = useTown.getState().day;
+    this.clouds?.reconcile(day, this.time.now / 1000, this.scale.width, this.scale.height);
+    this.birds?.reconcile(day, this.time.now / 1000, this.scale.width, this.scale.height);
+    if (!this.sky) return;
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const old = this.sky.texture.key;
+    this.sky.setTexture(skyTexture(this, w, h, this.day));
+    this.sky.setDisplaySize(w, h).setPosition(0, 0);
+    if (old !== this.sky.texture.key) this.textures.remove(old);
+  }
   // Each building's sprite stack, by site id. A tower is a Container holding one
   // base, N identical bands and a cap, so a status change swaps frames inside
   // the container rather than rebuilding the map — rebuilding would flicker the
@@ -176,6 +351,12 @@ export class TownScene extends Phaser.Scene {
     // The void: a cold near-black, so the lit town sits on something that reads
     // as unlit rather than as part of the picture.
     this.cameras.main.setBackgroundColor(P.void);
+    this.scale.on("resize", () => this.resizeSky());
+    // The sky is a texture rather than a camera colour because the void was the
+    // wrong shape of nothing: a flat fill reads as unfinished, and a horizon
+    // reads as somewhere. Behind the island and never under it — the land keeps
+    // its edge, because a region reads as a region partly by being bounded.
+    this.ensureSky();
     this.turn = normaliseTurn(useTown.getState().turn);
     this.ensureAtlas();
     this.controls();
@@ -205,6 +386,28 @@ export class TownScene extends Phaser.Scene {
       if (s.turn !== prev.turn && this.sourceLayout) {
         this.turn = normaliseTurn(s.turn);
         this.draw(this.sourceLayout);
+        return;
+      }
+      // A phase change is the one redraw that is not about the layout at all.
+      // The sky is repainted and the storeys are restaged, which is cheaper than
+      // a full draw and — more to the point — a full draw would re-derive the
+      // camera framing for a change that cannot move anything.
+      if (s.view !== prev.view && this.sourceLayout) {
+        this.view = s.view === "plan" ? "plan" : "iso";
+        // The fit is forced, because a view toggle presents the *same town* and
+        // would otherwise produce the same signature as before it — so the guard
+        // that stops a reconnect from throwing away a developer's pan would also
+        // stop the camera from returning to the isometric framing, and the town
+        // came back at the plan's 0.8x. The guard is about towns, not about
+        // views.
+        this.fittedSignature = "";
+        this.draw(this.sourceLayout);
+        return;
+      }
+      if (s.day !== prev.day && this.sourceLayout) {
+        this.day = normaliseDay(s.day);
+        this.resizeSky();
+        this.restage();
         return;
       }
       if (s.live !== prev.live && this.layout) this.syncLive();
@@ -238,11 +441,19 @@ export class TownScene extends Phaser.Scene {
     // and forget it in the coordinates.
     this.sourceLayout = source;
     this.ensureAtlas();
-    const layout = turnLayout(this.turn, source);
+    // The plan view draws the layout, not the art, so it is not turned: a plan
+    // read from a different quadrant is a different plan, and the turn exists to
+    // orbit an isometric town.
+    const layout = this.view === "plan" ? source : turnLayout(this.turn, source);
     this.layout = layout;
     this.children.removeAll(true);
     this.buildingSprites.clear();
     this.workers?.destroy();
+
+    if (this.view === "plan") {
+      this.drawPlan(layout);
+      return;
+    }
 
     // Ground is baked into a single texture first, then everything that stands
     // on it is placed as its own sprite. The order matters and is the whole
@@ -266,7 +477,9 @@ export class TownScene extends Phaser.Scene {
     // move anything: every site still drawn keeps the coordinates it was given.
     const shown = layout.sites.filter((s) => visibleAt(s, this.depth));
     const ordered = [...shown].sort((a, b) => a.x + a.y - (b.x + b.y));
-    for (const s of ordered) this.drawSite(s);
+    for (const s of ordered) {
+      this.drawSite(s);
+    }
 
     // The labels were created hidden, so the rule is applied once here rather
     // than trusted to have been applied at each call site. Without this a
@@ -275,8 +488,32 @@ export class TownScene extends Phaser.Scene {
     // detail control would watch the name they pinned open disappear.
     this.refreshLabels();
 
+    // Smoke, over the buildings and under the labels. Recreated with the rest of
+    // the draw, so a redraw cannot leave two emitters on the same chimney.
+    this.chimneys?.destroy();
+    this.chimneys = new Chimneys(this, this.chimneyRooftops(layout), DEPTH.smoke);
+    this.embers?.destroy();
+    this.embers = new Embers(this, DEPTH.ember);
+    this.birds?.destroy();
+    this.birds = new Birds(this, DEPTH.bird);
+    this.clouds?.destroy();
+    this.clouds = new Clouds(this, DEPTH.cloud);
+
+
+    // The sky is here for the same reason the chimneys are: the redraw calls
+    // `removeAll`, so anything not re-added here is simply gone. Created in
+    // `create` and not restored, it was alive, textured, and invisible — the
+    // display list did not contain it and the scene held a reference to a
+    // destroyed object. A backdrop is the one thing in the town that has to
+    // survive every redraw, so it is restored with everything else.
+    this.ensureSky();
+
     this.workers?.destroy();
     this.workers = new WorkerLayer(this, ATLAS, this.atlas, () => this.moved >= 5);
+    // After the layer is built, because the draw rebuilds it: set beforehand and
+    // it is wiped before a single figure has moved, which is exactly the symptom
+    // of a figure crossing grass with a road network already on screen.
+    this.workers.setRoads(roadsAsLines(layout.roads ?? [], (x, y) => this.project(x, y)));
     this.syncLive();
 
     const b = this.worldBounds(layout);
@@ -289,7 +526,15 @@ export class TownScene extends Phaser.Scene {
     // therefore threw away whatever the developer had panned and zoomed to
     // every time the stream blipped. The signature is what actually
     // distinguishes one town from another, so it is what the fit is keyed to.
-    const signature = `${layout.width}x${layout.height}:${layout.sites.length}:${layout.districts.length}`;
+    // **The view is part of the signature.** It was not, and the plan's whole
+    // framing is a fractional zoom — so toggling back to the isometric town left
+    // the camera at 0.72, which is the one thing this projection forbids: "a
+    // fractional zoom makes some art pixels two screen pixels wide and their
+    // neighbours one, and zooming below 1 destroys the art rather than showing
+    // more of it." A view change re-fits because the two views cannot share a
+    // camera, and the guard that stops a reconnect from throwing away the
+    // developer's pan is about *towns*, not about *views*.
+    const signature = `${this.view}:${layout.width}x${layout.height}:${layout.sites.length}:${layout.districts.length}`;
     if (signature !== this.fittedSignature) {
       this.fittedSignature = signature;
       this.fit(layout);
@@ -334,6 +579,12 @@ export class TownScene extends Phaser.Scene {
    * discrepancy would put every worker off its building rather than fail.
    */
   private project(wx: number, wy: number, z = 0): { x: number; y: number } {
+    if (this.view === "plan") {
+      // Straight down. No skew and **no z**, because from directly above a
+      // building's height is not visible — that is the trade the plan view makes,
+      // and `planFloors` is where the height goes instead of being lost.
+      return { x: wx, y: wy };
+    }
     return { x: (wx - wy) / 2, y: (wx + wy) / 4 - z };
   }
 
@@ -369,13 +620,20 @@ export class TownScene extends Phaser.Scene {
    * instead would paint land nobody can reach.
    */
   private drawGround(l: Layout): void {
-    const pad = TILE * 3;
+    // `LAND_APRON`, not the old three-tile pad — see the constant for why the
+    // land is not sized to the town. The inner band is still the town's own
+    // cleared grass; everything past it is the colder field.
+    const pad = LAND_APRON;
     this.groundPlan.length = 0;
     this.groundPlan.push({
-      x: -pad,
-      y: -pad,
-      w: l.width + pad * 2,
-      h: l.height + pad * 2,
+      // Asymmetric on purpose — see `LAND_BACK`. Painted and measured from the
+      // same two constants, which is the whole reason they are two constants
+      // rather than one: a land measured larger than the land painted is a
+      // camera that finds an edge the reader can already see.
+      x: -LAND_BACK,
+      y: -LAND_BACK,
+      w: l.width + pad + LAND_BACK,
+      h: l.height + pad + LAND_BACK,
       kind: "grassOutside",
       // The inner band is the town's own cleared grass; the outer field is a
       // colder grass, so the site reads as land inside a field.
@@ -487,6 +745,11 @@ export class TownScene extends Phaser.Scene {
     // pixels per section as Game Objects would be a frame budget spent on
     // something static. It also guarantees the kerb and its ground cannot
     // z-fight, because they are the same pixels.
+    // Roads, over the tiles and under the kerbs: a road is a made surface laid
+    // on the ground, and a kerb is the boundary of whatever it bounds — a road's
+    // own kerb has to sit on top of it, not under it.
+    this.paintRoads(ctx, toCanvas, l);
+
     this.paintKerb(ctx, toCanvas, l);
 
     const textureKey = "ground";
@@ -514,6 +777,77 @@ export class TownScene extends Phaser.Scene {
    * inside a district — which is the truth — rather than as two shapes that
    * had a bite taken out of one.
    */
+  /**
+   * paintRoads draws the layout's road bands onto the ground texture.
+   *
+   * This is the pass whose absence killed the road kind once. The art existed and
+   * was baked, and nothing ever asked for it, so it was dead weight in the
+   * atlas — which is the whole reason `terrain.ts` no longer had a `road`. The
+   * bands come from the layout rather than being derived here, because a road
+   * the browser works out for itself is a road the browser can get wrong
+   * (ADR-0012).
+   *
+   * A rectangular road is walked in whole tiles and clipped to its own extent,
+   * so it ends where the layout says it ends rather than where a tile happens to
+   * fall. Half a tile of overhang is what makes a road look like it was painted
+   * on rather than paved.
+   *
+   * **A band is not clipped.** `bandTiles` returns every tile the band's line
+   * touches, so a band ends wherever a tile happens to fall and can be one tile
+   * wider than itself. That is deliberate: a band is 8 world units and a tile is
+   * 16, so clipping to the exact extent would leave a road with holes in it, and
+   * a dotted road is worse than a slightly fat one — a reader sees dashes and
+   * concludes there is no connection. The cost is that a band owns whole tiles,
+   * which is already true of every other road in the town.
+   */
+  private paintRoads(
+    ctx: CanvasRenderingContext2D,
+    toCanvas: (wx: number, wy: number) => [number, number],
+    l: Layout,
+  ): void {
+    for (const r of l.roads ?? []) {
+      // Every road here is an *area*, and every one is painted the same way: a
+      // grid of ground tiles with a kerb on its own edge.
+      //
+      // The band path — a strip filled as its own projected quad, with a per-kind
+      // treatment — is gone. It existed for kinds that joined two places, and the
+      // last of those was containment: a band from a nested building to the one
+      // holding it. It had the silhouette of the import road that was removed
+      // before it, and a reader who had learned to distrust that shape was still
+      // seeing it every time they looked at the map.
+      //
+      // What it cost is in issue 40. The short version: "this sits inside that"
+      // is true, is the most predictable thing on the map, and was already in the
+      // geometry — a child building is placed inside its parent's plate.
+      // The tile grid is walked from the band's own origin, aligned so the road
+      // starts and ends on a tile boundary. Aligned to the *world* grid rather
+      // than the band's, or two bands would meet with a seam between them.
+      const x0 = Math.floor(r.x / TILE) * TILE;
+      const y0 = Math.floor(r.y / TILE) * TILE;
+      const x1 = Math.ceil((r.x + r.w) / TILE) * TILE;
+      const y1 = Math.ceil((r.y + r.h) / TILE) * TILE;
+      for (let wy = y0; wy < y1; wy += TILE) {
+        for (let wx = x0; wx < x1; wx += TILE) {
+          // The band's own edge takes a kerb piece, so a road has a boundary
+          // instead of a bare flip against the grass beside it.
+          const onEdge =
+            wx <= r.x ? "west"
+            : wy <= r.y ? "north"
+            : wx + TILE >= r.x + r.w ? "east"
+            : wy + TILE >= r.y + r.h ? "south"
+            : null;
+          const v = tileVariant(wx, wy);
+          const edgeKey = onEdge ? groundEdgeFrame("road", onEdge, v) : null;
+          const key = edgeKey && this.atlas[edgeKey] ? edgeKey : groundFrame("road", v);
+          const f = this.atlas[key];
+          if (!f) continue;
+          const [cx, cy] = toCanvas(wx, wy);
+          ctx.drawImage(this.tileCanvas(key), Math.round(cx - f.ox), Math.round(cy - f.oy));
+        }
+      }
+    }
+  }
+
   private paintKerb(
     ctx: CanvasRenderingContext2D,
     toCanvas: (wx: number, wy: number) => [number, number],
@@ -605,6 +939,25 @@ export class TownScene extends Phaser.Scene {
   }
 
 
+  /**
+   * chimneyRooftops is where the smoke comes off, in picture pixels.
+   *
+   * A building's own plot rather than the position its chimney art happens to
+   * use: the art places a chimney to suit the roof, and reaching into that to
+   * find it would tie the effect to a drawing decision that is free to change.
+   * At this zoom smoke off the middle of a roof is smoke off that building.
+   */
+  private chimneyRooftops(l: Layout): { x: number; y: number }[] {
+    return l.sites
+      .filter((s) => s.kind === "building" && SMOKES.has(this.archetypeOf(s)))
+      .map((s) => {
+        // The roof's top, in world units, lifted by the cap's own rise so the
+        // puff starts above the roof rather than inside it.
+        const rise = archetypeHeight(this.archetypeOf(s), s.w);
+        return this.project(s.x + s.w / 2, s.y - rise);
+      });
+  }
+
   private drawSite(s: Site): void {
     // The grounded corner nearest the camera, which is what depth and hit zones
     // are measured from: a building's own far corner is behind its own roof.
@@ -670,9 +1023,9 @@ export class TownScene extends Phaser.Scene {
       const labelAt = this.project(s.x, s.y);
       this.register(s.id, this.label(s.label, labelAt.x + s.w / 2, labelAt.y + 22, "name"));
 
-      const keys = this.containerKeys(s);
-      const base = this.atlas[keys[0]];
-      const cap = this.atlas[keys[keys.length - 1]];
+      const parts = this.containerKeys(s);
+      const base = this.atlas[parts[0].key];
+      const cap = this.atlas[parts[parts.length - 1].key];
       const p = this.project(s.x, s.y);
       const top = p.y - towerTop(clampFloors(s.floors)) - cap.oy;
       this.hitZone(p.x - base.ox, top, base.w, p.y + base.h - base.oy - top, s, near.y + 2);
@@ -851,8 +1204,15 @@ export class TownScene extends Phaser.Scene {
    */
   private refreshLabels(): void {
     const { focused, hovered } = useTown.getState();
+    // **Every name, in the plan view.** `labelVisible` shows a name only when
+    // its site is hovered or focused, which is right for the isometric town — a
+    // skyline covered in type is the one thing the map should not be — and
+    // exactly wrong for a plan, whose entire job is saying what is where. A plan
+    // that hides every name until you point at something is a plan with the one
+    // thing it is for taken away.
+    const always = this.view === "plan";
     for (const [id, images] of this.labels) {
-      const show = labelVisible(id, hovered, focused);
+      const show = always || labelVisible(id, hovered, focused);
       for (const img of images) img.setVisible(show);
     }
     // The figures' captions are the other half of the same rule, and they are
@@ -914,9 +1274,11 @@ export class TownScene extends Phaser.Scene {
    * statusOf reads a building's reported status: the only input to which stage
    * is drawn.
    *
-   * A building the town has not reported yet draws as `planned`, which is
-   * correct rather than a fallback: it exists in the map the moment the project
-   * is analyzed, and a building nobody has worked on is a staked plot.
+   * The renderer does not adjust it. The daemon seeds every building from the
+   * tree on load, so a status arriving here is already the truth about the code
+   * rather than a count of what an agent did to it — and a browser that
+   * second-guessed that would be the two halves of the product disagreeing about
+   * what a stage means, which is the split ADR-0012 exists to keep.
    */
   private statusOf(path: string | undefined): Stage {
     if (!path) return "planned";
@@ -934,6 +1296,16 @@ export class TownScene extends Phaser.Scene {
     return false;
   }
 
+
+  /** verifiedOf says whether a building's tests have passed and nothing has
+   *  failed since. Verification is a condition drawn over the building's stage
+   *  rather than a stage of its own, for the same reason damage is not. */
+  private verifiedOf(path: string | undefined): boolean {
+    if (!path) return false;
+    const { live } = useTown.getState();
+    for (const b of live.buildings) if (b.path === path) return b.verified;
+    return false;
+  }
   /** worldBounds is the picture-space box the town occupies, from the layout's
    *  own corners rather than from a guess, so the camera can always reach every
    *  building even on a project whose widest district exceeds the analyzer's
@@ -990,7 +1362,12 @@ export class TownScene extends Phaser.Scene {
     // whole axis. The previous version did exactly that and lost `h/2` on the
     // left of every rectangle, which is the same class of error as the land
     // being left out entirely, and it hid behind it.
-    const land = landBox(l.width, l.height, TILE * 3, (x, y) => this.project(x, y));
+    // The land, at the apron the ground is actually painted to. The two numbers
+    // are the same by construction now rather than by the comment asking that
+    // they be: `drawGround` and this function both say `LAND_APRON`, and a land
+    // measured smaller than the land painted is how a camera finds an edge the
+    // reader can already see.
+    const land = landBox(l.width, l.height, LAND_APRON, (x, y) => this.project(x, y), LAND_BACK);
     let minX = land.minX;
     let maxX = land.maxX;
     let minY = land.minY;
@@ -1084,6 +1461,46 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
+   * tick cools the embers, and is the scene's own frame rather than an event's.
+   *
+   * Nothing happens to a building for two minutes after it is worked on, and the
+   * fading is the entire point — wiring this to events would leave every ember
+   * lit forever, which is the claim the whole thing was built to avoid.
+   */
+  override update(time: number): void {
+    // The flock first and alone: it needs nothing from the town, so a reader who
+    // has the sky open and no layout yet still gets the sky they asked for.
+    const day = useTown.getState().day;
+    this.clouds?.reconcile(day, time / 1000, this.scale.width, this.scale.height);
+    this.birds?.reconcile(day, time / 1000, this.scale.width, this.scale.height);
+    // The plan's crews move on events, not on layout changes, and this is the
+    // only thing that redraws between them.
+    this.drawPlanWorkers();
+    if (!this.embers || !this.layout) return;
+    const { live } = useTown.getState();
+    const byPath = new Map(live.buildings.map((b) => [b.path, b.updated]));
+    const touched: { id: string; x: number; y: number; updated: number }[] = [];
+    for (const s of this.layout.sites) {
+      if (s.kind !== "building" || !s.path) continue;
+      const updated = byPath.get(s.path);
+      if (updated === undefined) continue;
+      // The near corner, which is where every other ground-level mark is placed.
+      const p = this.project(s.x + s.w, s.y + s.h);
+      touched.push({ id: s.id, x: p.x, y: p.y, updated });
+    }
+    // A worker standing at a building is the second tier: the machine is 2.5% of
+    // the frame, so the ring is what actually says "here" at map scale. It is
+    // the narrowest claim the daemon supports — a session is at this building —
+    // and it borrows no verb, because the town does not know what the session is
+    // doing beyond the caption already on the figure.
+    const working = new Set<string>();
+    for (const w of live.workers) {
+      if (w.place) working.add(w.place);
+    }
+    this.embers.reconcile(touched, working);
+  }
+
+  /**
    * restage swaps the frames inside each building's container.
    *
    * In place rather than by rebuilding the map, and that is the whole reason a
@@ -1102,17 +1519,19 @@ export class TownScene extends Phaser.Scene {
       if (s.kind !== "building") continue;
       const box = this.buildingSprites.get(s.id);
       if (!box) continue;
-      const keys = this.stackKeys(s);
+      const parts = this.stackParts(s);
       box.list.forEach((child, i) => {
         const img = child as Phaser.GameObjects.Image;
-        if (img.frame.name !== keys[i]) img.setFrame(keys[i]);
+        const want = parts[i]?.key;
+        if (want && img.frame.name !== want) img.setFrame(want);
       });
     }
   }
 
   /**
-   * stackKeys is the atlas frame of every child of a building's container, in
-   * draw order: one base, one band per storey above the first, then the cap.
+   * stackParts is every child of a building's container, in draw order, each
+   * with the height it sits at: the base, then a band and its lit windows per
+   * storey above the first, the ground storey's own light, then the cap.
    *
    * The floor count comes from the daemon's measurement, not from anything the
    * renderer derives, and it is clamped here as well as in the daemon — the
@@ -1123,11 +1542,40 @@ export class TownScene extends Phaser.Scene {
    * wall: base + (floors - 1) bands + cap is exactly `floors` storeys of wall.
    * An off-by-one here is invisible at one floor and wrong at every other.
    */
-  private stackKeys(s: Site): string[] {
+  private stackParts(s: Site): StackPart[] {
     const floors = clampFloors(s.floors);
-    const keys = [this.baseKey(s)];
-    for (let i = 1; i < floors; i++) keys.push(this.bandKey(s));
-    keys.push(this.capKey(s));
+    const roof = towerTop(floors);
+    // Every part carries its own height rather than having it read off its
+    // index. That rule — `i * STOREY` for the first `floors` children and the
+    // roof for everything after — was true while every part above the base was a
+    // storey, and the lit-window overlay is the first part that is not: an
+    // overlay belongs *on* its storey's band, so it has to sit at that storey's
+    // height while being drawn after it. Inferring height from position is what
+    // made that impossible, and it would have made the next overlay impossible
+    // too.
+    const keys: StackPart[] = [{ key: this.baseKey(s), z: 0 }];
+    for (let i = 1; i < floors; i++) {
+      keys.push({ key: this.bandKey(s), z: i * STOREY });
+      keys.push(this.lightPart(s, i));
+    }
+    // The ground storey carries its own, because the base is a storey too and
+    // the windows in it are lit on the same terms as every other storey's.
+    keys.push(this.lightPart(s, 0));
+    keys.push({ key: this.capKey(s), z: roof });
+    // The damage mark is a child like any other, present whether or not the
+    // building is damaged. Dropping it when the condition clears would change
+    // this array's length, and restaging swaps frames *by index* — every storey
+    // above the cap would slide onto the wrong frame. A blank frame is the only
+    // way to have no damage without having no child.
+    keys.push({ key: this.damageKey(s), z: roof });
+    // The ground storey's rubble, on the same terms: a child whether or not the
+    // building is damaged, because the child count must not move when a
+    // condition does.
+    keys.push({ key: this.baseDamageKey(s), z: roof });
+    // The pennant, on the same terms as the two damage marks: a child whether
+    // or not the building is verified, because the child count must not move
+    // when a condition does.
+    keys.push({ key: this.verifiedKey(s), z: roof });
     return keys;
   }
 
@@ -1146,7 +1594,7 @@ export class TownScene extends Phaser.Scene {
    * the join between two floors is seamless.
    */
   private placeBuilding(s: Site, depth: number): Phaser.GameObjects.Container {
-    return this.stackContainer(this.stackKeys(s), s, depth);
+    return this.stackContainer(this.stackParts(s), s, depth);
   }
 
   /**
@@ -1169,24 +1617,31 @@ export class TownScene extends Phaser.Scene {
   }
 
   /**
-   * stackContainer places one cel per storey at `i * STOREY`.
+   * stackContainer draws a building's or a container's parts where they were
+   * told to be.
    *
-   * The single place the stacking arithmetic lives, so a building and a
-   * container cannot disagree about how tall a storey is or where the roof goes.
-   * The caller supplies the keys; this decides only where each one lands.
+   * The single place a cel meets the screen, so a building and a container
+   * cannot disagree about where a part lands. The caller supplies each part's
+   * frame *and* its height; this decides only the anchor.
    */
-  private stackContainer(keys: string[], s: Site, depth: number): Phaser.GameObjects.Container {
+  private stackContainer(parts: StackPart[], s: Site, depth: number): Phaser.GameObjects.Container {
     const box = this.add.container(0, 0);
     const p = this.project(s.x, s.y);
-    const floors = clampFloors(s.floors);
-    for (let i = 0; i < keys.length; i++) {
-      const f = this.atlas[keys[i]];
-      if (!f) continue;
-      // The cap is the last child and sits above the topmost band, not at
-      // `i * STOREY` — at one floor those coincide, which is exactly why a
-      // tower's roof would float one storey too high if this were spelled that
-      // way.
-      const z = i < floors ? i * STOREY : towerTop(floors);
+    for (const part of parts) {
+      // **A missing frame must still get a child.** The obvious `if (!f) continue`
+      // was here from the start and it is a trap: `restage` swaps frames *by
+      // index*, so dropping one child moves every child after it down a slot and
+      // the stack is silently misaligned from there on. The lit-window overlay
+      // hit exactly that — a negative pattern index produced `lit:100:-1`, the
+      // skip dropped it, and the result was machine sprites drawn inside
+      // buildings and bands displaced 56 pixels sideways. A transparent
+      // stand-in keeps every index where it belongs and the misalignment becomes
+      // a frame that draws nothing instead of a building that comes apart.
+      const real = this.atlas[part.key];
+      if (!real) this.missingFrames++;
+      const f = real ?? this.atlas[NO_STAND_IN_FRAME];
+      const key = real ? part.key : NO_STAND_IN_FRAME;
+      const z = part.z;
       // `setOrigin(0, 0)` is load-bearing and was missing here, which put every
       // building and every container half a cel up-and-left of its own plot —
       // measured at 36 pixels left and 48 up on a 73x85 cel, and 56/54 on a
@@ -1195,7 +1650,7 @@ export class TownScene extends Phaser.Scene {
       // to origin 0.5, so the cel's *centre* lands where its top-left was meant
       // to go. `place()` has the same call and the same comment, because this
       // bites in every code path that forgets it — the two must agree.
-      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), keys[i]).setOrigin(0, 0));
+      box.add(this.add.image(p.x - f.ox, p.y - z - f.oy, atlasKey(this.atlasTurn), key).setOrigin(0, 0));
     }
     box.setDepth(depth);
     box.setName(siteName(s));
@@ -1215,45 +1670,142 @@ export class TownScene extends Phaser.Scene {
    * is deliberate rather than incidental (ADR-0021 rule 5): containers are most of
    * the shallowest, most-read view, so that view is the one that gains the variety.
    */
-  private containerKeys(s: Site): string[] {
+  private containerKeys(s: Site): StackPart[] {
     const floors = clampFloors(s.floors);
     const v = skinVariant(s.path ?? "");
     // `s.w` is a baked footprint — the daemon sends one of the atlas's own four
     // sizes and centres the site itself, so the renderer never has to guess
     // which art a site wants.
     const size = s.w;
-    const keys = [baseFrame(size, "completed", v, false, this.atlasTurn)];
-    for (let i = 1; i < floors; i++) keys.push(bandFrame(size, "completed", v, this.atlasTurn));
-    keys.push(capFrame(size, this.roofKey(s), "completed", false, this.atlasTurn));
+    const m = materialFor(this.archetypeOf(s));
+    // A container is *completed* by definition — it stands in for a subtree of
+    // finished buildings — so it carries no light. Its windows are the blank,
+    // and that is the honest reading: nothing inside a container is being worked
+    // on, and lighting it would be the one lit window on the map claiming
+    // something untrue.
+    const keys: StackPart[] = [
+      { key: baseFrame(size, m, "completed", this.atlasTurn), z: 0 },
+      { key: noWindowLightFrame(size, this.atlasTurn), z: 0 },
+    ];
+    for (let i = 1; i < floors; i++) {
+      keys.push({ key: bandFrame(size, m, "completed", this.atlasTurn), z: i * STOREY });
+      keys.push({ key: noWindowLightFrame(size, this.atlasTurn), z: i * STOREY });
+    }
+    keys.push({ key: capFrame(size, this.archetypeOf(s), "completed", this.atlasTurn), z: towerTop(floors) });
     return keys;
   }
 
   /**
-   * roofKey is which roof a site wears.
+   * archetypeOf is the archetype a site is drawn as.
    *
-   * Chosen here, in the browser, from the site's own path — the same place and the
-   * same way the skin variant is chosen. The daemon sends geometry (footprint,
-   * floors) and knows nothing about appearance, so there is no wire change and no
-   * daemon change behind the roof axis; the roof is a pure function of the path,
-   * which the browser already has.
+   * Chosen here rather than sent, because it is a pure function of the path the
+   * browser already has: the daemon change behind the archetype axis does not
+   * travel on the wire, and the roof shape is still the browser's to pick.
    *
-   * A site with no path hashes as the empty string, which yields one fixed kind
-   * rather than a random one — the same "no path, no variety" rule the skin uses.
+   * A site with no path hashes as the empty string, which yields one fixed
+   * archetype rather than a random one — the same "no path, no variety" rule
+   * the skin uses.
    */
-  private roofKey(s: Site): RoofKind {
-    return roofFor(s.path ?? "");
+  private archetypeOf(s: Site): Archetype {
+    // A repository's own declaration wins over the hash. The declaration arrives
+    // on the site rather than being read from the manifest here, because the
+    // analyzer is what reads it and two authorities over one fact is the split
+    // ADR-0012 exists to prevent.
+    //
+    // An unrecognised name falls back rather than drawing nothing: a repo that
+    // declared `bakery` — or that declared an archetype this build has since
+    // renamed — should get an arbitrary-but-sane building, not a hole in the
+    // map. The name is kept for the label either way, so a reader can see what
+    // the repository asked for even when the renderer could not draw it.
+    const declared = s.archetype as Archetype | undefined;
+    if (declared && ARCHETYPES.includes(declared)) return declared;
+    return archetypeFor(s.archetype, s.path);
   }
 
   private baseKey(s: Site): string {
-    return baseFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.damagedOf(s.path), this.atlasTurn);
+    // No `damaged` here, and its absence was a real bug for a while. The base's
+    // damage became an overlay like the roof's, so the bake stopped emitting a
+    // `:dmg` base — but this still asked for one, and `stackContainer` *skips* a
+    // key the atlas cannot answer. A damaged building therefore lost its ground
+    // storey entirely, which put every child of the stack one index out of step
+    // with `restage`: the first band drew on the base's frame and the pennant
+    // was never swapped at all. Every test passed `false` for `damaged`, so
+    // nothing saw it.
+    return baseFrame(s.w, materialFor(this.archetypeOf(s)), this.statusOf(s.path), this.atlasTurn);
   }
 
   private bandKey(s: Site): string {
-    return bandFrame(s.w, this.statusOf(s.path), skinVariant(s.path ?? ""), this.atlasTurn);
+    return bandFrame(s.w, materialFor(this.archetypeOf(s)), this.statusOf(s.path), this.atlasTurn);
+  }
+
+  /**
+   * damageKey is the mark drawn over this building's roof, or the shared blank
+   * when it is sound.
+   *
+   * The mark's cel is cut from the cap's own box, so its origin is the cap's
+   * origin and `stackContainer` places it at the cap's position with no
+   * arithmetic of its own. The flag rides the roofline because it was cut from
+   * the same box the roofline was.
+   */
+  private damageKey(s: Site): string {
+    if (!this.damagedOf(s.path)) return NO_DAMAGE_FRAME;
+    return damageFrame(s.w, this.archetypeOf(s), this.atlasTurn);
+  }
+
+  /**
+   * baseDamageKey is the rubble on this building's ground storey, or the shared
+   * blank when it is sound.
+   *
+   * Cut from the base's own box for the reason the roof's is: `setFrame` swaps a
+   * texture without moving the sprite, so a mark and the blank that replaces it
+   * have to agree about where they sit.
+   */
+  private baseDamageKey(s: Site): string {
+    const m = materialFor(this.archetypeOf(s));
+    if (!this.damagedOf(s.path)) return noBaseDamageFrame(s.w, m);
+    return baseDamageFrame(s.w, m, this.atlasTurn);
+  }
+
+  /** verifiedKey is the pennant on this building's roof, or the shared blank. */
+  private verifiedKey(s: Site): string {
+    if (!this.verifiedOf(s.path)) return NO_VERIFIED_FRAME;
+    return verifiedFrame(s.w, this.archetypeOf(s), this.atlasTurn);
+  }
+
+  /**
+   * lightPart is one storey's lit-window overlay: a lit frame when the key
+   * light is on and this storey has glass in it, and the shared blank otherwise.
+   *
+   * **A child always, like the damage marks and the pennant.** The child count
+   * must not move when the *day* changes, and a reader stepping from dusk to day
+   * must not see a storey above the one that changed slide onto the wrong frame.
+   *
+   * The pattern is derived from the building's own path and the storey's index,
+   * so it is stable across redraws and across turns — a lit window that hopped
+   * patterns when the town turned would be the pennant's bug of issue 37 in a
+   * new place. Hashing the path rather than taking a counter means the same
+   * directory is lit the same way every time the town is drawn, which is what
+   * `frontCorner` was written to guarantee for the flag.
+   *
+   * **The hash is signed and the modulo is not.** `hashPath` ends in `| 0`, so
+   * half of all paths are negative — measured: `ui/src` hashes to -846872599 and
+   * `ui/test` to -483228883 — and `(negative) % 3` is -1 or -2 in JavaScript, not
+   * 2 or 1. That produced `lit:100:-1`, a frame that was never baked, and a
+   * missing frame in `stackContainer` was *skipped*, which moved every child
+   * after it down one index. The symptom was a machine sprite drawn inside a
+   * building and bands displaced 56 pixels sideways: not a wrong frame, but every
+   * frame after the gap on the wrong sprite. `lightPattern` wraps properly.
+   */
+  private lightPart(s: Site, storey: number): StackPart {
+    const day = normaliseDay(useTown.getState().day);
+    const z = storey * STOREY;
+    const lit = DAYLIGHT[day].lit && stageRank(this.statusOf(s.path)) >= stageRank("glazed");
+    if (!lit) return { key: noWindowLightFrame(s.w, this.atlasTurn), z };
+    return { key: windowLightFrame(s.w, lightPattern(s.path ?? "", storey), this.atlasTurn), z };
   }
 
   private capKey(s: Site): string {
-    return capFrame(s.w, this.roofKey(s), this.statusOf(s.path), this.damagedOf(s.path), this.atlasTurn);
+    return capFrame(s.w, this.archetypeOf(s), this.statusOf(s.path), this.atlasTurn);
   }
 
   /** celAnchor is where a cel's top-left goes so its own origin lands on the
@@ -1274,18 +1826,303 @@ export class TownScene extends Phaser.Scene {
    * is no honest way to show a 1400-unit town in a 1100-pixel canvas without
    * either breaking the pixels or lying about the size.
    */
-  private fit(l: Layout): void {
-    const e = this.extents(l);
-    const cam = this.cameras.main;
-    const byWidth = Math.floor((this.scale.width - 60) / e.w);
-    const byHeight = Math.floor((this.scale.height - 100) / e.h);
-    cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));
-    cam.centerOn((e.minX + e.maxX) / 2, (e.minY + e.maxY) / 2);
+  /**
+   * contentExtents is the box the camera frames: the town, and not its field.
+   *
+   * It used to frame `extents`, which included the land. That is the coupling
+   * that made "make the land bigger" shrink the town: a bigger land was a bigger
+   * frame, and a bigger frame at the same viewport is a smaller town. Framing the
+   * content and letting the field run off the edges is what decouples them.
+   */
+  private contentExtents(l: Layout): { minX: number; maxX: number; minY: number; maxY: number } {
+    const land = landBox(l.width, l.height, TILE * 3, (x, y) => this.project(x, y));
+    let minX = land.minX;
+    let maxX = land.maxX;
+    let minY = land.minY;
+    let maxY = land.maxY;
+    const consider = (box: { minX: number; maxX: number; minY: number; maxY: number }): void => {
+      minX = Math.min(minX, box.minX);
+      maxX = Math.max(maxX, box.maxX);
+      minY = Math.min(minY, box.minY);
+      maxY = Math.max(maxY, box.maxY);
+    };
+    for (const s of l.sites) {
+      if (!visibleAt(s, this.depth)) continue;
+      const pts = [
+        this.project(s.x, s.y),
+        this.project(s.x + s.w, s.y),
+        this.project(s.x, s.y + s.h),
+        this.project(s.x + s.w, s.y + s.h),
+      ];
+      consider({
+        minX: Math.min(...pts.map((p) => p.x)),
+        maxX: Math.max(...pts.map((p) => p.x)),
+        minY: Math.min(...pts.map((p) => p.y)),
+        maxY: Math.max(...pts.map((p) => p.y)),
+      });
+    }
+    return { minX, maxX, minY, maxY };
   }
+
+  /**
+   * drawPlan draws the town from directly above.
+   *
+   * Every plot is the rectangle it actually is, outlined and filled; districts are
+   * outlined regions behind them; roads are bands between the plots they join.
+   * No atlas is touched and no sprite is placed, which is the point — see
+   * `plan.ts` for why a camera would not work and this does.
+   *
+   * **The storey count is printed on every plot.** This town draws a directory's
+   * file count as height, so from above every building is a rectangle and the
+   * size signal is simply absent. Printing it is the difference between a plan
+   * that carries the town's information and one that quietly drops its most
+   * important field.
+   */
+  private drawPlan(l: Layout): void {
+    const g = this.add.graphics();
+    const ink = Number.parseInt(P.ink.slice(1), 16);
+
+    // The ground, as a plate: a ramp step and a 1px ink edge, which is how the
+    // isometric ground is built (diamond plates with authored edge pieces) rather
+    // than a translucent wash over the sky.
+    const g0 = this.project(0, 0);
+    const g1 = this.project(l.width, l.height);
+    g.fillStyle(Number.parseInt(P.grass[1].slice(1), 16), 1);
+    g.fillRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+    g.lineStyle(1, ink, 1);
+    g.strokeRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+
+    // Districts: one ramp step down from the field, edged in ink. A district is a
+    // region in this world, and a region reads by its *edge*, not by a tint laid
+    // over its contents.
+    for (const d of l.districts) {
+      const a = this.project(d.x, d.y);
+      const b = this.project(d.x + d.w, d.y + d.h);
+      g.fillStyle(Number.parseInt(P.grass[0].slice(1), 16), 1);
+      g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.lineStyle(1, ink, 0.85);
+      g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+
+    // Roads. They are regions on this map — nothing here joins two places — so a
+    // filled band with an ink edge, which is a plate, is honest and a line is not.
+    for (const r of l.roads ?? []) {
+      const a = this.project(r.x, r.y);
+      const b = this.project(r.x + r.w, r.y + r.h);
+      const w = Math.max(1, b.x - a.x);
+      const h = Math.max(1, b.y - a.y);
+      g.fillStyle(Number.parseInt(P.stone[1].slice(1), 16), 1);
+      g.fillRect(a.x, a.y, w, h);
+      g.lineStyle(1, ink, 0.7);
+      g.strokeRect(a.x, a.y, w, h);
+    }
+
+    // The three places, on the warm plates their own ground takes.
+    for (const s of l.sites) {
+      if (s.kind === "building") continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      g.fillStyle(Number.parseInt(P.yardFloorLit.slice(1), 16), 1);
+      g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.lineStyle(1, ink, 1);
+      g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+
+    // The plots.
+    for (const s of l.sites) {
+      if (s.kind !== "building") continue;
+      if (!visibleAt(s, this.depth)) continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      const w = Math.max(2, b.x - a.x);
+      const h = Math.max(2, b.y - a.y);
+      const stage = this.statusOf(s.path);
+      g.fillStyle(Number.parseInt(P.plaster[PLAN_STEP[stage] ?? 0].slice(1), 16), 1);
+      g.fillRect(a.x, a.y, w, h);
+      // **Damage stays visible.** The brief requires a broken building to be
+      // visibly damaged, and the first plan drew every plot in one ink — so a
+      // failing building looked identical to a sound one. Rust is the world's
+      // own damage colour, used as an edge because an edge is what carries a
+      // condition here.
+      const failed = this.damagedOf(s.path);
+      g.lineStyle(2, Number.parseInt(P.rust[3].slice(1), 16), 1);
+      g.strokeRect(a.x, a.y, w, h);
+      if (!failed) {
+        g.lineStyle(1, ink, 1);
+        g.strokeRect(a.x, a.y, w, h);
+      }
+      // The storey count, in the town's own 3x5 face. It replaces the height the
+      // isometric town draws, so a plan still says how big a building is.
+      if (w >= 16 && h >= 12) {
+        const n = this.label(String(planFloors(s)), a.x + 2, a.y + 2, "count");
+        if (n) {
+          n.setOrigin(0, 0);
+          this.register(s.id, n);
+        }
+      }
+      this.hitZone(a.x, a.y, w, h, s, 0);
+    }
+
+    // The worker's marks go on their own layer, redrawn every tick. They are
+    // drawn here *first* only to record the geometry — `drawPlan` runs on a
+    // layout change and a crew arrives and leaves between two of those, so marks
+    // painted with the plan would be a photograph of who was working when the
+    // town last redrew. `drawPlanWorkers` owns them.
+    this.planBoxes = new Map();
+    for (const s of l.sites) {
+      if (s.kind !== "building") continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      this.planBoxes.set(s.id, { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y });
+    }
+    this.drawPlanWorkers(true);
+
+    // Names last, so a plot's own count is never behind its name.
+    for (const s of l.sites) {
+      if (!s.path) continue;
+      if (s.kind === "building" && !visibleAt(s, this.depth)) continue;
+      const a = this.project(s.x, s.y);
+      const b = this.project(s.x + s.w, s.y + s.h);
+      const lbl = this.label(s.path, (a.x + b.x) / 2, a.y - 2, "name");
+      if (lbl) this.register(s.id, lbl);
+    }
+
+    this.refreshLabels();
+    // Counter-scaled: a label is a world-space sprite, so it shrinks with the
+    // camera, and the plan is framed at ~0.7x, which turned every name into a
+    // smudge. A name is the one thing on a plan that has to be readable.
+    const inv = 1 / this.cameras.main.zoom;
+    for (const images of this.labels.values()) {
+      for (const img of images) img.setScale(inv);
+    }
+
+    g.setDepth(DEPTH.ground + 1);
+    this.ensureSky();
+    this.fit(l);
+  }
+
+
+  /**
+   * drawPlanWorkers places a mark on every plot a crew is standing on.
+   *
+   * **A plan cannot draw a figure** — the machine art is a side view, and that is
+   * the same argument as every other mark in this file. So the plan says "a crew
+   * is on this plot" the way a plan says anything: a square in that crew's own
+   * colour, with the tier kept legible. ADR-0007 requires chief and sub to be
+   * separable at a glance, and a plan has no helmet to separate them, so **chief
+   * is the larger square and the only one with an ink edge.**
+   *
+   * This is the whole reason the view exists — a surface whose job is "where is
+   * it, what is it doing" that cannot say where it is — and the first plan had no
+   * worker at all.
+   */
+  private drawPlanWorkers(force = false): void {
+    if (this.view !== "plan") {
+      this.planCrewSignature = "";
+      this.planCrew?.destroy();
+      this.planCrew = null;
+      return;
+    }
+    // **Redrawn only when the crew actually changes.** This is called every
+    // frame, and destroying and rebuilding a Graphics sixty times a second for a
+    // mark that changes twice a minute is the kind of cost that shows up as a
+    // dropped frame on the machine that can least afford one.
+    const crew = useTown.getState().live.workers;
+    const signature = planCrewSignature(crew);
+    if (!force && signature === this.planCrewSignature) return;
+    this.planCrewSignature = signature;
+
+    this.planCrew?.destroy();
+    const g = this.add.graphics();
+    this.planCrew = g;
+    const ink = Number.parseInt(P.ink.slice(1), 16);
+    for (const w of crew) {
+      const box = this.planBoxes.get(w.place);
+      if (!box) continue;
+      const mark = planCrewMark(w, box);
+      g.fillStyle(Number.parseInt(crewColour(w.agent).slice(1), 16), 1);
+      g.fillRect(mark.x, mark.y, mark.size, mark.size);
+      if (mark.chief) {
+        g.lineStyle(1, ink, 1);
+        g.strokeRect(mark.x, mark.y, mark.size, mark.size);
+      }
+    }
+    g.setDepth(DEPTH.ground + 2);
+  }
+
+  /**
+   * fit frames the town and centres it.
+   *
+   * **Centred, and that is a decision rather than a default.** Two reframings
+   * were tried against a bigger land — placing the land's near corner on the
+   * frame's centre line, and pushing the corner down by a sky share — and both
+   * measured as worse than simply centring, because the composition of an
+   * isometric land is decided by where its near corner falls and the town has to
+   * stay near the middle of the frame to read as a town.
+   *
+   * The land grew (`LAND_APRON`) and this did not change with it, which is the
+   * point of having `contentExtents`: framing the content and letting the field
+   * run off the edges are two independent decisions, and coupling them is what
+   * made "make the land bigger" shrink the town.
+   */
+  private fit(l: Layout): void {
+    const cam = this.cameras.main;
+    if (this.view === "plan") {
+      const b = planBox(l);
+      // **Not floored.** `Math.floor(784 / 1092)` is 0, so a plan is always
+      // framed at the clamp floor and comes out as a stamp in the middle of an
+      // empty frame — which is exactly what the first build of this did, at zoom
+      // 0.2 on a 784px canvas. The isometric fit floors and clamps to 1, which
+      // hides the same mistake there.
+      const byWidth = this.scale.width / b.w;
+      const byHeight = this.scale.height / b.h;
+      // The clamp's top is higher than the isometric one: a plan has no tall
+      // sprites to overlap, so there is nothing to zoom out for.
+      cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 0.2, 8));
+      cam.centerOn(b.x + b.w / 2, b.y + b.h / 2);
+      return;
+    }
+    const c = this.contentExtents(l);
+    const cw = c.maxX - c.minX;
+    const ch = c.maxY - c.minY;
+    const byWidth = Math.floor((this.scale.width - 60) / cw);
+    const byHeight = Math.floor((this.scale.height - 100) / ch);
+    cam.setZoom(Phaser.Math.Clamp(Math.min(byWidth, byHeight), 1, 4));
+    cam.centerOn((c.minX + c.maxX) / 2, (c.minY + c.maxY) / 2);
+  }
+
+
 }
 
 /** The name a site's picture is registered under, so a probe or a test can find
  *  the sprite a building was drawn as. */
 export function siteName(s: Site): string {
   return `site:${s.id}`;
+}
+
+
+/**
+ * averageColour is a tile's mean opaque RGB, or null if it has no opaque pixel.
+ *
+ * Averaged rather than sampled: the road tile is a two-tone chequer, and its
+ * *centre* pixel lands on one of the two — so a band filled from the centre
+ * came out near-black while the row road beside it was light grey, and the two
+ * stopped being the same material.
+ */
+function averageColour(canvas: HTMLCanvasElement): [number, number, number] | null {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    r += d[i];
+    g += d[i + 1];
+    b += d[i + 2];
+    n++;
+  }
+  return n === 0 ? null : [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
 }

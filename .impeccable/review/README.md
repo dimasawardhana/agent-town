@@ -11,13 +11,22 @@ check run on them reports low exactness — that is the downscale, not the rende
 The pixel-level claim is measured from the live canvas at its native resolution
 instead, and is exact:
 
-- 15 colours cover 99% of the canvas; 168 distinct in total, over a 24-entry palette.
 - `config.pixelArt === true`, `config.antialias === false`, texture filter
   NEAREST (`scaleMode === 1`), canvas `image-rendering: pixelated`.
 - The bake refuses to boot on any off-palette or semi-transparent pixel
   (`assertPaletteClean`, `ui/src/art/bake.ts`), and `sprite()` refuses to boot on
   an unmapped character (`ui/src/art/surface.ts`).
 
-Live state at the time of capture: 13/13 buildings placed exactly on their
-footprints (0 misplaced), 12 workers on 12 distinct positions across 5
-simultaneous actions, 13 building shadows, 213 atlas frames, 103 display objects.
+Live state at the time of capture: 14 buildings placed on their footprints, 5
+of them carrying the import mark, 149 display objects, 1125 atlas frames.
+
+**On the palette count, the figure this file used to carry no longer
+reproduces.** It read *"15 colours cover 99% of the canvas; 168 distinct in
+total"*. Measured the same way today — every opaque pixel of the live canvas
+counted by value — it is **299 colours covering 99% and 677 distinct**. The
+renderer settings above are unchanged and verified; the count moved because the
+sky backdrop is a generated gradient and contributes a colour per pixel step, and
+because this town has more archetypes and conditions on screen than the one the
+old figure was taken from. The bake's own invariant is the one that matters and
+it has not moved: **no off-palette and no semi-transparent pixel in any baked
+cel**, enforced at boot.

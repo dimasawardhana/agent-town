@@ -20,6 +20,28 @@ export const P = {
   // --- Terrain -----------------------------------------------------------
   // The void behind everything, and the base of the sky the town sits in.
   void: "#0e141c",
+  // The sky, which exists only in the generated backdrop and is never baked —
+  // so these are the colours the town is seen against, and nothing else in the
+  // art is allowed to use them. Keeping them here rather than inline in the sky
+  // module is what makes "the backdrop is the only user" a checkable claim
+  // rather than a convention, and `sky.test.ts` is what checks it.
+  skyZenith: "#1a2740",
+  skyMid: "#3d5570",
+  skyHaze: "#7d8a80",
+  skyGlow: "#c9a86a",
+  skyFar: "#4a5f72",
+  skyNear: "#2a3a4a",
+  // The plain the island sits on: below the horizon and behind the land.
+  //
+  // A desaturated relative of the grass ramp, not a different material. The
+  // region is a clearing in a field, so the field around it should read as the
+  // same world — and it is separated from the town by *value and saturation*
+  // rather than by hue, which is what a distant field actually looks like: a
+  // duller, hazier, lighter version of the same green, because that is what
+  // atmosphere does to a field. A colour unrelated to the grass would have said
+  // "different world"; a colour too close would say "more of your land", and the
+  // ground tiles already draw that edge themselves.
+  skyGround: "#46524a",
   // Ground tones, hue-shifted from a cool shadow green to a warm lit green.
   grass: ["#1d3327", "#274632", "#32583d", "#3e6b49"] as Ramp,
   grassLit: "#4a7d54",
@@ -66,6 +88,17 @@ export const P = {
   // had to fake it by reusing the midtone.
   glass: ["#1e2a33", "#2f4048", "#4a6270", "#7191a4"] as Ramp,
 
+  // A lit window, and only a lit window. The one warm emissive in the town, and
+  // the reason it is safe: `glass` is the only cool blue on a facade, so warm is
+  // unambiguous against it, and nothing else in the palette is allowed to be
+  // this bright and this warm at once. `accent` is gold and is the chief's flag
+  // and the panel's live marks — a lamp the same gold would read as a session
+  // badge, which is the exact confusion the pennant's colour was moved off to
+  // avoid. So this is amber where that is yellow, and a step deeper for the
+  // night phase, where the sky is dark enough for the warm thing to be the only
+  // warm thing.
+  lamp: "#e8a94a",
+
   // --- Plant and equipment -----------------------------------------------
   // The Yard and the Workshop hold things that are neither timber nor bright
   // steel: tarpaulins, hoses, aged iron. One ramp per material, and each is
@@ -106,6 +139,7 @@ export const P = {
    *  session and for the panel's live-state marks. Never decoration. */
   accent: "#e6bb38",
   accentDim: "#8a6414",
+
 } as const;
 
 // Deliberately absent from this palette, each for a reason worth recording:

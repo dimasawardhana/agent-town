@@ -3,6 +3,7 @@ package analyzer
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 // SiteIDBuildingPrefix marks a Site whose ID names a building rather than one
@@ -15,16 +16,29 @@ const SiteIDBuildingPrefix = "building:"
 // World units are pixels. The frontend scales the camera; it never recomputes
 // positions, so the layout stays the single source of truth (ADR-0012).
 const (
-	cellPad    = 20.0   // padding inside a district block
-	cellGap    = 14.0   // gap between buildings
-	labelSpace = 30.0   // room for a district label above its buildings
-	rowGap     = 28.0   // gap between district rows
-	maxRowW    = 1400.0 // target row width; a busy row may exceed it
-	rowStart   = 40.0   // left margin, and where each new row begins
+	cellPad    = 20.0 // padding inside a district block
+	cellGap    = 14.0 // gap between buildings
+	labelSpace = 30.0 // room for a district label above its buildings
+	// rowGap is the space between one district and the next, in either
+	// direction, and it is what a road is drawn in.
+	//
+	// It was 28 against a cellGap of 14 — a 2:1 ratio, which did not read as
+	// a section boundary. The ratio carries the hierarchy: buildings stay
+	// neighbours, districts become quarters, and the road has room to be a road
+	// rather than a stripe.
+	rowGap   = 64.0   // gap between districts, and the width of the road
+	maxRowW  = 1400.0 // target row width; a busy row may exceed it
+	rowStart = 40.0   // left margin, and where each new row begins
 
 	// testPitch tightens a test district's cell spacing. Below 1 so a sprawl
 	// of one-file spec directories reads as a compact cluster rather than
 	// outranking the code it covers.
+	//
+	// Unchanged. Widening *every* cell had to bring this down to 0.55, because a
+	// wider cell spreads a test district far enough to outrank the code it covers
+	// — the inversion guard caught exactly that, at 4.32 against a 3.0 limit.
+	// Widening only the districts that carry an import leaves it at 2.58, so the
+	// knob does not have to move at all.
 	testPitch = 0.7
 )
 
@@ -46,6 +60,14 @@ type Site struct {
 	DistrictKind Place  `json:"districtKind,omitempty"`
 	Path         string `json:"path,omitempty"`
 	Files        int    `json:"files"`
+	// Imports is the buildings whose source this one names, sorted. The count is
+	// what the map reads — a building that imports anything is marked, and the
+	// list is what the panel reads, because the panel has room for exact names
+	// and the map does not.
+	//
+	// A property of the building rather than a shape drawn between two, which is
+	// what this replaced; see `annotateImports`.
+	Imports []string `json:"imports,omitempty"`
 	// Bytes is the building's total source size and Floors the height derived
 	// from it. Both travel rather than being recomputed in the browser: the
 	// layout is the single source of truth for geometry (ADR-0012), and a
@@ -74,6 +96,11 @@ type Site struct {
 	//
 	// Zero for a building, which has no children to wait for and is simply drawn
 	// while `Depth <= filter`.
+	// Archetype is the repository's own declaration of what this building is,
+	// carried so the renderer does not have to read the manifest a second time
+	// and risk disagreeing with the analyzer about it (ADR-0012). Empty means the
+	// repository declared nothing and the renderer should hash the path.
+	Archetype     string  `json:"archetype,omitempty"`
 	MinChildDepth int     `json:"minChildDepth,omitempty"`
 	X             float64 `json:"x"`
 	Y             float64 `json:"y"`
@@ -97,23 +124,74 @@ type PlacedDistrict struct {
 type Layout struct {
 	Sites     []Site           `json:"sites"`
 	Districts []PlacedDistrict `json:"districts"`
-	Width     float64          `json:"width"`
-	Height    float64          `json:"height"`
+	// Roads are paved bands in world coordinates. They travel rather than being
+	// derived in the browser: the layout is the single source of truth for
+	// geometry (ADR-0012), and a renderer working out its own roads could
+	// disagree with the gaps the layout actually left between its rows.
+	Roads  []Road  `json:"roads"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	// UnresolvedImports is how many relative imports in this repository name
+	// something the analyzer did not find a building for, and so drew no road.
+	//
+	// It travels on the layout rather than being recomputed in the browser for
+	// the same reason roads do: the layout is the single source of truth
+	// (ADR-0012), and a renderer working this out for itself would be a second
+	// implementation of the same scan.
+	//
+	// **It exists because a silent refusal looks like a success.** The scanner
+	// draws no road for a specifier it cannot resolve, which is the correct and
+	// only safe behaviour — a guessed road is a confident lie. But the reader
+	// cannot tell "this project has no dependencies between districts" from
+	// "this project has six and the map could not place them", and those are very
+	// different claims about the code. Measured on team-builder: 6 unresolvable
+	// specifiers out of 301, on a repository with 60 import roads.
+	UnresolvedImports int `json:"unresolvedImports"`
+}
+
+// Road is one paved band: a rectangle in the same world space as a site's.
+//
+// A rectangle rather than a path, because the layout's roads genuinely are
+// rectangles — the gap between two rows is a band, and the strip between a
+// building and the one containing it is a band. A road that had to be walked
+// tile by tile in the browser would be the browser re-deriving geometry, which
+// is the thing ADR-0012 rules out.
+type Road struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+	// Kind is "row" or "district". It is carried so a reader debugging the map
+	// can tell which rule produced a road — a row road fills a gap the layout
+	// leaves, a district road runs between quarters.
+	//
+	// Both are paved with the same road tile, and both are *areas* rather than
+	// joins between two places. "containment" and "import" were here; neither is
+	// emitted, and a kind no rule produces is a kind the renderer has to know
+	// about for no reason.
+	Kind string `json:"kind"`
 }
 
 // buildingSize scales a building's footprint by its source-file count.
 //
 // Size is the whole point of the town: a glance should tell you which parts
-// of the project are big. Four discrete steps rather than a continuous scale,
-// because a continuous one produces a row of near-identical rectangles.
+// of the project are big. Five fixed footprints (44, 58, 72, 86, 100) rather
+// than a continuous scale, because a continuous one produces a row of
+// near-identical rectangles — and because the returned number is the join key
+// to the art: the renderer passes it straight to `baseFrame` as the cel side,
+// so a footprint the bake does not draw is a building nothing can be drawn
+// for. The other end of that key is `SIZES` in ui/src/art/bake.ts, and
+// TestEveryEmittedFootprintIsOneTheAtlasDraws holds the two ends together.
 func buildingSize(files int) (w, h float64) {
 	switch {
 	case files <= 2:
 		return 44, 44
 	case files <= 5:
-		return 60, 60
+		return 58, 58
+	case files <= 9:
+		return 72, 72
 	case files <= 12:
-		return 78, 78
+		return 86, 86
 	default:
 		return 100, 100
 	}
@@ -127,13 +205,14 @@ func buildingSize(files int) (w, h float64) {
 // broad low block. Both are true statements about a codebase, and a map with
 // only one of them is answering a smaller question than it could.
 //
-// A table rather than a formula, for the reason buildingSize gives about its own
-// four steps: a continuous scale produces a row of near-identical towers, while
-// a table can be argued about row by row and tuned without touching logic. The
-// thresholds were calibrated against this repository's real distribution (1.9 kB
-// to 1.7 MB across 15 building directories). Applied to those real totals they
-// give: cmd/analyze 1, internal/agent/extension 2, cmd/townd 3,
-// internal/{registry,agent} 4, internal/{town,analyzer,ui/src/art/props} 5,
+// A table rather than a formula, for the reason buildingSize gives about its
+// own five steps: a continuous scale produces a row of near-identical towers,
+// while a table can be argued about row by row and tuned without touching
+// logic. The thresholds were calibrated against this repository's real
+// distribution (1.9 kB to 1.7 MB across 15 building directories). Applied to
+// those real totals they give: cmd/analyze 1, internal/agent/extension 2,
+// cmd/townd 3, internal/{registry,agent} 4,
+// internal/{town,analyzer,ui/src/art/props} 5,
 // ui/src/art 7, ui/src 9, ui 9 — a spread legible as a skyline rather than as a
 // row of equals. The three generated directories draw one storey each despite
 // out-weighing everything else.
@@ -148,7 +227,20 @@ func buildingSize(files int) (w, h float64) {
 // reading as a building and starts reading as a vertical stripe with a roof on.
 func Floors(b Building) int {
 	if b.Generated {
-		return 1
+		// "Generated" is a claim about the bulk, not about everything in the
+		// directory. internal/web is generated because it holds the embedded UI
+		// bundle, and it also holds 28KB of hand-written Go; sizing it by that
+		// bundle hides the Go, which is the exact failure ContainerFloors exists
+		// to prevent one level up. So a generated directory is measured by its
+		// authored bytes, the same ruler a container gets.
+		//
+		// A directory with no authored bytes at all is a pure artefact — there is
+		// nothing else in it to draw, so it stays one storey rather than
+		// pretending to be tall on the strength of a compiler's output.
+		if b.AuthoredBytes == 0 {
+			return 1
+		}
+		return floorsForBytes(b.AuthoredBytes)
 	}
 	return floorsForBytes(b.TotalBytes)
 }
@@ -202,7 +294,7 @@ func ContainerFloors(c Container) int {
 func LayoutTown(t *Town) Layout {
 	// Sites and districts are always non-nil: the three special places exist
 	// even for an empty project, and the UI should never receive a null list.
-	l := Layout{Sites: []Site{}, Districts: []PlacedDistrict{}}
+	l := Layout{Sites: []Site{}, Districts: []PlacedDistrict{}, Roads: []Road{}}
 
 	// --- The three places that are not in the directory tree ---
 	//
@@ -229,6 +321,32 @@ func LayoutTown(t *Town) Layout {
 	// what keeps the layout deterministic.
 	x := 40.0
 	rowH := 0.0
+	// Where the current row's top edge is, and the gaps left in it, held until
+	// the row's height is final.
+	// The first row never wraps, so its top has to be seeded here rather than in
+	// the wrap branch — a rowTop of 0 puts every road on the first row 238 units
+	// above the districts it separates, which is off the map entirely.
+	rowTop := y
+	gaps := []float64{} // the x of each district gap in this row
+
+	// flushRow emits the roads for a finished row.
+	//
+	// Deferred until the row's height is known, because a road between two
+	// districts has to run the full height of the row it crosses. Emitting it at
+	// placement used the *previous* block's height, which is right only when the
+	// two blocks are the same size — and districts are not the same size. Here
+	// `ui` is 284 tall and `internal` is 356, so the road stopped 72 units short
+	// and left the bottom of `internal` standing beside bare grass.
+	flushRow := func(to *Layout) {
+		for _, gx := range gaps {
+			// The gap is *before* the district that caused the wrap decision, not
+			// under it. The stored x is that district's own left edge, so the band
+			// goes back one gap — without this the road is drawn underneath the
+			// next district, which is a road through a building.
+			to.Roads = append(to.Roads, Road{X: gx - rowGap, Y: rowTop, W: rowGap, H: rowH, Kind: "district"})
+		}
+		gaps = gaps[:0]
+	}
 
 	for _, d := range t.Districts {
 		buildings := buildingsIn(t, d.Name)
@@ -243,9 +361,28 @@ func LayoutTown(t *Town) Layout {
 		// edge, outside the camera bounds the width implies — reachable only
 		// by nothing.
 		if x > rowStart && x+w > maxRowW {
+			flushRow(&l)
+			// The band between two rows, which is the same rule as between two
+			// districts: the gap the layout made is the road. It is a different
+			// kind because it runs the other way — a row road is a street and a
+			// district road runs between quarters — and because it crosses the
+			// full width of the map rather than the depth of one row.
+			l.Roads = append(l.Roads, Road{
+				X:    rowStart,
+				Y:    y + rowH,
+				W:    x - rowGap - rowStart,
+				H:    rowGap,
+				Kind: "row",
+			})
 			x = rowStart
 			y += rowH + rowGap
 			rowH = 0
+			rowTop = y
+		} else if x > rowStart {
+			// The gap this placement left between two districts *is* the road.
+			// The same rule as the wrap, for the same reason: the space is made
+			// by the layout, so the band and the gap cannot disagree.
+			gaps = append(gaps, x)
 		}
 
 		blk := placeDistrict(&l, d, buildings, containersIn(t, d.Name), x, y)
@@ -255,6 +392,23 @@ func LayoutTown(t *Town) Layout {
 			rowH = blk.H
 		}
 	}
+	// The last row. No trailing road: a road past the final district runs off
+	// the edge of the map to nothing, which reads as a road to somewhere rather
+	// than as the end of the town.
+	flushRow(&l)
+
+	// --- Containment roads ---
+	//
+	// A building whose path is nested inside another building's gets a band
+	// between the two plots. This is a true statement about the tree and the
+	// only one available without a dependency graph: `ui/src/art` really is
+	// inside `ui`, and a reader scanning the town is trying to learn the shape
+	// of the tree.
+	//
+	// Import dependency would say far more — "this calls that" rather than
+	// "this sits inside that" — and is out of scope: it is a real analysis the
+	// daemon does not perform. See the spec.
+	linkRoads(t, &l)
 
 	// --- Bounds ---
 	//
@@ -398,6 +552,7 @@ func placeDistrict(l *Layout, d District, buildings []Building, containers []Con
 			Files:        b.Files,
 			Bytes:        b.TotalBytes,
 			Floors:       Floors(b),
+			Archetype:    b.Archetype,
 			Depth:        b.Depth,
 			X:            bx,
 			Y:            by,
@@ -413,12 +568,13 @@ func placeDistrict(l *Layout, d District, buildings []Building, containers []Con
 	// Its footprint is a *baked* size from `buildingSize`, not the plate's own
 	// extent, and that is the correction of a real defect. Sending the plate
 	// extent made the daemon and the renderer disagree about what the site was:
-	// the atlas bakes four footprints (44, 60, 78, 100), so the art was drawn at
-	// the nearest of those while the layout centred the plate's size. Measured:
-	// `internal`'s tower stood 81 units left and 66 units up of its plate, and
-	// `cmd`'s 100-unit art overflowed its 142x114 plate by 43 units vertically.
-	// A site whose declared footprint is not the footprint its art occupies
-	// cannot be placed correctly by anyone.
+	// the art is drawn at the nearest cel the atlas bakes, while the layout
+	// centred the plate's own size. Measured when the atlas baked four
+	// footprints (44, 60, 78, 100 — it bakes five now, and buildingSize
+	// follows it): `internal`'s tower stood 81 units left and 66 units up of
+	// its plate, and `cmd`'s 100-unit art overflowed its 142x114 plate by 43
+	// units vertically. A site whose declared footprint is not the footprint
+	// its art occupies cannot be placed correctly by anyone.
 	// Centreing uses the same expression a building's cell does, so a container
 	// and a building stand on their ground by one rule.
 	//
@@ -486,4 +642,114 @@ func buildingsIn(t *Town, district string) []Building {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// annotateImports records, on each building, which buildings' source it names.
+//
+// **It is the only thing this file does between two places any more.** It used
+// to also draw containment bands, from a nested building to the one holding it —
+// and that was the last line drawn between two buildings on this map. It is gone
+// because a line between two buildings is a shape the reader had already learned
+// to distrust: it was introduced as an import road, and when the import roads went
+// the containment band inherited their silhouette without inheriting their
+// meaning. A reader who asked for the import line removed was looking at this.
+//
+// What it cost is recorded rather than argued away. "This sits inside that" is a
+// true fact and it is no longer drawn — but it is also the most predictable thing
+// on the map, and the layout already carries it: a child building is placed
+// inside its parent's plate, so the fact is in the geometry a reader is looking
+// at anyway. A band that said what the arrangement already showed was the least
+// informative mark in the town wearing the most alarming shape.
+//
+// Emitted here rather than in the browser because the layout is the
+func linkRoads(t *Town, l *Layout) {
+	annotateImports(t, l)
+}
+
+// importEdges resolves which building imports which, once.
+//
+// Resolved up front and handed to both the placer and the road builder, because
+// the two must not disagree: a district laid out with a road-sized gap and a
+// road that never arrives would be a map claiming a connection it did not draw.
+// importable is the set of building paths the import scanner may resolve to.
+func importable(t *Town) map[string]bool {
+	buildings := map[string]bool{}
+	for _, b := range t.Buildings {
+		if b.Path != "" {
+			buildings[b.Path] = true
+		}
+	}
+	return buildings
+}
+
+// districtOfPath is the district a building path belongs to: its own directory,
+// or the longest directory that contains it.
+func districtOfPath(path string) string {
+	if i := strings.Index(path, "/"); i >= 0 {
+		return path[:i]
+	}
+	return path
+}
+
+// importRoads draws a band from a building to each building it imports.
+//
+// Only edges whose *both* ends are buildings this analyzer found are drawn. A
+// specifier that names a package, a module or the standard library names
+// something outside the town, and a road to it would be a confident line drawn
+// to a place the map does not contain. No road is the correct answer there, and
+// it is why a repository this scanner cannot read simply has no import roads.
+// annotateImports records, on each building, the buildings whose source it
+// names — and stops there.
+//
+// **It used to draw a road.** The import graph was carried as nine bands between
+// building plots, with a car on each. That was the wrong carrier for the fact,
+// and not for want of trying: a connection needs width, a surface, a kerb and
+// ends, and then it collides with everything else on the map. At the gap a band
+// was 14 world units and the road *tile* is 16, so five of the fifteen bands
+// were shorter than the tile they were painted with and rendered as checkered
+// diamonds under the buildings. Widening the gap to 40 fixed that and left the
+// town visibly sparser to carry nine slabs — and the cars, the thing they
+// existed for, were still not legible at map scale after four rounds of
+// re-authoring. A moving mark on a 600-pixel town does not say "these districts
+// are coupled". The band already said it, statically, at every zoom.
+//
+// So the fact moved onto the building, where it has room and cannot collide:
+// `Site.Imports` is what this building imports. The marker says *whether*, the
+// panel says *whom*, and nothing crosses anything.
+//
+// The edges are still resolved before placement — `districtGap` needs them — and
+// `UnresolvedImports` still counts what the scanner could not resolve, because
+// the absence of a road no longer reports it and something must.
+func annotateImports(t *Town, l *Layout) {
+	edges, unresolved := importEdgesCounting(t.Root, importable(t))
+	l.UnresolvedImports = unresolved
+
+	// Sorted so the list is the same on every machine, for the same reason the
+	// site list is: map iteration order is not, and ADR-0012 requires the layout
+	// to be a pure function of the tree.
+	byFrom := map[string][]string{}
+	for e := range edges {
+		byFrom[e[0]] = append(byFrom[e[0]], e[1])
+	}
+	for k := range byFrom {
+		sort.Strings(byFrom[k])
+	}
+
+	for i, site := range l.Sites {
+		if site.Kind != PlaceBuilding || site.Path == "" {
+			continue
+		}
+		if outs := byFrom[site.Path]; len(outs) > 0 {
+			l.Sites[i].Imports = outs
+		}
+	}
+}
+
+// siteCentre is the middle of a plot's footprint.
+//
+// Named because a band is computed from two centres and the slab exit needs one
+// of them again per end, and writing `s.X + s.W/2` in three places is how the
+// same expression ends up meaning two things.
+func siteCentre(s Site) (x, y float64) {
+	return s.X + s.W/2, s.Y + s.H/2
 }

@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildBase, skinFor } from "../src/art/building";
+import { archetypeFor, materialFor } from "../src/art/roof";
 import { TURNS } from "../src/view";
 
 test("the lit wall stays on the picture's lower-left at every turn", () => {
@@ -20,7 +21,7 @@ test("the lit wall stays on the picture's lower-left at every turn", () => {
   const report: string[] = [];
 
   for (const turn of TURNS) {
-    const pix = buildBase(side, side, "b", "completed", false, turn);
+    const pix = buildBase(side, materialFor(archetypeFor(undefined, "b")), "completed", false, turn);
     // Sum brightness of opaque pixels on the left and right halves, below the
     // building's midline, so only the two lower wall flanks are compared.
     let left = 0, leftN = 0, right = 0, rightN = 0;

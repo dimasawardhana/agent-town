@@ -13,6 +13,7 @@ package analyzer
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"os"
@@ -238,6 +239,15 @@ type Building struct {
 	// that embeds a built UI; sizing it from authored bytes is the reading that
 	// survives.
 	AuthoredBytes int `json:"authoredBytes,omitempty"`
+	// Archetype is what the repository declared this directory to be, or "" when
+	// it declared nothing. Empty is the normal case and means "fall back to the
+	// path hash" — the renderer owns that fallback, not the analyzer, because
+	// the hash is a pure function of a path the browser already has.
+	//
+	// The browser must not become a second authority on this: a declaration is
+	// the repository asserting something about itself, and the analyzer is what
+	// reads it. An empty string is a fact, not a request.
+	Archetype string `json:"archetype,omitempty"`
 }
 
 // Analyze walks root and produces its town.
@@ -303,6 +313,12 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	// beats hardcoding every tool's output directory, because a project that
 	// adds a new build tool teaches the analyzer about it for free.
 	gitignored := readGitignore(abs)
+
+	// What the repository says its own buildings are. Read once, like the
+	// ignore list, and applied below to the buildings that actually exist — so a
+	// declaration for a path that has been deleted is dropped rather than
+	// inventing a building.
+	declared := declaredArchetypes(abs)
 
 	// files directly in each directory, keyed by repo-relative path
 	direct := map[string]int{}
@@ -407,8 +423,20 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 	// A directory is a building if it holds source directly. The repo root is
 	// deliberately excluded: root files belong to the Workshop, so they neither
 	// invent a building nor get dropped.
+	//
+	// It must also hold something a person wrote. A directory whose mass is
+	// entirely a compiler's output is not a place, and ADR-0004 §4 says it
+	// should not be one: it "shouldn't create buildings… may appear as
+	// infrastructure but not as buildings." Marking it generated and sizing it
+	// at one storey was a half-measure — harmless while such a building drew as
+	// an anonymous plot, and a false claim the moment buildings are named,
+	// because a 1.7 MB bundle would render as a residence.
+	//
+	// The test is authored bytes rather than the generated flag, so a directory
+	// holding output *and* hand-written source keeps its building: it is a real
+	// place that happens to contain a build artefact.
 	for rel, n := range direct {
-		if rel == "." || n == 0 {
+		if rel == "." || n == 0 || authoredBytes[rel] == 0 {
 			continue
 		}
 		t.Buildings = append(t.Buildings, Building{
@@ -432,6 +460,9 @@ func AnalyzeBounded(root string, maxFiles int) (*Town, error) {
 		bi.Total = bi.Files
 		bi.TotalBytes = bi.Bytes
 		bi.AuthoredBytes = authoredBytes[bi.Path]
+		// Only a path the walk actually found, so a declaration cannot conjure a
+		// building the repository no longer has.
+		bi.Archetype = declared[bi.Path]
 		for rel, n := range direct {
 			if rel != bi.Path && strings.HasPrefix(rel, bi.Path+"/") {
 				bi.Total += n
@@ -665,4 +696,43 @@ func lastSegment(rel string) string {
 		return rel[i+1:]
 	}
 	return rel
+}
+
+// ManifestFile is where a repository declares what its directories are.
+const ManifestFile = "ai-town.json"
+
+// declaredArchetypes reads the repository's own declarations of its buildings.
+//
+// Everything here is best-effort by design, and the reason is worth stating:
+// a manifest is **author input**, and author input is wrong more often than
+// compiled code is. A missing file, malformed JSON, a name that is not an
+// object, a value that is not a string, a path that no longer exists — every one
+// of these yields no declaration and nothing else. The analysis continues and
+// the renderer falls back to hashing the path, which is arbitrary but never
+// wrong. A town that refused to draw because a JSON file was mistyped would be
+// a worse failure than a town that quietly draws something else.
+//
+// The archetype *names* are not checked here. This package has no vocabulary —
+// the renderer owns the set — so a declaration of "bakery" travels and the
+// renderer ignores it. Validating a name in the analyzer would mean duplicating
+// the list in two languages and letting them drift, which is the one thing the
+// whole archetype axis was built to avoid.
+func declaredArchetypes(root string) map[string]string {
+	out := map[string]string{}
+	b, err := os.ReadFile(filepath.Join(root, ManifestFile))
+	if err != nil {
+		return out // no manifest is the normal case
+	}
+	var doc struct {
+		Archetypes map[string]any `json:"archetypes"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return out
+	}
+	for path, v := range doc.Archetypes {
+		if name, ok := v.(string); ok && name != "" {
+			out[path] = name
+		}
+	}
+	return out
 }

@@ -6,8 +6,12 @@
 import { useEffect, useRef } from "react";
 import { SITE_ID_BUILDING_PREFIX, type BuildingState, useTown } from "./store";
 import { actionInfo, targetOf } from "./actions";
+import { EMBER_MS } from "./embers";
+import { ARCHETYPES, archetypeFor, type Archetype } from "./art/roof";
+import { STAGE_ORDER, type Stage } from "./art/building";
 import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
+import { DAYLIGHT, DAY_PHASES } from "./daylight";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { TownCanvas } from "./TownCanvas";
 
@@ -19,6 +23,34 @@ import { TownCanvas } from "./TownCanvas";
  * what happened. Kept in step with `Stage` by the index signature, so a rank
  * added to the union fails the build here rather than rendering blank.
  */
+/**
+ * The archetype a site is drawn as, by the same precedence the scene uses: a
+ * declaration this build recognises, otherwise the path hash.
+ *
+ * Duplicated rather than imported from the scene because the scene's copy is a
+ * private method on a Phaser object and this is a React component — sharing it
+ * would mean hoisting a rule out of the renderer for the sake of one label. The
+ * two must agree, so the precedence is pinned once in `archetypes.test.ts` and
+ * this comment says where the other half lives.
+ */
+export function archetypeForSite(site: { archetype?: string; path?: string }): Archetype {
+  const declared = site.archetype as Archetype | undefined;
+  if (declared && ARCHETYPES.includes(declared)) return declared;
+  return archetypeFor(site.archetype, site.path);
+}
+
+/**
+ * The declared name even when this build cannot draw it.
+ *
+ * A repository asking for something the town has never heard of is worth
+ * reporting rather than silently replacing with whatever the hash picked: the
+ * declaration is the repository's own assertion, and a reader looking at the
+ * panel is exactly the person who should see that the request went unmet.
+ */
+function declaredArchetypeName(site: { archetype?: string }): string | null {
+  return site.archetype ? site.archetype : null;
+}
+
 const BUILD_STAGE_LABEL: Record<BuildingState["status"], string> = {
   planned: "plot staked out",
   foundation: "foundations in",
@@ -29,6 +61,130 @@ const BUILD_STAGE_LABEL: Record<BuildingState["status"], string> = {
   doored: "door hung",
   completed: "complete",
 };
+/**
+ * The stage ladder, in build order, with the label a developer would use.
+ *
+ * Order is the point: a count per stage is only readable if the stages read
+ * left to right as progress, so this is the ladder and not the alphabet.
+ *
+ * **Every rank, derived from `STAGE_ORDER` rather than restated.** A hand-typed
+ * five-entry version dropped `foundation`, `glazed` and `doored`, and because
+ * the counts are filtered through this list those buildings were then reported
+ * nowhere — the chips did not sum to the "N buildings" line printed directly
+ * above them. CONTEXT.md is explicit that the ladder never skips a rank, so the
+ * panel cannot either: the list is the art's own, and a rank added there shows
+ * up here without anyone remembering this file.
+ */
+const STAGE_LABELS: Partial<Record<Stage, string>> = {
+  planned: "plot",
+  foundation: "found",
+  framed: "framed",
+  walled: "walled",
+  roofed: "roofed",
+  glazed: "glazed",
+  doored: "doored",
+  completed: "done",
+};
+
+const LADDER = STAGE_ORDER.map((key) => ({ key, label: STAGE_LABELS[key] ?? key }));
+
+/**
+ * TownPulse replaces a line that read "14 buildings · 5 districts".
+ *
+ * That was true and useless. The panel exists to answer *what has the agent
+ * actually built here*, and a count of buildings cannot answer it — the same
+ * 14 buildings are a staked field or a finished town, and the difference is
+ * exactly what a reader came for. So this is the one place that says it: how far
+ * along the ladder the town is, what is failing, and what is being worked on
+ * right now.
+ */
+function TownPulse() {
+  const town = useTown((s) => s.town);
+  const live = useTown((s) => s.live);
+  // Above the guard on purpose. A hook called after `if (!town) return null`
+  // changes the hook count on the render where the town first arrives, and
+  // React throws on that rather than on the thing that is actually wrong.
+  const layout = useTown((s) => s.layout);
+  if (!town) return null;
+
+  const at = new Map<string, number>();
+  for (const b of live.buildings) at.set(b.status, (at.get(b.status) ?? 0) + 1);
+  const unresolved = layout?.unresolvedImports;
+  const damaged = live.buildings.filter((b) => b.damaged).length;
+  const verified = live.buildings.filter((b) => b.verified).length;
+
+  // The same two minutes the ember claims, counted the same way. Reusing the
+  // constant is the point: a "recently worked" figure that disagreed with the
+  // glow on the map would be two different claims about one fact.
+  const now = Date.now();
+  const recent = live.buildings.filter((b) => now - b.updated < EMBER_MS).length;
+
+  const present = LADDER.filter((l) => (at.get(l.key) ?? 0) > 0);
+
+  return (
+    <section className="pulse">
+      <h2>Town</h2>
+      <p className="meta">
+        {town.buildings.length} buildings · {town.districts.length} districts
+      </p>
+
+      {present.length > 0 && (
+        <ul className="ladder">
+          {present.map((l) => {
+            const n = at.get(l.key) ?? 0;
+            return (
+              <li key={l.key} title={`${n} at ${l.label}`}>
+                <span className="lcount">{n}</span>
+                <span className="lname">{l.label}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* What the map could not draw.
+          A relative import the scanner resolved to no building produces no road,
+          because a guessed road is a confident lie. But the reader cannot tell
+          "this project has no inter-district dependencies" from "this project
+          has six the map could not place", and those are very different claims.
+          Said here rather than on the map, because it is about the *absence* of a
+          thing and belongs where absences are reported. */}
+      {(unresolved ?? 0) > 0 && (
+        <p className="signals">
+          <span
+            className="sig dim"
+            title="Relative imports naming something the analyzer found no building for. They are real dependencies the map cannot draw, not missing ones."
+          >
+            {unresolved} not drawn
+          </span>
+        </p>
+      )}
+
+      {/* Only what is present. A row of zeroes is noise, and its absence
+          already says the thing it would have said. */}
+      {(damaged > 0 || verified > 0 || recent > 0) && (
+        <p className="signals">
+          {damaged > 0 && (
+            <span className="sig down">
+              {damaged} failing
+            </span>
+          )}
+          {verified > 0 && (
+            <span className="sig done">
+              {verified} verified
+            </span>
+          )}
+          {recent > 0 && (
+            <span className="sig hot" title="worked on in the last two minutes">
+              {recent} just worked
+            </span>
+          )}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function App() {
   const town = useTown((s) => s.town);
   const projects = useTown((s) => s.projects);
@@ -55,6 +211,10 @@ export function App() {
   const turn = useTown((s) => s.turn);
   const turnBy = useTown((s) => s.turnBy);
   const setTurn = useTown((s) => s.setTurn);
+  const view = useTown((s) => s.view);
+  const toggleView = useTown((s) => s.toggleView);
+  const day = useTown((s) => s.day);
+  const setDay = useTown((s) => s.setDay);
 
 
   // The selected site's building state, if it is a building the town knows
@@ -67,6 +227,15 @@ export function App() {
   // than buildings. A place is never "built", so this and `built` are mutually
   // exclusive and the panel picks one branch or the other.
   const place = selected ? placeInfoFor(selected) : null;
+  // What this building is drawn as, and what the repository said it is when the
+  // two differ. Computed here rather than in the scene so the panel and the map
+  // cannot disagree about which building got which name.
+  const drawnName = selected && selected.kind === "building" ? archetypeForSite(selected) : null;
+  const declaredName = selected && selected.kind === "building" ? declaredArchetypeName(selected) : null;
+  // What this building imports, if anything. The map marks *whether* with a ring
+  // inside the building's own plot; this is where the *which* is answered,
+  // because the panel has room for exact names and the map does not.
+  const imports = selected?.imports ?? [];
 
   // The deepest building the daemon reported, so the detail control's range
   // reflects the town rather than a guessed ceiling. A town whose buildings are
@@ -147,11 +316,7 @@ export function App() {
 
         {error && <p className="error">{error}</p>}
 
-        {town && (
-          <p className="meta">
-            {town.buildings.length} buildings · {town.districts.length} districts
-          </p>
-        )}
+        {town && <TownPulse />}
 
         {/* The detail control. It limits which buildings are *drawn*, by how
             deep they sit below the repo root.
@@ -188,14 +353,34 @@ export function App() {
           </section>
         )}
 
-        {/* The view controls. Both are preferences over how the *same* town is
-            shown: neither is sent anywhere, and neither can change what the map
+        {/* The view controls. All three are preferences over how the *same* town
+            is shown: none is sent anywhere, and none can change what the map
             says. Turning is offered only when there is a town to turn, and the
             reset appears only once the view is off its default, so the panel
-            does not carry a control that would do nothing. */}
+            does not carry a control that would do nothing.
+
+            The light is a *phase* and not a clock, and the control names all
+            three rather than stepping through them: a reader who wants night
+            should not have to press a button twice to find out which way the
+            cycle runs, and a control that could show a value nobody chose is a
+            control that lies about the town's one key light. */}
         {town && (
           <section className="view-control">
             <h2>View</h2>
+            <div className="turn-row">
+              <button
+                className="bevel"
+                onClick={toggleView}
+                aria-pressed={view === "plan"}
+                title={
+                  view === "plan"
+                    ? "Back to the isometric town"
+                    : "Look at the town from directly above"
+                }
+              >
+                {view === "plan" ? "Isometric" : "From above"}
+              </button>
+            </div>
             <div className="turn-row">
               <button className="bevel" onClick={() => turnBy(-1)} title="Turn left">
                 Turn left
@@ -214,6 +399,26 @@ export function App() {
                   </button>
                 </>
               )}
+            </p>
+            <div className="turn-row" role="group" aria-label="Time of day">
+              {DAY_PHASES.map((p) => (
+                <button
+                  key={p}
+                  className="bevel"
+                  aria-pressed={day === p}
+                  onClick={() => setDay(p)}
+                  title={`${DAYLIGHT[p].label} — ${
+                    DAYLIGHT[p].lit ? "windows lit" : "no lights"
+                  }`}
+                >
+                  {DAYLIGHT[p].label}
+                </button>
+              ))}
+            </div>
+            <p className="muted">
+              {day === "day"
+                ? "Full light. Every window is glass."
+                : "The light is going. A lit window is the one warm thing left."}
             </p>
           </section>
         )}
@@ -250,6 +455,24 @@ export function App() {
                   <>
                     <dt>Path</dt>
                     <dd className="path">{selected.path}</dd>
+                  </>
+                )}
+                {/* What this building *is*, named. The silhouette has to work
+                    on its own — a placard would let a weak drawing hide behind
+                    a strong word — so this is the fallback for a reader who is
+                    not sure, and the only place the archetype is ever written
+                    down. It reports what the repository declared where there is
+                    a declaration, and the hash's pick otherwise, because a name
+                    the renderer could not draw is still worth saying: it is what
+                    the repository asked for. */}
+                {selected.kind === "building" && (
+                  <>
+                    <dt>Built as</dt>
+                    <dd className="archetype">
+                      {declaredName
+                        ? `${declaredName}${drawnName !== declaredName ? " (declared)" : ""}`
+                        : drawnName}
+                    </dd>
                   </>
                 )}
                 {selected.files > 0 && (
@@ -293,6 +516,22 @@ export function App() {
             >
               Close
             </button>
+          </section>
+        )}
+
+        {imports.length > 0 && (
+          /* The map rings a building that imports anything; this says to whom.
+             Kept to a count plus the list because a town where every building
+             imports nine others should not turn the panel into a second map. */
+          <section className="crew">
+            <h2>Imports</h2>
+            <ul>
+              {imports.map((to) => (
+                <li key={to}>
+                  <span className="at">{to}</span>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
 
@@ -342,9 +581,10 @@ export function App() {
           <h2>Activity</h2>
           {events.length === 0 ? (
             <p className="muted">
-              No events yet. Install the AI Town extension, then start your
-              agent with <code>AI_TOWN_URL</code> set — <code>townd</code>
-              prints the exact commands on startup.
+              No events yet. Install the AI Town extension and start your
+              agent — it finds the daemon on the default port, so no environment
+              variable is needed. Only a daemon started with <code>--port</code>{" "}
+              wants <code>AI_TOWN_URL</code>.
             </p>
           ) : (
             <ul>

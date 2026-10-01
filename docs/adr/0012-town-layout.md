@@ -27,7 +27,14 @@ Lay out the town deterministically from the directory tree. Districts are blocks
 
   **Corrected during implementation.** This was backwards for test districts. Measured on `team-builder`, the `e2e` district holds **16 buildings across only 22 files**, while `src` holds **9 buildings across 65 files**. Sizing by building count alone hands the test framework more land than the code it tests, which inverts the town — the tail visibly wagging the dog.
 
-  The analyzer now marks each district `source` or `test`, and the layout weights test districts by *file count* rather than building count. Test territory stays visible, because ignoring it would be its own lie, but it cannot dominate the site.
+  The analyzer now marks each district `source` or `test`, and the layout tightens a test district's cell pitch to `0.7`. Test territory stays visible, because ignoring it would be its own lie, but it is weighted down relative to a source district of the same shape.
+
+  **Narrowed after measurement.** This originally claimed the layout weighted test districts *by file count*, and that they "cannot dominate the site". Neither is what the code does. It applies a constant pitch, and written as a property over 30 plausible shapes, that property fails 8 times with a worst inversion ratio of 2.58: a 22-building spec suite outranks even a substantial source district. Two further limits, both now tested:
+
+  - **The pitch is invisible below the block floor.** A one-building district is floored to a plate sized for the largest thing that can stand on it, so a test district and a source district of the same shape weigh exactly the same. The pitch is a correction *above* the floor, and most districts in a small town are below it.
+  - **A constant cannot express a relationship between two districts.** Weighting by file count — the original mechanism — would; the constant is a tuning that happens to hold in the middle of the range.
+
+  The honest claim is the one the code makes: *a test district of the same shape as a source district takes less land, where the floor does not bind.* Sizing by file count is a real change to the layout and is deliberately not smuggled in under a bugfix.
 - **Layout is a pure function of the project analysis.** It can be unit-tested without a renderer — assert that a known tree yields known positions.
 - **Roads are not drawn in this decision.** Gaps between district blocks read as space. Explicit road rendering is a later cosmetic concern; the layout does not depend on it.
 - **The Depot, Yard and Workshop need positions too.** They are not in the directory tree, so the layout must reserve fixed land for them — plausibly the Yard as the open ground at the town's centre, since it is where the most work happens. Leaving them unplaced would break the guarantee that every event has somewhere to land.

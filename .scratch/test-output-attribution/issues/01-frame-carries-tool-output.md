@@ -6,19 +6,19 @@ extension sends `isError` and drops `result` entirely.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The extension reads `result.content[].text` and sends it as the frame's
+- [x] The extension reads `result.content[].text` and sends it as the frame's
       `result`
-- [ ] The text is truncated at 64 kB with an explicit marker, so a runaway
+- [x] The text is truncated at 64 kB with an explicit marker, so a runaway
       command cannot push an unbounded frame
-- [ ] `Frame.Result` accepts it; the field is optional so older extensions keep
+- [x] `Frame.Result` accepts it; the field is optional so older extensions keep
       working unchanged
-- [ ] A frame with no result is indistinguishable from today's behaviour — no
+- [x] A frame with no result is indistinguishable from today's behaviour — no
       daemon path changes for agents that send none
-- [ ] Verified against a real omp session, not a synthetic fixture: a `bash`
+- [x] Verified against a real omp session, not a synthetic fixture: a `bash`
       call's output arrives at the daemon
-- [ ] The extension still cannot break the agent: a malformed `result` is
+- [x] The extension still cannot break the agent: a malformed `result` is
       swallowed, never thrown
 
 ## Why

@@ -8,12 +8,34 @@
 
 import { create } from "zustand";
 
+import { type DayPhase, normaliseDay, stepDay } from "./daylight";
+import { type ViewMode, isViewMode } from "./plan";
+
 // SITE_ID_BUILDING_PREFIX mirrors analyzer.SiteIDBuildingPrefix.
 //
 // It is the join key between a worker's resolved Place and the building's
 // position. The two definitions cannot be shared across the language
 // boundary, so this one points at the other rather than restating the reason.
 export const SITE_ID_BUILDING_PREFIX = "building:";
+
+export interface Road {
+  x: number; y: number; w: number; h: number;
+  /** "row", "district" or "containment" — which rule produced the band.
+   *  "import" was here and the analyzer stopped emitting it: a dependency is a
+   *  property of a building now, and the panel is its only reader. */
+  kind: string;
+  /** The two ends of a band's centre line, in world units, for the road kinds
+   *  that join two places.
+   *
+   *  Absent on "row" and "district" — those are areas rather than joins — and
+   *  absent on any payload serialized before this field existed. When present,
+   *  these are the road: `x/y/w/h` is its bounding box, for the camera bounds
+   *  and the turn, and the line is what is painted. */
+  ax?: number;
+  ay?: number;
+  bx?: number;
+  by?: number;
+}
 
 export interface Site {
   id: string;
@@ -23,6 +45,12 @@ export interface Site {
   districtKind?: "source" | "test";
   path?: string;
   files: number;
+  /** The buildings whose source this one names, sorted. The panel lists them,
+   *  because the panel has room for exact names. The map does not read this at
+   *  all: it was drawn on for a while and read as a smudge, so nothing on the
+   *  map says *whether* a building imports — only what it is called. Absent
+   *  when the building imports nothing. */
+  imports?: string[];
   /** Path segments below the repo root: 1 for `internal`, 3 for
    *  `internal/web/static`. The three special places carry 0, so a filter
    *  keyed on depth can never hide the Yard.
@@ -30,6 +58,13 @@ export interface Site {
    *  Sent rather than derived, because the layout is the single source of
    *  truth for geometry (ADR-0012) and a second derivation would drift. */
   depth: number;
+
+  /** What the repository declared this building to be, or undefined when it
+   *  declared nothing. Undefined is the normal case and means "hash the path".
+   *
+   *  Sent rather than read from the manifest in the browser: a declaration is
+   *  one fact, which is the split ADR-0012 exists to prevent. */
+  archetype?: string;
 
   /** Total source bytes, and the storeys derived from them. Distinct from
    *  `files`, which drives the footprint: `files` is how many parts a building
@@ -64,7 +99,23 @@ export interface PlacedDistrict {
 
 export interface Layout {
   sites: Site[];
+  roads?: Road[];
   districts: PlacedDistrict[];
+
+  /**
+   * How many relative imports named something the analyzer found no building for,
+   * and so drew no road.
+   *
+   * The map shows fewer roads than the code has dependencies whenever this is
+   * non-zero, and without the count the absence reads as a fact about the
+   * repository rather than a limit of the scanner. A bare specifier is a package
+   * elsewhere by definition and is not counted — a number that cries wolf is
+   * worse than no number.
+   *
+   * Optional, because a layout serialized before this field existed does not have
+   * it, and reading it must not be a way for an old payload to fail.
+   */
+  unresolvedImports?: number;
   width: number;
   height: number;
 }
@@ -99,6 +150,11 @@ export interface BuildingState {
   problems: number;
   /** Whether the building is currently damaged. A condition, not a stage. */
   damaged: boolean;
+  /** Whether a test has passed here and nothing has failed since. A condition
+   *  beside `damaged`, never a stage: the two are mutually exclusive and
+   *  together exhaustive, so a building is known-good, known-broken, or
+   *  unknown. The daemon owns this; the renderer only draws it. */
+  verified: boolean;
   lastAgent: string;
   // The construction ladder, mirroring internal/town's Status values in order.
   // Kept as a union rather than a string so a stage the daemon can emit but the
@@ -209,6 +265,38 @@ interface State {
    */
   turn: number;
 
+  /**
+   * Which way the town is drawn: isometric, or straight down.
+   *
+   * A view preference like `depth` and `turn`, and never sent to the daemon.
+   *
+   * **The plan view is not a camera.** The isometric art has the 2:1 skew
+   * baked into its pixels — every wall face, window, chimney and machine is drawn
+   * as seen from the side and above — so a top-down rendering of *that* art is not
+   * a transform, it is a re-authoring of all 1145 cels. The plan view is
+   * therefore a second drawing of the same **layout**: every plot as the
+   * rectangle it actually is, its name on it, districts outlined, roads as bands.
+   * It reads the town's structure, and it costs no atlas and no bake.
+   *
+   * What it cannot show is height, and height is how this town encodes size —
+   * a directory's file count becomes its floors. The plan view carries that
+   * explicitly instead: the storey count is printed on the plot and the fill
+   * brightness follows the construction stage. Without that the map would be
+   * lying by omission.
+   */
+  view: ViewMode;
+
+  /**
+   * The town's one key light: a phase, not a clock.
+   *
+   * A view preference like `depth` and `turn`, and never sent to the daemon.
+   * Nothing in the analysis or the event stream says what time it is, so a
+   * clock would be a value the town invented; a phase is a fact it can hold —
+   * and at dusk the lit windows are the only thing on the map that says the
+   * work has stopped for the day.
+   */
+  day: DayPhase;
+
   setProjects: (p: ProjectRef[], current: string) => void;
   setCurrent: (path: string) => void;
   setTown: (t: Town | null, l: Layout | null, live?: Live) => void;
@@ -227,6 +315,14 @@ interface State {
   turnBy: (delta: number) => void;
   /** setTurn selects an orientation outright, for resetting to the default. */
   setTurn: (t: number) => void;
+  /** setView switches between the isometric town and the plan. */
+  setView: (v: ViewMode) => void;
+  /** toggleView flips it, for a single control. */
+  toggleView: () => void;
+  /** dayBy steps the key light through its phases, wrapping. */
+  dayBy: (delta: number) => void;
+  /** setDay selects a phase outright, for a control that names all three. */
+  setDay: (d: DayPhase) => void;
 }
 
 // A bounded event log. The town is the point; the feed is supporting detail,
@@ -253,6 +349,8 @@ export const useTown = create<State>((set) => ({
   // Upright, which is the orientation the art was authored at and the one that
   // shows the daemon's own idea of the town.
   turn: 0,
+  view: "iso" as ViewMode,
+  day: "dusk" as DayPhase,
   setTown: (town, layout, live) =>
     set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
   setProjects: (projects, current) => set({ projects, current }),
@@ -283,4 +381,8 @@ export const useTown = create<State>((set) => ({
   setDepth: (depth) => set({ depth }),
   turnBy: (delta) => set((s) => ({ turn: (((s.turn + delta) % 4) + 4) % 4 })),
   setTurn: (turn) => set({ turn: (((turn % 4) + 4) % 4) }),
+  setView: (view) => set({ view: isViewMode(view) ? view : "iso" }),
+  toggleView: () => set((s) => ({ view: s.view === "plan" ? "iso" : "plan" })),
+  dayBy: (delta) => set((s) => ({ day: stepDay(s.day, delta) })),
+  setDay: (day) => set({ day: normaliseDay(day) }),
 }));

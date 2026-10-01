@@ -30,7 +30,8 @@ import { type Turn, normaliseTurn, turnPoint } from "../view";
  * how its pixels overwrite a neighbour's — are both single numbers derived from
  * its midpoint, and a corner pair would invite comparing the wrong two.
  */
-interface Face {
+/** A wall of a box's footprint, as the two visible ones are resolved for a turn. */
+export interface Face {
   /** 0 for a face fixed in world x, 1 for one fixed in world y. */
   axis: 0 | 1;
   fixed: number;
@@ -156,6 +157,37 @@ export class IsoPix {
     return f.axis === 0
       ? { x: f.fixed, y: (f.from + f.to) / 2 }
       : { x: (f.from + f.to) / 2, y: f.fixed };
+  }
+
+  
+/**
+   * frontCorner is the footprint corner nearest the camera, for a square of
+   * `side` at the origin.
+   *
+   * Anything drawn *on* a building rather than *of* it has to ask this, because
+   * a fixed world coordinate is only ever on the right corner at one turn. That
+   * is not a small error: the verification pennant was anchored at
+   * (0.6s, 0.28s), which is a roof corner at turn 0 and empty air at turn 1 — so
+   * the flag appeared to float beside the building as soon as the town turned.
+   *
+   * Ties are broken on screen x, so the choice is the same every time for a
+   * given turn rather than depending on sort order — the flag must not hop from
+   * one corner to another as the art is re-baked.
+   */
+  frontCorner(side: number): { x: number; y: number } {
+    const corners = [
+      { x: 0, y: 0 },
+      { x: side, y: 0 },
+      { x: 0, y: side },
+      { x: side, y: side },
+    ];
+    const best = corners.reduce((a, b) => {
+      const da = this.depth(a.x, a.y);
+      const db = this.depth(b.x, b.y);
+      if (db !== da) return db > da ? b : a;
+      return this.screenX(b.x, b.y) > this.screenX(a.x, a.y) ? b : a;
+    });
+    return best;
   }
 
   /**
@@ -435,7 +467,7 @@ export class IsoPix {
    *
    * The ridge axis is chosen by the same `ridgeRunsAlongX` test `gable` uses, so
    * the serration stays across the viewer's line of sight as the town turns, and
-   * both roof kinds turn with the world rather than with the camera.
+   * both roof shapes turn with the world rather than with the camera.
    */
   ridgeProfile(
     x: number,
@@ -546,9 +578,12 @@ export class IsoPix {
         const dy = (wy - cy) / ry;
         const t = Math.min(1, Math.sqrt(dx * dx + dy * dy));
         const rise = fall(t);
-        // Which band of the dome this is, by height and by depth. Naming the plane
-        // is what gives the dome its shading, and it is derived from the height
-        // rather than from the position so the three bands always meet cleanly.
+        // Which band of the dome this is. `top` is chosen by height: the rise is
+        // at least 0.66 of the apex rise `fall(0)`. The other two are *not* chosen
+        // by height and not by camera depth — they are split by world y against
+        // the centre, rows above `cy` taking `far` and rows below it `near`, so
+        // the far/near join is a straight row through the middle that cuts
+        // across the circular edge of the top band rather than following it.
         const ink = rise >= fall(0) * 0.66 ? shade.top : wy < cy ? shade.far : shade.near;
         this.plot(wx, wy, zEave + rise, ink);
         if (prev >= 0) {
@@ -604,7 +639,7 @@ export class IsoPix {
   }
 
   /**
-   * shadeFace darkens or lightens every opaque pixel inside a screen-space
+   * tintRect darkens or lightens every opaque pixel inside a screen-space
    * rectangle. It is the cheap way to add a form shadow after the fact — under
    * an eave, beside a doorway — without re-running a fill with another colour.
    */
@@ -671,6 +706,14 @@ export function boundsOf(
   return { minX, minY, maxX, maxY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
-/** The hand-drawn half-width of a footprint's shadow in world units. Shadow is
- *  what stops a building looking pasted onto the ground. */
+/**
+ * SHADOW_OFFSET is 0, and nothing in the tree reads it.
+ *
+ * A footprint's ground shadow is not displaced by this constant. `buildShadow`
+ * bakes the shadow as its own cel lying flat at z = 0, offset 2 world units
+ * along x and 3 along y — `footprint(2, 3, side + 3, side + 3, 0, …)` — so the
+ * half-width a shadow is given is zero here and the only real offset is that
+ * one call. Shadow is still what stops a building looking pasted onto the
+ * ground; it just is not this number.
+ */
 export const SHADOW_OFFSET = 0;

@@ -97,6 +97,19 @@ export const PLACARD = {
   /** What a worker is doing. Small, high, and on the cool plate, so it never
    *  competes with the figures it describes. */
   doing: { ink: P.paper, plate: P.plateCool, border: P.ink },
+  /** A storey count, on the plan view's plots.
+   *
+   *  A *role* rather than a one-off text object, because the alternative was a
+   *  Phaser `Text` — and this project has already decided against that in
+   *  writing: "It is never a Phaser `Text` object, because a canvas font
+   *  arrives antialiased and would be the one soft-edged thing on a screen of
+   *  hard pixels." The first build of the plan used `add.text` anyway, and this
+   *  is the fix: the same 3x5 bitmap face, on the same plate system, as every
+   *  other thing the town says.
+   *
+   *  Deliberately not `doing`. A number is not a caption, and a plate styled
+   *  like a caption would be read as one. */
+  count: { ink: P.paper, plate: P.plateCool, border: P.ink },
 } as const;
 
 export type PlacardRole = keyof typeof PLACARD;
