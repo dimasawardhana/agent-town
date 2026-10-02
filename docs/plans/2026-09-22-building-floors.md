@@ -1,5 +1,23 @@
 # Building Floors and Skyscrapers Implementation Plan
 
+> **Status: finished and merged** — the deliverable is in the tree, merged before
+> `34e57d7` (2026-10-01). There is no remaining work in this plan. The checkboxes
+> below were never ticked and are left unticked on purpose, for the same reason
+> as the follow-view plan beside it: ticking them would record an execution
+> nobody watched. The deliverable was verified in the tree on 2026-10-02 —
+> `Floors` on the wire (`internal/analyzer/layout.go:80`), `Floors()`
+> (`:228`), `ContainerFloors()` (`:284`), `floors` on the UI `Site`
+> (`ui/src/store.ts:76`), and towers stacked at runtime in a Phaser `Container`
+> (`ui/src/scene.ts:293-297`, `stackContainer`/`stackParts`) — the runtime
+> composition this plan chose over baking a cel per height, with the eight-rank
+> ladder unchanged. **The facade gap this document raises at the end is closed**,
+> and not by the fix it guessed at: `storeyShell` draws windows per storey at
+> the `glazed` rank (`ui/src/art/building.ts:401`) rather than leaving them in
+> the cap, so a tower wears its glazing up its whole height. It shipped as a
+> 60-cel overlay cut from the band's own box (`ui/src/art/bake.ts:510`) because
+> a `windowsPerStorey` *axis* on the base and band would have cost 400 cels and
+> blown the ceiling — the gap was real, the proposed fix was the expensive one.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make building height reflect the total size of a building's source so a large module reads as a tall tower or a skyscraper, while the existing eight-rank construction ladder keeps working unchanged.

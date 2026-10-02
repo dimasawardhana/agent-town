@@ -303,15 +303,23 @@ func LayoutTown(t *Town) Layout {
 	// an event must always have somewhere to land (ADR-0012).
 	y := 40.0
 	yardW, yardH := 420.0, 150.0
+	placeW := 340.0
 	// The three places carry one floor and no bytes: they are furnished ground
 	// rather than buildings, and a Yard twenty storeys high would be nonsense.
 	// Set explicitly rather than left at Go's zero, because `floors: 0` on the
 	// wire is a claim the renderer would have to defend against — and a fact
 	// that is only true because a reader clamps it is not a fact the data holds.
+	//
+	// `placeW` was 200 and is sized against the *furniture*, not against the
+	// Yard. A prop is drawn at `PROP_SCALE` 2, which is 30-38 picture pixels
+	// across, and 2:1 turns a column of a 200-unit plot into roughly 47 pixels of
+	// spacing — so a Workshop could only be furnished without its props sitting
+	// inside one another by holding three. The Yard was always wide enough; the
+	// other two were not, and the shortfall was invisible until the props grew.
 	l.Sites = append(l.Sites,
 		Site{ID: "yard", Kind: PlaceYard, Label: "Yard", X: 40, Y: y, W: yardW, H: yardH, Floors: 1},
-		Site{ID: "workshop", Kind: PlaceWorkshop, Label: "Workshop", X: 40 + yardW + 24, Y: y, W: 200, H: yardH, Floors: 1},
-		Site{ID: "depot", Kind: PlaceDepot, Label: "Depot", X: 40 + yardW + 24 + 200 + 24, Y: y, W: 200, H: yardH, Floors: 1},
+		Site{ID: "workshop", Kind: PlaceWorkshop, Label: "Workshop", X: 40 + yardW + 24, Y: y, W: placeW, H: yardH, Floors: 1},
+		Site{ID: "depot", Kind: PlaceDepot, Label: "Depot", X: 40 + yardW + 24 + placeW + 24, Y: y, W: placeW, H: yardH, Floors: 1},
 	)
 	y += yardH + 48
 

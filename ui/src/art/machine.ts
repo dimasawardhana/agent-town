@@ -1,42 +1,38 @@
-// The fleet, drawn as authored pixel grids rather than as boxes.
+// The fleet, drawn in the same 2:1 dimetric the rest of the town is.
 //
-// A tracked excavator built from `iso.box` calls is a solid rectangular prism,
-// and five of them in a row is a lump. The silhouette test — fill the sprite
-// solid, can you still name it? — fails outright, and that is the one test a
-// machine has to pass before any interior pixel is worth drawing. The measured
-// old excavator was one mass with a notch in it.
+// **These used to be character grids** — rows of material letters, shaded by a
+// rule that put the brightest step on any pixel whose upper-left neighbour was
+// empty and the darkest on any whose lower-right one was. That is a 1px rim
+// round a flat field. An excavator's body was twenty-eight pixels wide and four
+// rows deep, so 112 of its pixels took one identical step: the fleet was flat
+// orange bars with an edge, and it read as two-dimensional standing next to
+// buildings that had real faces.
 //
-// **Why a grid and not `iso.box`.** A box knows how to fill a prism and nothing
-// else. It cannot make a boom that angles, a cab that sits *on* a track rather
-// than merging with it, or a jib that is thin in one axis — and those gestures
-// are the whole vocabulary of a machine. A grid is more work and it is the only
-// way to get a silhouette.
-//
-// **Why the light is a rule and not a hand.** Five machines shaded by hand drift:
-// one gets a top-left key, another an overhead one, and a fleet lit from two
-// directions reads as two fleets. One pass over one mask makes the key light the
-// same for every pixel, which is the same argument the buildings' `visibleFaces`
-// makes and the same reason it exists. Key is top-left, the iso convention.
+// **So there are no grids now.** Every machine is drawn through `IsoPix`, the
+// same primitive every building and every prop is drawn through, and it hands
+// back a top face, a lit flank and a flank that turns away for each box. The
+// key is the town's key — light up and to the left — so a machine belongs to
+// the town it is standing in rather than sitting on top of it in another idiom.
 //
 // **A machine is three things:** a wide low undercarriage it cannot move without,
-// something standing on it, and one asymmetric gesture above that. The gesture
-// names the kind and the pose is carried entirely by that gesture — so the
-// chassis is authored once per kind and only the arm varies. That is why a pose
-// is legible at a glance: nothing else on the machine is allowed to change.
+// something standing on it, and one asymmetric gesture above. The gesture names
+// the kind and carries the pose entirely, so the chassis is authored once per
+// kind and only the arm varies. The gesture's *direction* is what separates the
+// kinds — a boom that rises and falls, a jib that runs out sideways, a bucket
+// that drops to the ground, a blade that stays low — because a difference in
+// height alone is a difference a silhouette barely shows.
+//
+// **It turns, because `IsoPix` turns.** The old fleet drew one picture and used
+// it at every orientation, which a tracked vehicle cannot survive. Each quarter
+// turn re-projects the same boxes rather than mirroring a sprite.
 
-import { Pix } from "./surface";
+import { IsoPix } from "./iso";
 import { P } from "./palette";
-import type { Turn } from "../view";
-import { WorldView, normaliseTurn } from "../view";
+import { type Ink, Pix } from "./surface";
+import { normaliseTurn, WorldView } from "../view";
 import type { WorkerState } from "./worker";
 
-/**
- * The four poses, in the order a reader meets them.
- *
- * Named for what they *show*, not for the verb: a pose that said "digging" would
- * claim a test run was an edit, which is the false claim this whole town exists
- * to avoid (ADR-0004 §9).
- */
+/** The four poses, in the order a reader meets them. */
 export type MachinePose = "work" | "idle" | "travel" | "done";
 
 export const MACHINE_POSES: readonly MachinePose[] = ["work", "idle", "travel", "done"];
@@ -76,605 +72,251 @@ export function machineFor(key: string): MachineKind {
   return MACHINES[(h >>> 0) % MACHINES.length];
 }
 
-// --- the material key -------------------------------------------------------
+// --- the materials ----------------------------------------------------------
 //
-// A character names a *material*, not a colour, and the shading pass below picks
-// the ramp step. Naming the material is what lets one rule light all five kinds
-// identically; naming the colour would put that decision in five hands.
-//
-// Five materials and no more. `glass` and `canvas` were here for a cab window
-// and a tarpaulin that no grid draws, which is the smallest possible version of
-// an abstraction built for a need nobody has — and a key nobody reaches is a
-// material that would be mis-shaded silently if one were ever added.
-const MAT: Record<string, readonly string[]> = {
-  // Track rubber: the darkest thing on the machine, and what it sits on.
-  t: P.rubber,
-  // Tread highlight: the raised band a track's wheels run on. Its own key so
-  // the track reads as wheels rather than as a slab, which is what a solid three
-  // rows of `t` came out as — a dark bar under the body with no interior at all.
-  //
-  // Reachable and used on the wheel row of every crawler, so it does not
-  // violate the rule above about keys nobody reaches.
-  u: [P.rubber[1], P.rubber[2], P.rubber[3], P.rubber[3]],
-  // Body, in the industrial orange-brown the town already had for the Depot.
-  y: P.rust,
-  // Structure: the grey of a boom, a mast or a frame.
-  //
-  // **Deliberately stops two steps short of `P.metal`'s top.** The arm was
-  // reading as the brightest thing on the sprite — a near-white wire — while the
-  // body it is bolted to was a dull slab, which inverts the hierarchy: the eye
-  // goes to the least important part. A boom is painted steel, and painted steel
-  // in this town's light is two steps below bare metal.
-  v: [P.metal[0], P.metal[1], P.metal[1], P.metal[2]],
-  // Glass: a hole with a reflection in it, not a surface. One step brighter
-  // than `P.glass`'s own ramp, for the same reason the arm is darkened — a cab
-  // window in `P.glass[2]` against a rust body is invisible, and the cab is the
-  // one thing that says a machine is driven rather than pushed.
-  g: [P.glass[1], P.glass[2], P.glass[3], P.glass[3]],
-  // Bare steel: a blade, a bucket, a hook.
-  s: P.stone,
-  // The beacon — the brightest pixel and the only warm one.
-  // Darkest to lightest, like every other ramp here. It was written the other way
-  // round, so the beacon's lit edge took its *darkest* step and its shadow edge
-  // its brightest — the one material in the fleet lit against the key.
-  a: [P.helmetChief[0], P.helmetChief[1], P.helmetChief[2], P.helmetChief[3]],
-};
+// A shade, not a ramp: `IsoPix` wants to be told which face it is filling, and
+// deciding that from a pixel's neighbours is exactly the guesswork this rewrite
+// removed.
 
-// The grid the fleet is authored on.
-//
-// **This was 26 and 103 of the 260 arm rows are wider than that** — up to 29
-// characters. `buildMachine` walks `x < W`, so every one of those rows had its
-// right-hand end silently dropped: the far side of the excavator's boom and the
-// outer half of several buckets were being drawn into nothing. The art was not
-// wrong; the grid it was written on was smaller than the art.
-//
-// Free to fix. The atlas packs to the size of its *largest* cel, which is a
-// 115x101 building, so growing a 28x22 machine to 32x24 moves nothing — the
-// sheet is 2048x8192 either way, measured.
-const W = 30;
-const ARM_H = 13;
-const BASE_H = 7;
-const H = ARM_H + BASE_H;
+const TRACK: Shade = { top: P.rubber[2], lit: P.rubber[1], shadow: P.rubber[0], edge: P.ink };
+const TREAD: Shade = { top: P.rubber[3], lit: P.rubber[2], shadow: P.rubber[1], edge: P.ink };
+const BODY: Shade = { top: P.rust[2], lit: P.rust[3], shadow: P.rust[1], edge: P.ink };
+const DECK: Shade = { top: P.rust[3], lit: P.rust[2], shadow: P.rust[0], edge: P.ink };
+// Deliberately two steps short of `P.metal`'s top. A boom reading as the
+// brightest thing on the sprite inverts the hierarchy: the eye goes to the
+// least important part. Painted steel in this town's light is two below bare.
+const ARM: Shade = { top: P.metal[2], lit: P.metal[2], shadow: P.metal[0], edge: P.ink };
+const GLASS: Shade = { top: P.glass[3], lit: P.glass[3], shadow: P.glass[1], edge: P.ink };
+const STEEL: Shade = { top: P.stone[3], lit: P.stone[2], shadow: P.stone[1], edge: P.ink };
+const BEACON: Shade = { top: P.helmetChief[3], lit: P.helmetChief[3], shadow: P.helmetChief[2], edge: P.ink };
 
-/**
- * The undercarriage and body, authored once per kind.
- *
- * Three rows of body over three of track, and everything above this is the arm —
- * the arm is the only part allowed to move.
- *
- * Three rules hold across all five kinds, and each was a defect first:
- *
- *  1. **The rows above the track are body, not air.** They used to be blank
- *     "space for the boom", and the arms ended two to six rows above them —
- *     measured across all twenty kind/pose pairs, `driver` idle had six. An arm
- *     floating over a pair of lumps is two objects, and the eye is right.
- *  2. **The body is wider than the track.** One 26-pixel plank of body and track
- *     reads as a slab with nothing on it. A body that overhangs its track has a
- *     shoulder, and a shoulder is what says "this thing sits on wheels".
- *  3. **A cab, in glass.** The body is the one part that never moves, so it is
- *     the only place a cab can live — and a lit window is the single pixel that
- *     says somebody drives this.
- *
- * The track is one continuous run, not two. The old pair of lumps read as two
- * objects standing next to each other, and the tread rhythm comes from `shade()`
- * rimming the run rather than from alternating characters by hand.
- */
-// Every row is exactly W. They were not: five ran to 34 columns against a
-// 30-wide grid, so the right edge of the machine was being clipped away — the
-// same defect the arm rows had, found again in the place it had been fixed.
-// The cab is a *block*, two rows deep, set to one side and clear of where the
-// arm's foot lands. It used to be a single row of glass along the body's far
-// edge, which in an isometric view is a line seen edge-on — it could not read at
-// any size, and one row of `P.glass` against a rust body is not a window.
-//
-// Under the cab: an engine deck two rows of `y` the full width of the machine,
-// which is what gives the body its top face. Under that: three rows of track,
-// with the middle one a tread so the track reads as wheels rather than a bar.
-const CHASSIS: Record<MachineKind, string[]> = {
-  excavator: [
-    "..yyyyyyygggggggggggggggggg...",
-    ".tyyyyyyyyggggggggggggggggggt.",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
-    "..tttttttttttttttttttttttttt..",
-    ".utututututututututututututut.",
-    "..tttttttttttttttttttttttttt..",
-  ],
-  crane: [
-    ".....yyyyyygggggggggggg.......",
-    "....tyyyyyyyggggggggggggt.....",
-    "...tyyyyyyyyyyyyyyyyyyyyyyt...",
-    "...tyyyyyyyyyyyyyyyyyyyyyyt...",
-    "....tttttttttttttttttttttt....",
-    "....ututututututututututut....",
-    "....tttttttttttttttttttttt....",
-  ],
-  loader: [
-    ".yyyyyyygggggggggggggggggg....",
-    "yyyyyyyyyggggggggggggggggggt..",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
-    ".tttttttttttttttttttttttttttt.",
-    ".utututututututututututututut.",
-    ".tttttttttttttttttttttttttttt.",
-  ],
-  driver: [
-    ".yyyyyyyyggggtyyyyyyyygggg....",
-    "tyyyyyyyyyggggtyyyyyyyyyyggggt",
-    "tyyyyyyyyy....tyyyyyyyyyy....t",
-    "tyyyyyyyyy....tyyyyyyyyyy....t",
-    "..tttttttt.....tttttttt.......",
-    "..utututut.....utututut.......",
-    "..tttttttt.....tttttttt.......",
-  ],
-  dozer: [
-    "..yyyyyyyygggggggggggggg......",
-    ".tyyyyyyyyyggggggggggggggt....",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
-    "tyyyyyyyyyyyyyyyyyyyyyyyyyyyyt",
-    ".tttttttttttttttttttttttttttt.",
-    ".utututututututututututututut.",
-    ".tttttttttttttttttttttttttttt.",
-  ],
-};
+interface Shade {
+  top: Ink;
+  lit: Ink;
+  shadow: Ink;
+  edge?: Ink;
+}
 
-/**
- * The arm, per kind per pose. Thirteen rows of the whole drawing.
- *
- * Read as a single gesture: the excavator's reach changes most, the crane's jib
- * changes least, and that difference between kinds *is* the fleet. A crane whose
- * pose is a big swing reads as an excavator, which is the failure the crest
- * height and arm length are there to prevent.
- */
-const ARM: Record<MachineKind, Record<MachinePose, string[]>> = {
-  // A boom that reaches, bites, folds and lifts. The widest gesture of the five.
-  excavator: {
-    work: [
-      "..........aaaaaa...........",
-      "..........aaaaaa...........",
-      ".........vvvvvvv..........",
-      "........vvvv..vvvv.........",
-      ".......vvvv.....vvvv.......",
-      "......vvvv........vvvv.....",
-      ".....vvvv...........ssss...",
-      "....vvvv............sssss..",
-      "...vvvv.............ssssss.",
-      "..vvvv...............sssss.",
-      "..vvvv................ssss.",
-      "..vvvvv....................",
-      "..vvvv.....................",
-    ],
-    idle: [
-      "..........aaaaaa...........",
-      "..........aaaaaa...........",
-      ".........vvvvvvv..........",
-      "........vvvv..vvvv.........",
-      ".......vvvv.....vvvv.......",
-      "......vvvvv.......vvvv.....",
-      ".....vvvv.........vvvv.....",
-      "....vvvv...........vvvv....",
-      "...vvvv.............vvv....",
-      "..vvvv...............vvv...",
-      "..vvvv...............vvv...",
-      "..vvvv....................",
-      "..........................",
-    ],
-    travel: [
-      "..........aaaaaa...........",
-      "..........aaaaaa...........",
-      ".........vvvvvvv..........",
-      "........vvvv..vvvv.........",
-      ".......vvvv.....vvvv.......",
-      "......vvvvv.......vvvv.....",
-      ".....vvvv.........vvvv.....",
-      "....vvvv...........vvvv....",
-      "...vvvv.............vvv....",
-      "..vvvv...............vvv...",
-      "..vvvvv....................",
-      "..vvvv.....................",
-      "..........................",
-    ],
-    done: [
-      "..........aaaaaa...........",
-      "..........aaaaaa...........",
-      ".........vvvvvvv..........",
-      "........vvvv..vvvv.........",
-      ".......vvvv.....vvvv.......",
-      "......vvvvv........vvv.....",
-      ".....vvvv..........vvv.....",
-      "....vvvv............vvv....",
-      "...vvvv..............vvv...",
-      "..vvvv................vvv..",
-      "..vvvvv....................",
-      "..vvvv.....................",
-      "..........................",
-    ],
-  },
-  // A mast and a jib. The gesture is horizontal, so it can only change length —
-  // and that is why a crane is never mistaken for anything else.
-  crane: {
-    // A crane's gesture is horizontal, so it has almost nothing to articulate
-    // vertically — which means the length of the jib is the whole pose. The
-    // first version drew the same jib twice and changed only the load, so a
-    // working crane looked exactly like a parked one; reaching out and landing
-    // something is a different shape, not a different colour.
-    work: [
-      "..................aaaaa....",
-      "..................aaaaa....",
-      "................vvvvv.....",
-      "...............vvvvvvv.....",
-      "..............vvvv.vvv.....",
-      ".............vvvv...vvv....",
-      "............vvvv.....vvv...",
-      "...........vvvv.......vvv..",
-      "..........vvvv........sss..",
-      ".........vvvv.........sss..",
-      "........vvvv..........sss..",
-      "........vvvv..............",
-      "........vvvv..............",
-    ],
-    idle: [
-      "..............aaaaa........",
-      "..............aaaaa........",
-      "..............vvvvv........",
-      ".............vvvvvvv.......",
-      "............vvvv.vvv.......",
-      "...........vvvv...vvv......",
-      "..........vvvv.....vvv.....",
-      ".........vvvv.......vvv....",
-      "........vvvv........vvv....",
-      ".......vvvv.........vvv....",
-      "......vvvv................",
-      "......vvvv................",
-      "......vvvv................",
-    ],
-    travel: [
-      "................aaaaa......",
-      "................aaaaa......",
-      "................vvvvv.....",
-      "...............vvvvvvv.....",
-      "..............vvvv.vvv.....",
-      ".............vvvv...vvv....",
-      "............vvvv.....vvv...",
-      "...........vvvv.......vvv..",
-      "..........vvvv........vvv..",
-      ".........vvvv.........vvv..",
-      "........vvvv..............",
-      "........vvvv..............",
-      "........vvvv..............",
-    ],
-    done: [
-      "............aaaaa.........",
-      "............aaaaa.........",
-      "............vvvvv.........",
-      "...........vvvvvvv........",
-      "..........vvvv.vvv........",
-      ".........vvvv...vvv.......",
-      "........vvvv.....vvv......",
-      ".......vvvv.......vvv.....",
-      "......vvvv.........aaa....",
-      ".....vvvv..........aaa....",
-      "....vvvv.....................",
-      "....vvvv.....................",
-      "....vvvv.....................",
-    ],
-  },
-  // Arms that lift a bucket. Short and low, so the silhouette stays a wedge.
-  loader: {
-    work: [
-      "..........................",
-      "..........................",
-      "..........................",
-      "................aaaaaa.....",
-      "...............aaaaaaa.....",
-      "..............vvvv..vvv....",
-      ".............vvvv....vvv...",
-      "............vvvv......vvv..",
-      "...........vvvv........ssss",
-      "..........vvvv.........ssss",
-      ".........vvvv........ssssss",
-      "..........................",
-      "..........................",
-    ],
-    idle: [
-      "..........................",
-      "..........................",
-      "..............aaaaaa......",
-      ".............aaaaaaa......",
-      "............vvvv..vvv.....",
-      "...........vvvv....vvv....",
-      "..........vvvv......vvv...",
-      ".........vvvv........vvv..",
-      "........vvvv.........ssss.",
-      ".......vvvv..........sssss",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-    travel: [
-      "..........................",
-      "..........................",
-      ".............aaaaaa.......",
-      "............aaaaaaa.......",
-      "...........vvvv..vvv......",
-      "..........vvvv....vvv......",
-      ".........vvvv......vvv.....",
-      "........vvvv........vvv....",
-      ".......vvvv.........ssss...",
-      "......vvvv..........sssss..",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-    done: [
-      "..........................",
-      "............aaaaaa........",
-      "...........aaaaaaa........",
-      "..........vvvv..vvv.......",
-      ".........vvvv....vvv......",
-      "........vvvv......vvv.....",
-      ".......vvvv........vvv.....",
-      "......vvvv..........vvv....",
-      ".....vvvv...........aaa...",
-      "....vvvv............aaa...",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-  },
-  // An open frame with a weight on it. The frame is *open*, and that is the only
-  // way a pile driver reads as a pile driver rather than as a post.
-  driver: {
-    work: [
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvvv.vvvv......",
-      "...........vvvv.vvv.......",
-      "...........sssssssss......",
-      "............ssssssss......",
-      ".............ssssss.......",
-      "..............ssss........",
-      "..............ssss........",
-      "..........................",
-      "..........................",
-    ],
-    idle: [
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvvv.vvvv......",
-      "...........vvvv.vvv.......",
-      "...........aaaa.aaa.......",
-      "............aaaaaaa.......",
-      ".............aaaaa........",
-      "..........................",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-    travel: [
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvvv.vvvv......",
-      "...........vvvv.vvv.......",
-      "...........aaaaaaaaa......",
-      "............aaaaaaa.......",
-      ".............aaaaa........",
-      "..........................",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-    done: [
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvv...vvv......",
-      "..........vvvvv.vvvv......",
-      "...........vvvv.vvv.......",
-      "...........aaaa.aaa.......",
-      "............aaaaaaa.......",
-      ".............aaaaa........",
-      "..........................",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-  },
-  // A blade and an arm. Lowest of the fleet: the mass is all forward.
-  dozer: {
-    work: [
-      "..........................",
-      "..........................",
-      "..........................",
-      "..........................",
-      "..........................",
-      ".............aaaaaa.......",
-      "............aaaaaaa.......",
-      "...........vvvv..vvv......",
-      "..........vvvv....vvv......",
-      ".........vvvv......vvv.....",
-      "........vvvv........sss....",
-      "..........................",
-      "..........................",
-    ],
-    idle: [
-      "..........................",
-      "..........................",
-      "..........................",
-      "............aaaaaa........",
-      "...........aaaaaaa........",
-      "..........vvvv..vvv.......",
-      ".........vvvv....vvv......",
-      "........vvvv......vvv.....",
-      ".......vvvv........vvv....",
-      "......vvvv.........sss....",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-    travel: [
-      "..........................",
-      "..........................",
-      "..........................",
-      "..........................",
-      ".............aaaaaa.......",
-      "............aaaaaaa.......",
-      "...........vvvv..vvv......",
-      "..........vvvv....vvv......",
-      ".........vvvv......vvv.....",
-      "........vvvv........vvv....",
-      ".......vvvv.........sss....",
-      "..........................",
-      "..........................",
-    ],
-    done: [
-      "..........................",
-      "..........................",
-      "..........aaaaaa...........",
-      ".........aaaaaaa...........",
-      "........vvvv..vvv.........",
-      ".......vvvv....vvv........",
-      "......vvvv......vvv.......",
-      ".....vvvv........vvv.......",
-      "....vvvv.........aaa.......",
-      "................aaaa.......",
-      "..........................",
-      "..........................",
-      "..........................",
-    ],
-  },
-};
-
-// A one-pixel margin all round.
-//
-// The outline pass writes ink into the cells *beside* the silhouette, so a grid
-// whose art touches an edge puts its own outline on the cel border — and the
-// town has always refused a mark that runs off its own frame, because a clipped
-// outline is worse than none. The margin is the honest fix; shrinking the art to
-// dodge it would be the other one.
-const EMPTY_ROW = ".".repeat(W);
-const PAD = 1;
-const CEL_W = W + PAD * 2;
-const CEL_H = H + PAD * 2;
-
-/**
- * shade walks the mask once and picks each pixel's ramp step.
- *
- * The rule is deliberately simple and identical for every machine: a pixel whose
- * upper-left neighbour is empty is the *lit* edge, one whose lower-right
- * neighbour is empty is the *shadowed* edge, and anything else takes the middle.
- * It is not a lighting model. It is one key light, applied the same way to every
- * pixel in the fleet, which is the only property that makes five machines read
- * as five members of one thing.
- */
-function shade(mask: string[]): (string | null)[][] {
-  const solid = (x: number, y: number): boolean =>
-    x >= 0 && y >= 0 && x < W && y < H && mask[y][x] !== ".";
-  return mask.map((row, y) =>
-    row.split("").map((ch: string, x: number) => {
-      if (ch === ".") return null;
-      const ramp = MAT[ch];
-      if (!ramp) return null;
-      // Rim: the pixel is on a face the key light reaches, or on one it cannot.
-      if (!solid(x - 1, y - 1)) return ramp[Math.min(3, ramp.length - 1)];
-      if (!solid(x + 1, y + 1)) return ramp[0];
-      return ramp[Math.min(2, ramp.length - 1)];
-    }),
-  );
+/** A point in a machine's own world, in units where one is one picture pixel. */
+interface Pt {
+  x: number;
+  y: number;
+  z: number;
 }
 
 /**
- * buildMachine draws one machine in one pose.
+ * limb draws a box chain between two world points.
  *
- * Turn-aware in the only way it needs to be: the grid is drawn in the turn's own
- * facing, and the cel is cut at the footprint's near corner. The flag bug was a
- * mark placed in world space on a picture that rotates; a machine is not a
- * rotationally-symmetric object and cannot inherit that mistake.
+ * A boom is a gesture, not a box: it angles, and a box cannot angle. Walking the
+ * span and filling a small box at each step is what lets one rule light every
+ * segment the way it lights a wall, so an angled arm gets the same three faces
+ * a flat one does.
+ */
+function limb(iso: IsoPix, a: Pt, b: Pt, thick: number, shade: Shade): void {
+  const steps = Math.max(
+    1,
+    Math.ceil(Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), Math.abs(b.z - a.z))),
+  );
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = Math.round(a.x + (b.x - a.x) * t);
+    const y = Math.round(a.y + (b.y - a.y) * t);
+    const z = Math.round(a.z + (b.z - a.z) * t);
+    iso.box(x, y, thick, thick, Math.max(0, z - thick), z, shade);
+  }
+}
+
+// --- proportions ------------------------------------------------------------
+//
+// A tracked machine is long and low. `LEN` is its length and `DEP` its depth,
+// and they are separate because a box's screen width is (LEN + DEP) / 2 while
+// its top face is (LEN + DEP) / 4 tall — typing one number for both is how a
+// fleet ends up looking like it is leaning.
+
+const LEN = 44;
+const DEP = 9;
+const DECK_Z = 13;
+
+// --- the chassis ------------------------------------------------------------
+
+/** Tracks: a low slab, with the raised tread band along each side. */
+function undercarriage(iso: IsoPix): void {
+  iso.box(0, 0, LEN, DEP, 0, 4, TRACK);
+  iso.box(1, 0, LEN - 2, 2, 4, 5, TREAD);
+  iso.box(1, DEP - 2, LEN - 2, 2, 4, 5, TREAD);
+}
+
+// Body, engine deck and cab. Authored once per kind and drawn in every turn,
+// because `IsoPix` re-projects rather than mirrors.
+const BODY_STACK: Record<MachineKind, (iso: IsoPix) => void> = {
+  // Cab set back at the far end, engine deck forward — the conventional
+  // arrangement, and the one that puts the glass where a driver would sit.
+  excavator: (iso) => {
+    iso.box(1, 1, LEN - 2, DEP - 2, 5, DECK_Z - 2, BODY);
+    iso.box(2, 2, LEN - 4, DEP - 4, DECK_Z - 2, DECK_Z, DECK);
+    iso.box(LEN - 15, 1, 14, DEP - 2, DECK_Z, DECK_Z + 8, BODY);
+    iso.box(LEN - 14, 1, 12, DEP - 3, DECK_Z + 3, DECK_Z + 7, GLASS);
+    iso.box(LEN - 11, 3, 3, 3, DECK_Z + 8, DECK_Z + 11, BEACON);
+  },
+  // A crane's cab sits low and forward, and the mast rises behind it.
+  crane: (iso) => {
+    iso.box(1, 1, LEN - 2, DEP - 2, 5, DECK_Z - 2, BODY);
+    iso.box(2, 2, LEN - 4, DEP - 4, DECK_Z - 2, DECK_Z, DECK);
+    iso.box(3, 1, 12, DEP - 2, DECK_Z, DECK_Z + 6, BODY);
+    iso.box(4, 1, 10, DEP - 3, DECK_Z + 2, DECK_Z + 5, GLASS);
+  },
+  loader: (iso) => {
+    iso.box(1, 1, LEN - 2, DEP - 2, 5, DECK_Z - 2, BODY);
+    iso.box(2, 2, LEN - 4, DEP - 4, DECK_Z - 2, DECK_Z, DECK);
+    iso.box(LEN - 17, 1, 16, DEP - 2, DECK_Z, DECK_Z + 7, BODY);
+    iso.box(LEN - 16, 1, 14, DEP - 3, DECK_Z + 2, DECK_Z + 6, GLASS);
+  },
+  // The only kind whose cab is the whole body: it is the machine you watch.
+  driver: (iso) => {
+    iso.box(1, 1, LEN - 2, DEP - 2, 5, DECK_Z - 2, BODY);
+    iso.box(2, 2, LEN - 4, DEP - 4, DECK_Z - 2, DECK_Z, DECK);
+    iso.box(14, 1, 18, DEP - 2, DECK_Z, DECK_Z + 9, BODY);
+    iso.box(15, 1, 16, DEP - 3, DECK_Z + 3, DECK_Z + 8, GLASS);
+    iso.box(20, 3, 3, 3, DECK_Z + 9, DECK_Z + 12, BEACON);
+  },
+  dozer: (iso) => {
+    iso.box(1, 1, LEN - 2, DEP - 2, 5, DECK_Z - 2, BODY);
+    iso.box(2, 2, LEN - 4, DEP - 4, DECK_Z - 2, DECK_Z, DECK);
+    iso.box(8, 1, 13, DEP - 2, DECK_Z, DECK_Z + 6, BODY);
+    iso.box(9, 1, 11, DEP - 3, DECK_Z + 2, DECK_Z + 5, GLASS);
+  },
+};
+
+// --- the gesture ------------------------------------------------------------
+//
+// One gesture per kind per pose, and nothing else on the machine moves. The
+// pivot is shared so the fleet has one stance, and what separates the kinds is
+// *where the tip goes*: up and back for a boom, straight out for a jib, down to
+// the ground for a bucket, and barely off the deck for a blade.
+
+const PIVOT: Pt = { x: 5, y: 4, z: DECK_Z };
+/** CHIEF_LIFT is how much taller a chief's gesture stands than a sub's. */
+const CHIEF_LIFT = 5;
+
+const GESTURE: Record<MachineKind, Record<MachinePose, { elbow: Pt; tip: Pt; bucket: boolean }>> = {
+  // Rises, then falls away forward. The widest gesture of the five.
+  excavator: {
+    work: { elbow: { x: 22, y: 4, z: 32 }, tip: { x: 40, y: 4, z: 20 }, bucket: true },
+    idle: { elbow: { x: 21, y: 4, z: 30 }, tip: { x: 36, y: 4, z: 21 }, bucket: true },
+    travel: { elbow: { x: 20, y: 4, z: 27 }, tip: { x: 35, y: 4, z: 18 }, bucket: false },
+    done: { elbow: { x: 21, y: 4, z: 33 }, tip: { x: 38, y: 4, z: 25 }, bucket: false },
+  },
+  // Straight up, then straight out. A jib is a horizontal gesture and no amount
+  // of swinging turns it into a boom — that is the whole difference between them.
+  crane: {
+    work: { elbow: { x: 12, y: 4, z: 42 }, tip: { x: 43, y: 4, z: 42 }, bucket: false },
+    idle: { elbow: { x: 12, y: 4, z: 40 }, tip: { x: 41, y: 4, z: 40 }, bucket: false },
+    travel: { elbow: { x: 12, y: 4, z: 37 }, tip: { x: 40, y: 4, z: 37 }, bucket: false },
+    done: { elbow: { x: 12, y: 4, z: 38 }, tip: { x: 42, y: 4, z: 38 }, bucket: false },
+  },
+  // Down to the ground at the far end. A loader is an excavator that never lifts.
+  loader: {
+    work: { elbow: { x: 26, y: 4, z: 24 }, tip: { x: 43, y: 4, z: 8 }, bucket: true },
+    idle: { elbow: { x: 26, y: 4, z: 23 }, tip: { x: 42, y: 4, z: 10 }, bucket: true },
+    travel: { elbow: { x: 25, y: 4, z: 21 }, tip: { x: 40, y: 4, z: 14 }, bucket: false },
+    done: { elbow: { x: 25, y: 4, z: 26 }, tip: { x: 41, y: 4, z: 16 }, bucket: false },
+  },
+  // A small articulated arm over the cab — the machine that watches.
+  driver: {
+    work: { elbow: { x: 20, y: 4, z: 32 }, tip: { x: 31, y: 4, z: 24 }, bucket: false },
+    idle: { elbow: { x: 20, y: 4, z: 30 }, tip: { x: 30, y: 4, z: 23 }, bucket: false },
+    travel: { elbow: { x: 19, y: 4, z: 28 }, tip: { x: 30, y: 4, z: 21 }, bucket: false },
+    done: { elbow: { x: 19, y: 4, z: 31 }, tip: { x: 31, y: 4, z: 22 }, bucket: false },
+  },
+  // Barely off the deck: a blade that stays low and wide, the flattest gesture.
+  dozer: {
+    work: { elbow: { x: 30, y: 4, z: 17 }, tip: { x: 44, y: 4, z: 8 }, bucket: false },
+    idle: { elbow: { x: 30, y: 4, z: 16 }, tip: { x: 44, y: 4, z: 7 }, bucket: false },
+    travel: { elbow: { x: 29, y: 4, z: 15 }, tip: { x: 43, y: 4, z: 6 }, bucket: false },
+    done: { elbow: { x: 30, y: 4, z: 19 }, tip: { x: 44, y: 4, z: 10 }, bucket: false },
+  },
+};
+
+/** A one-pixel margin all round, so the outline never lands on the cel edge. */
+const PAD = 1;
+
+let solved: { w: number; h: number; ox: number; oy: number } | null = null;
+
+/**
+ * buildMachine draws one machine in one pose, in one orientation.
+ *
+ * Turn is handed to `IsoPix`, so the same boxes are re-projected rather than
+ * mirrored. The old fleet drew one picture and used it at every orientation,
+ * which a tracked vehicle cannot survive.
  */
 export function buildMachine(kind: MachineKind, pose: MachinePose, tier: "chief" | "sub", turn = 0): Pix {
-  const t = normaliseTurn(turn);
-  const arm = ARM[kind][pose];
-  const base = CHASSIS[kind];
-  const mask: string[] = [...arm, ...base];
+  const box = solveMachine();
+  const iso = new IsoPix(box.w, box.h, box.ox, box.oy, normaliseTurn(turn));
 
-  // A chief is drawn one row taller than its own sub, by *cutting a row out of
-  // the arm* rather than by adding one: the cel is a fixed sheet, so a chief
-  // simply has a taller arm and a sub has a shorter one on the same footprint.
-  //
-  // The first version computed this into a variable and then threw it away —
-  // `grid` was `mask` on both branches and `void tier` admitted it — so every
-  // chief and sub cel was byte-identical while the comment above claimed a chief
-  // stood taller. A comment that describes a distinction the pixels do not make
-  // is worse than no comment, because a reader debugging the tier would trust it.
-  // A sub's arm is one row shorter, and the row it loses is *blanked* rather than
-  // removed: a cel is a fixed sheet, so a grid of a different height leaves a hole
-  // in the last row and the shading pass reads past its own input.
-  //
-  // The row blanked is the topmost one the arm actually draws, found rather than
-  // assumed. Assuming a fixed row made the loader identical to itself, because its
-  // arm is short and that row was already empty — which is the failure a chief and
-  // a sub being byte-identical would look like, one level down.
-  const grid: string[] = [...mask];
-  if (tier !== "chief") {
-    for (let y = ARM_H - 1; y >= 0; y--) {
-      if (mask[y] !== EMPTY_ROW) {
-        grid[y] = EMPTY_ROW;
-        break;
-      }
+  undercarriage(iso);
+  BODY_STACK[kind](iso);
+
+  const g = GESTURE[kind][pose];
+  // A chief stands taller than its own sub by lifting the gesture, not by
+  // growing the machine: the undercarriage is the same on both, because a chief
+  // and a sub of one kind are one machine doing different work.
+  const lift = tier === "chief" ? CHIEF_LIFT : 0;
+  const elbow = { x: g.elbow.x, y: g.elbow.y, z: g.elbow.z + lift };
+  const tip = { x: g.tip.x, y: g.tip.y, z: g.tip.z + lift };
+
+  limb(iso, PIVOT, elbow, 4, ARM);
+  limb(iso, elbow, tip, 3, ARM);
+  if (g.bucket) iso.box(tip.x - 2, tip.y, 7, 5, Math.max(0, tip.z - 6), tip.z, STEEL);
+  return iso.pix;
+}
+
+/**
+ * solveMachine measures the drawing instead of asserting a box for it.
+ *
+ * A typed cel is a promise somebody has to keep by hand, and the promise is
+ * checked by clipping: `Pix.set` drops a write outside the surface without
+ * complaint, so a machine that outgrows its cel loses an arm at one orientation
+ * and nobody can see why. Measuring at boot makes it the same kind of fact the
+ * ground shadows and the prop widths are — read off the drawing, so it cannot be
+ * wrong the first time a boom is lengthened.
+ */
+function solveMachine(): { w: number; h: number; ox: number; oy: number } {
+  if (solved) return solved;
+  const span = 240;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const turn of [0, 1, 2, 3]) {
+    for (const kind of MACHINES) {
+      const probe = new IsoPix(span, span, span / 2, span * 0.75, turn);
+      undercarriage(probe);
+      BODY_STACK[kind](probe);
+      const g = GESTURE[kind]["work"];
+      limb(probe, PIVOT, g.elbow, 4, ARM);
+      limb(probe, g.elbow, g.tip, 3, ARM);
+      probe.box(g.tip.x - 2, g.tip.y, 7, 5, Math.max(0, g.tip.z - 6), g.tip.z, {
+        top: STEEL.top, lit: STEEL.lit, shadow: STEEL.shadow,
+      });
+      for (let y = 0; y < probe.pix.h; y++)
+        for (let x = 0; x < probe.pix.w; x++) {
+          if (!probe.pix.isOpaque(x, y)) continue;
+          const dx = x - span / 2;
+          const dy = y - span * 0.75;
+          if (dx < minX) minX = dx;
+          if (dx > maxX) maxX = dx;
+          if (dy < minY) minY = dy;
+          if (dy > maxY) maxY = dy;
+        }
     }
   }
-
-  const colours = shade(grid);
-  const pix = new Pix(CEL_W, CEL_H);
-  const put = (x: number, y: number, hex: string) => {
-    if (x < 0 || y < 0 || x >= CEL_W || y >= CEL_H) return;
-    const i = (y * CEL_W + x) * 4;
-    pix.data[i] = Number.parseInt(hex.slice(1, 3), 16);
-    pix.data[i + 1] = Number.parseInt(hex.slice(3, 5), 16);
-    pix.data[i + 2] = Number.parseInt(hex.slice(5, 7), 16);
-    pix.data[i + 3] = 255;
-  };
-
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const c = colours[y][x];
-      if (c) put(x + PAD, y + PAD, c);
-    }
-  }
-
-  // The outline, last, 1px, always the same weight.
-  //
-  // Drawn after the fills so it goes round the finished silhouette rather than
-  // round each part: an outline applied per-box is what made the old fleet look
-  // like a stack of separate objects, and an outline of varying weight is the
-  // single fastest way to make a set of sprites look like an asset flip.
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (colours[y][x]) continue;
-      const near =
-        (x > 0 && colours[y][x - 1]) || (x < W - 1 && colours[y][x + 1]) ||
-        (y > 0 && colours[y - 1][x]) || (y < H - 1 && colours[y + 1][x]);
-      if (near) put(x + PAD, y + PAD, P.ink);
-    }
-  }
-
-  void tier;
-  void t;
-  return pix;
+  const ox = PAD - minX;
+  const oy = PAD - minY;
+  solved = { w: ox + maxX + PAD, h: oy + maxY + PAD, ox, oy };
+  return solved;
 }
 
 // --- placement --------------------------------------------------------------
 
-const FOOT = 20;
-const REACH = 22;
-const TALL = CEL_H + 8;
-const M = 3;
+/** FOOT is the machine's footprint corner: the point it stands on. */
+const FOOT = LEN;
 
 /**
  * machineOrigin is a drawn cel's own anchor.
@@ -685,14 +327,12 @@ const M = 3;
  * and for the same reason: a fixed fraction is correct at exactly one turn.
  */
 export function machineOrigin(_pix: Pix, turn: number): { ox: number; oy: number } {
-  const box = machineBox(normaliseTurn(turn));
-  const anchor = new WorldView(normaliseTurn(turn)).project(FOOT, FOOT);
+  const box = solveMachine();
+  const anchor = new WorldView(normaliseTurn(turn)).project(FOOT, 0);
   return { ox: anchor.x - box.ox, oy: anchor.y - box.oy };
 }
 
-function machineBox(turn: number): { w: number; h: number; ox: number; oy: number } {
-  // Sized to the drawing, not to a footprint. The grid is a fixed sheet, so the
-  // cel is that sheet and there is no second guess about how much room a boom
-  // needs — which is what clipped the old fleet's arms.
-  return { w: CEL_W, h: CEL_H, ox: 0, oy: 0 };
+/** machineBox is the cel the bake should reserve, measured from the drawing. */
+export function machineBox(_turn: number): { w: number; h: number; ox: number; oy: number } {
+  return solveMachine();
 }

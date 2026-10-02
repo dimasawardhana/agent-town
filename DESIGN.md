@@ -176,12 +176,18 @@ a fixed cell size, `max(cel) + 2`, with the canvas rounded up to a power of two.
 packed, so the frame table cannot depend on a packing result and the art cannot move between
 builds.
 
-The cels, counted from the bake loop: 76 worker (2 tiers x 38 frames), 128 building
-(4 footprints x 2 skin variants x 8 stages x 2 damage states), 4 building shadows, 80 ground
-(4 kinds x 4 variants x (1 plain + 4 edge pieces)), 12 props — **300 baked cels**, which with
-the atlas's `__BASE` frame is the 301 frames the live texture reports. Damage is baked rather
-than overlaid because it depends on how far the building got: there is no wall to crack until
-there are walls.
+The cels, counted from the bake loop: 855 for the building families (bases, bands, caps, damage
+marks, pennants, lit windows and one shadow per footprint), 140 ground (7 kinds x 4 variants x
+(1 plain + 4 edge pieces)), 108 props (54 kinds x 2 variants), 40 machines (5 kinds x 4 poses x
+2), and the two shared condition blanks — **1145 baked cels** in a `115 x 101` cell, against a
+**1296** ceiling and 151 spare. Damage is baked rather than overlaid because it depends on how far
+the building got: there is no wall to crack until there are walls. The cell height is set by the
+Chapel at 99px and is the number every budget in this project is priced against (ADR-0021); the
+prop cel is deliberately shorter than it is wide so that it does not set it.
+
+(This paragraph was long stale — it read "12 props — 300 baked cels, 301 frames" against a
+vocabulary of 54 and a sheet holding 1145. The counts above are measured from the bake, not
+remembered.)
 
 ## Lighting
 
@@ -208,14 +214,72 @@ which ramp step each face takes.
 - **Windows.** On the lit wall the glass is `glass[2]`, on the shadow wall `glass[1]`, one step
   darker for the same reason the wall is (`ui/src/art/building.ts:288-322`).
 - **Props.** Every prop box repeats the same `{ top, lit, shadow, edge }` convention, so there
-  is one lighting model across `ui/src/art/props.ts`. Measured over all 12 props in the 34 x 34
-  cel, every one of them leaves at least one pixel of outline room on all four sides, so no prop
-  clips its ink.
+  is one lighting model across `ui/src/art/props.ts`.
+- **Prop scale.** The drawers are authored in world units and are rasterised at `PROP_SCALE` 2
+  (`ui/src/art/props/kinds.ts`), which is `IsoPix`'s `scale`: it multiplies the *world* before
+  projecting, so the picture is exactly doubled while the projection stays 2:1 and the ink stays
+  1px. Resampling the finished picture instead would have doubled the outline too, and a
+  fractional scale would put some world steps on one pixel and their neighbours on two — the
+  defect the whole-number zoom clamp in `follow.ts` exists to rule out.
+
+  The reason for 2 is arithmetic. At 1 the median prop measured 17 x 22 px with **35% of its
+  picture spent on the 1px ink outline** — at that size the outline is not an edge around a
+  drawing, it is a grid across it, which is what "machinery looks flat" measured in pixels. At 2
+  the same prop is 30 x 40 with the ink back to being an edge. It is free in the atlas: the cell
+  is set by the Chapel, and a 44px prop was using under 40% of the height it had been given.
+
+  It is not free in *placement*, and that is the cost. A place's props sit on a world grid, and
+  2:1 turns one column of world spacing into *half* as many picture pixels — so a grid that looks
+  generously spread on the plate puts neighbours closer together than they are wide. Two changes
+  buy that back, and neither is "draw fewer props".
+
+  **The grid's columns are capped by the widest prop the place actually stands** (`scene.ts`),
+  measured off the art by `widestProp` rather than typed, so it tracks `PROP_SCALE` and any redraw
+  of the widest thing in the place. `rows` grows to take up the slack, which is the right way
+  round: two props side by side is unreadable, and two props one behind the other is ordinary
+  isometric depth that the depth sort already resolves.
+
+  **The Workshop and Depot plots were widened**, 200 to 340 units (`internal/analyzer/layout.go`).
+  At 200 wide a column is 47 picture pixels against a 38px workbench, so the plate could only be
+  furnished without props sitting inside one another by holding three of them. The Yard was
+  always wide enough; the other two were not, and the shortfall only became visible once the props
+  grew. Widening alone would have been useless — the column count is derived from the plate's
+  aspect, so more width buys proportionally more columns and the pitch stays flat. The two
+  changes only work together.
+- **Prop cel.** `CEL_W` 107 by `CEL_H` 96 at origin `(53, 68)`, all three *solved* rather than
+  chosen: the smallest box and origin that hold every prop at every turn and variant with a pixel
+  to spare. The pair before (44 x 44 at origin 22,28) was short by eleven pixels — a pipe stack
+  at turn 3 and a shelving unit at turn 2 both drew past the edge and lost the difference.
+  Because `Pix.set` drops out-of-range writes silently, that showed as a prop that looked
+  *smaller*, and the "clears the border" test passed throughout: a clipped cel has nothing on its
+  border to fail. `test/art.test.ts` now renders each prop into an oversized probe and asserts
+  the drawing lands inside the real window.
+
+  **The cel is deliberately not square**, and that is the part worth keeping. The sheet holds
+  `floor(8192 / cellH) × 16` cels and `cellH` is the tallest cel on it, so rounding the box up to
+  107 x 107 would lift `cellH` from 101 to 109 and spend **96 cels of the whole town's ceiling**
+  (1296 → 1200) on eleven pixels of empty margin beside props. Two numbers no drawer reads,
+  bought with capacity every future archetype would have wanted.
 - **Ground shadows.** A building's shadow is a `P.grass[0]` footprint, `footprint(2, 3, side+3,
   side+3)`, baked once per footprint as frame `s<side>` (`ui/src/art/building.ts:467`,
   `ui/src/art/bake.ts:67`). A worker's is a runtime 7 x 3 ellipse at 0.22 alpha
   (`ui/src/workers.ts:48,49,200`), drawn as its own object so it stays on the ground while the
-  figure bobs.
+  figure bobs. A **prop's** is a `P.grass[0]` footprint on the same two-unit/three-unit offset and
+  the same tone, but it rides *inside* the prop's own cel rather than beside it
+  (`ui/src/art/props.ts`, `buildProp`) — so it costs no second sprite to depth-sort and no second
+  cel in a sheet that is already at 1125 of its 1296. The prop is composited back over the slab
+  with `Pix.blit`, which skips transparent pixels, so the occlusion a shadow sprite gets from its
+  depth is reached here by draw order instead.
+
+  Its rectangle is **measured, not declared**: `IsoPix` accumulates the world extent of everything
+  plotted and `footprintOf()` reads it back (`ui/src/art/iso.ts`). Height does not enter the
+  measure, because `z` moves a point up its own picture column and never sideways in the world, so
+  a drawing's x/y extent already *is* its footprint. A table of footprints would have been a second
+  copy of every drawer's geometry — correct on the day it was typed and silently wrong the first
+  time a drawer moved. Measuring also handles the tools that draw off the origin for composition
+  (a chisel starts at world x −8) without anyone having to write the minus sign down. The
+  accumulation is opt-in, since it is per plotted pixel and the buildings, workers and machines
+  already know their own extents.
 
 `ui/src/art/iso.ts` rasterises by walking integers in world space and plotting pixels, never by
 filling a canvas path, because path filling is antialiased and cannot be switched off —

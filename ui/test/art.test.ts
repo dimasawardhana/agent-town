@@ -63,10 +63,13 @@ import {
 import { EDGES, GROUND_KINDS, TILE_PX, groundEdgeTile, groundTile, tileVariant } from "../src/art/terrain";
 import {
   ALL_PROP_KINDS,
-  CEL,
+  DRAWERS,
+  CEL_H,
+  CEL_W,
   PLACE_PROPS,
   PROP_GROUPS,
   PROP_ORIGIN,
+  PROP_SCALE,
   buildAllProps,
   buildProp,
 } from "../src/art/props";
@@ -924,7 +927,7 @@ test("every prop fits its cel box, clears the border, and stays on the palette",
   //   - an off-palette colour is a second, drifting palette;
   //   - semi-transparency is the antialiasing halo the whole style forbids.
   for (const { kind, pix } of buildAllProps()) {
-    assert.ok(pix.w === CEL && pix.h === CEL, `${kind} is ${pix.w}x${pix.h}, want ${CEL}x${CEL}`);
+    assert.ok(pix.w === CEL_W && pix.h === CEL_H, `${kind} is ${pix.w}x${pix.h}, want ${CEL_W}x${CEL_H}`);
     for (let x = 0; x < pix.w; x++) {
       assert.ok(!pix.isOpaque(x, 0), `${kind} has artwork on its top border`);
       assert.ok(!pix.isOpaque(x, pix.h - 1), `${kind} has artwork on its bottom border`);
@@ -949,6 +952,145 @@ test("no prop is semi-transparent", () => {
       assert.ok(a === 0 || a === 255, `${kind} has a pixel at alpha ${a}`);
     }
   }
+});
+
+
+test("every prop casts the same contact shadow a building does", () => {
+  // A prop with no shadow is a sticker on the grass: nothing in its cel says it
+  // stands on the ground rather than being printed over it. That was most of what
+  // made the furniture read flatter than the buildings beside it, which have cast
+  // one since the first commit — so the shadow is part of what a prop *is*, and a
+  // drawer that quietly stopped casting is as broken as one that stopped drawing.
+  const shade = P.grass[0];
+  assert.ok(
+    buildShadow(SIDES[0][0], 0, "a.ts", 0).colours().includes(shade),
+    `a building's shadow is not ${shade}, so a prop's would be a second shadow colour`,
+  );
+
+  for (const kind of ALL_PROP_KINDS) {
+    const pix = buildProp(kind, 0);
+    assert.ok(pix.colours().includes(shade), `${kind} casts no shadow: its cel has no ${shade}`);
+    // The slab is laid down first and the prop composited over it, so a reversed
+    // blit would bury the object under its own shadow rather than failing
+    // visibly. What it leaves behind is a prop with almost nothing left, which is
+    // the only place that mistake would show.
+    const own = pix.colours().filter((c) => c !== shade && c !== P.ink);
+    assert.ok(own.length >= 3, `${kind} is left with ${own.length} colour(s) under its own shadow`);
+  }
+});
+
+test("a prop's shadow turns with the prop", () => {
+  // ADR-0020: the town turns. A shadow that did not turn would leave every prop
+  // lit from a different side than the building beside it — the one lighting
+  // defect that survives a correct projection, because each half is right alone.
+  for (const kind of ALL_PROP_KINDS) {
+    for (const turn of [1, 2, 3]) {
+      assert.ok(
+        buildProp(kind, 0, turn).colours().includes(P.grass[0]),
+        `${kind} loses its shadow at turn ${turn}`,
+      );
+    }
+  }
+});
+
+test("no prop is clipped by the cel it is baked into", () => {
+  // `Pix.set` drops a write outside the surface without complaint, so a prop
+  // that outgrows its cel does not look broken — it looks *smaller*, and the
+  // border test above passes the whole time, because a clipped cel has nothing
+  // on its border to fail. That is not hypothetical: at 44 x 44 a pipe stack at
+  // turn 3 and a shelving unit at turn 2 were both drawing eleven pixels past
+  // the edge and losing them.
+  //
+  // The check is a render into a canvas with room to spare, measured back
+  // against the real cel. Everything the bake would draw, at every turn and
+  // variant, has to land inside the `CEL` window at `PROP_ORIGIN`.
+  //
+  // The probe canvas is a fixed size with the origin pinned well inside it, so
+  // it is comfortably larger than any prop at `PROP_SCALE` and does not resize
+  // itself when the cel does. Sized from `CEL` instead it would clip the tallest
+  // prop's head at the very scale under test — the identical silent drop this
+  // test exists to catch, one level up.
+  const ROOM = 256;
+  const pad = 96;
+  for (const kind of ALL_PROP_KINDS) {
+    for (const turn of [0, 1, 2, 3]) {
+      for (const variant of [0, 1]) {
+        const iso = new IsoPix(ROOM, ROOM, pad + PROP_ORIGIN.x, pad + PROP_ORIGIN.y, turn, {
+          track: true,
+          scale: PROP_SCALE,
+        });
+        DRAWERS[kind](iso, variant);
+        const foot = iso.footprintOf();
+        const shadow = new IsoPix(ROOM, ROOM, pad + PROP_ORIGIN.x, pad + PROP_ORIGIN.y, turn, {
+          scale: PROP_SCALE,
+        });
+        shadow.footprint(foot!.x + 2, foot!.y + 3, foot!.w + 4, foot!.h + 4, 0, P.grass[0]);
+        shadow.pix.blit(iso.outline(P.ink), 0, 0);
+        const ox = pad + PROP_ORIGIN.x;
+        const oy = pad + PROP_ORIGIN.y;
+        for (let y = 0; y < shadow.pix.h; y++)
+          for (let x = 0; x < shadow.pix.w; x++) {
+            if (!shadow.pix.isOpaque(x, y)) continue;
+            // The `CEL` window is the cel `buildProp` actually bakes. Anything
+            // outside it is art that exists and is never seen. The one-pixel
+            // clearance from the *border* is the existing test's business.
+            assert.ok(
+              x >= pad && x < pad + CEL_W && y >= pad && y < pad + CEL_H,
+              `${kind} at turn ${turn} variant ${variant} draws ${x - ox},${y - oy} from the origin, outside the ${CEL_W}x${CEL_H}px cel`,
+            );
+          }
+      }
+    }
+  }
+});
+
+test("IsoPix measures what it plotted, and scales by resampling the world", () => {
+  // The footprint is measured off the drawing rather than declared beside it, so
+  // it cannot drift the first time a drawer changes shape. It has to include the
+  // negative coordinates: the tools deliberately draw off their origin, and a
+  // measure that clamped at zero would put a chisel's shadow off to one side.
+  const iso = new IsoPix(CEL_W, CEL_H, PROP_ORIGIN.x, PROP_ORIGIN.y, 0, { track: true, scale: 1 });
+  iso.box(-8, 2, 6, 5, 0, 4, { top: P.wood[2], lit: P.wood[3], shadow: P.wood[1] });
+  assert.deepEqual(iso.footprintOf(), { x: -8, y: 2, w: 6, h: 5 });
+
+  // Off by default, because the walk is per plotted pixel and the buildings, the
+  // workers and the machines already know their own extents.
+  const plain = new IsoPix(CEL_W, CEL_H, PROP_ORIGIN.x, PROP_ORIGIN.y, 0);
+  plain.box(-8, 2, 6, 5, 0, 4, { top: P.wood[2], lit: P.wood[3], shadow: P.wood[1] });
+  assert.equal(plain.footprintOf(), null);
+
+  // `scale` is a property of the picture, not of the world the drawer speaks:
+  // `footprintOf` answers in the world the drawing was authored in, because
+  // `footprint` — the call a prop's shadow makes to lay its slab — scales its
+  // own arguments. Answering in scaled coordinates would scale the shadow twice
+  // and put it twice as far from the object as it belongs.
+  const big = new IsoPix(CEL_W, CEL_H, PROP_ORIGIN.x, PROP_ORIGIN.y, 0, { track: true, scale: 2 });
+  big.box(-8, 2, 6, 5, 0, 4, { top: P.wood[2], lit: P.wood[3], shadow: P.wood[1] });
+  assert.deepEqual(big.footprintOf(), { x: -8, y: 2, w: 6, h: 5 });
+});
+
+test("a scaled IsoPix is exactly its unscaled picture, doubled", () => {
+  // The whole safety of PROP_SCALE rests on this: scaling the world is linear in
+  // the projection, so it lands on integral pixels and leaves the 2:1 ratio and
+  // the 1px ink untouched. Resampling the finished picture instead would double
+  // the outline, and any non-integer scale would put some world steps on one
+  // pixel and their neighbours on two.
+  const OX = 100;
+  const OY = 100;
+  const one = new IsoPix(200, 200, OX, OY, 0);
+  const two = new IsoPix(200, 200, OX, OY, 0, { scale: 2 });
+  for (let wx = -12; wx <= 12; wx += 3)
+    for (let wy = -12; wy <= 12; wy += 3)
+      for (const z of [0, 5, 17]) {
+        const a = one.project(wx, wy, z);
+        const b = two.project(wx, wy, z);
+        assert.equal(b.x - OX, 2 * (a.x - OX), `x at ${wx},${wy},${z}`);
+        assert.equal(b.y - OY, 2 * (a.y - OY), `y at ${wx},${wy},${z}`);
+      }
+  // A fractional scale is refused rather than accepted, because a half-pixel
+  // scale is exactly the defect the whole-number zoom clamp exists to rule out,
+  // and it would otherwise arrive here unnoticed.
+  assert.equal(new IsoPix(10, 10, 5, 5, 0, { scale: 1.5 }).scale, 2);
 });
 
 test("props are deterministic and vary with the variant argument", () => {

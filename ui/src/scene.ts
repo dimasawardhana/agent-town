@@ -65,7 +65,7 @@ interface StackPart {
 const NO_STAND_IN_FRAME = NO_DAMAGE_FRAME;
 
 import { type Ground, tileVariant } from "./art/terrain";
-import { PLACE_PROPS } from "./art/props";
+import { PLACE_PROPS, widestProp, type PropKind } from "./art/props";
 import { PLACARD, type PlacardRole, placard } from "./art/placard";
 import { KERB, kerbRuns } from "./art/kerb";
 import { PLACE_INFO, type PlaceInfo, isPlaceKind, placeInfoFor } from "./place";
@@ -87,7 +87,7 @@ const TILE = 16;
 const DISTRICT_PREFIX = "district:";
 
 /** How the three special places are surfaced and furnished. */
-const PLACES: Record<string, { ground: Ground; props: readonly string[] }> = {
+const PLACES: Record<string, { ground: Ground; props: readonly PropKind[] }> = {
   yard: { ground: "yard", props: PLACE_PROPS.yard },
   workshop: { ground: "deck", props: PLACE_PROPS.workshop },
   depot: { ground: "flags", props: PLACE_PROPS.depot },
@@ -1093,7 +1093,19 @@ export class TownScene extends Phaser.Scene {
     // by construction instead of by luck.
     const cells = place.props.length + 1;
     const aspect = Math.max(0.5, s.w / s.h);
-    const cols = Math.max(1, Math.min(cells, Math.round(Math.sqrt(cells * aspect))));
+    // Columns are chosen by the plate's aspect and then **capped by the widest
+    // prop the place actually stands**. The aspect alone is not enough: 2:1 turns
+    // one column of world spacing into *half* as many picture pixels, so a grid
+    // that looks generously spread on the plate puts neighbours closer together
+    // than they are wide. Capped, `rows` grows to take up the slack, which is the
+    // right way round — two props side by side is unreadable, and two props one
+    // behind the other is ordinary isometric depth.
+    //
+    // The cap is measured off the art (`widestProp`), so it tracks `PROP_SCALE`
+    // and any redraw of the widest thing in the place.
+    const byAspect = Math.max(1, Math.min(cells, Math.round(Math.sqrt(cells * aspect))));
+    const byProp = Math.max(1, Math.floor((s.w - 12) / (2 * widestProp(place.props))));
+    const cols = Math.min(byAspect, byProp);
     const rows = Math.ceil(cells / cols);
     const pitchX = (s.w - 12) / cols;
     const pitchY = (s.h - 12) / rows;

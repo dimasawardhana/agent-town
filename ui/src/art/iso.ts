@@ -66,19 +66,72 @@ export class IsoPix {
   private readonly oy: number;
   readonly turn: Turn;
 
-  constructor(w: number, h: number, ox: number, oy: number, turn = 0) {
+  /**
+   * The world-space extent of everything plotted, accumulated as it happens.
+   *
+   * `track` is off by default because the walk is per plotted pixel and almost
+   * nothing asks the question: the buildings, the workers and the machines all
+   * know their own footprints already, and only a prop needs its own measured.
+   */
+  private readonly track: boolean;
+  private minX = Infinity;
+  private minY = Infinity;
+  private maxX = -Infinity;
+  private maxY = -Infinity;
+
+  /**
+   * How many picture pixels one world unit is worth, on every axis at once.
+   *
+   * This scales the *world* the drawing is authored in, not the picture after
+   * it: a box asked for at `box(0, 0, 14, 14, 0, 12)` under `scale` 2 lands on
+   * exactly the pixels a 28-unit box lands on, and a 1px ink line stays 1px
+   * either way. Scaling the finished picture instead would double the outline
+   * along with everything else, which is the one thing that must not double —
+   * at 2 the ink was a third of every prop's picture, and at 4 it would be a
+   * grid.
+   *
+   * Integral for the same reason. A fractional scale makes some world steps two
+   * pixels and their neighbours one, which is the defect `follow.ts` clamps zoom
+   * to whole numbers to rule out.
+   */
+  readonly scale: number;
+
+  constructor(w: number, h: number, ox: number, oy: number, turn = 0, opts: { track?: boolean; scale?: number } = {}) {
     this.pix = new Pix(w, h);
     this.ox = ox;
     this.oy = oy;
     this.turn = normaliseTurn(turn);
+    this.track = opts.track ?? false;
+    this.scale = Math.max(1, Math.round(opts.scale ?? 1));
+  }
+
+  /**
+   * footprintOf returns the world rectangle every plotted point fell inside, or
+   * null when the surface is empty or was not built to measure.
+   *
+   * `z` deliberately does not enter the answer. Height moves a point up its own
+   * picture column and never sideways in the world, so a drawing's x/y extent is
+   * already the footprint it stands on — and a footprint is what a cast shadow
+   * is a picture of.
+   *
+   * Measured rather than declared because a table of fifty-two footprints would
+   * be a second copy of every prop's geometry: correct on the day it was typed
+   * and silently wrong the first time a drawer moved. This cannot drift, and it
+   * handles the tools that draw off the origin — a chisel starts at world x −8
+   * — without anybody having to notice and write the minus sign down.
+   */
+  footprintOf(): { x: number; y: number; w: number; h: number } | null {
+    if (!this.track || this.minX > this.maxX) return null;
+    return { x: this.minX, y: this.minY, w: this.maxX - this.minX, h: this.maxY - this.minY };
   }
 
   /** project maps a world point to this surface's pixel coordinates. */
   project(wx: number, wy: number, z = 0): Point {
-    const p = turnPoint(this.turn, wx, wy);
+    const k = this.scale;
+    const p = turnPoint(this.turn, wx * k, wy * k);
     return {
       x: (p.x - p.y) / 2 + this.ox,
-      y: (p.x + p.y) / 4 - z + this.oy,
+      y: (p.x + p.y) / 4 - z * k + this.oy,
     };
   }
 
@@ -91,6 +144,20 @@ export class IsoPix {
   plot(wx: number, wy: number, z: number, ink: Ink): this {
     const p = this.project(wx, wy, z);
     this.pix.set(Math.round(p.x), Math.round(p.y), ink);
+    // Every primitive above routes through here, so this is the one place the
+    // extent can be measured; four comparisons against a predicted branch.
+    //
+    // In the world the drawing was *authored* in, not the scaled one. That is
+    // what makes the answer directly reusable: a prop's shadow asks a second
+    // surface to `footprint` a rectangle, and that call scales its own arguments
+    // — so handing it already-scaled numbers would scale them twice and put the
+    // shadow in the wrong place by exactly the prop's scale factor.
+    if (this.track) {
+      if (wx < this.minX) this.minX = wx;
+      if (wx > this.maxX) this.maxX = wx;
+      if (wy < this.minY) this.minY = wy;
+      if (wy > this.maxY) this.maxY = wy;
+    }
     return this;
   }
 

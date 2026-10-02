@@ -116,9 +116,19 @@ export function shadowFrame(side: number, turn = 0): string {
 }
 
 /** Frame name for a worker tier in a state's nth animation frame. */
-/** machineFrame is one pose of one machine, for one agent's kind. */
-export function machineFrame(kind: MachineKind, tier: Tier, pose: MachinePose): string {
-  return `m:${kind}:${tier}:${pose}`;
+/**
+ * machineFrame is one pose of one machine, for one agent's kind, **in one
+ * orientation**.
+ *
+ * Turn is in the key because a machine now turns: it is re-projected through
+ * `IsoPix` rather than drawn once and reused, so four orientations are four
+ * different pictures. Without the turn on the key they would all be written to
+ * the same name and the last one to be baked would be the only one drawn —
+ * which is what the old fleet did, and is why a machine never turned.
+ */
+export function machineFrame(kind: MachineKind, tier: Tier, pose: MachinePose, turn = 0): string {
+  const base = `m:${kind}:${tier}:${pose}`;
+  return turn === 0 ? base : `${base}:t${turn}`;
 }
 
 /** Frame name for a ground tile. */
@@ -344,13 +354,14 @@ export function bakedCels(turn = 0): BakedCel[] {
   // The fleet, not the crew. Five kinds so a session is a machine with a
   // silhouette a glance can separate, four poses so the pose says working /
   // parked / moving / finished without claiming a verb the silhouette cannot
-  // support. 40 cels against the figure's 76.
+  // support, four turns because a machine is re-projected rather than reused —
+  // 160 cels against the figure's 76.
   for (const kind of MACHINES) {
     for (const tier of ["chief", "sub"] as const) {
       for (const pose of ["work", "idle", "travel", "done"] as const) {
         const pix = buildMachine(kind, pose, tier, turn);
         const box = machineOrigin(pix, turn);
-        cels.push({ key: machineFrame(kind, tier, pose), pix, ox: box.ox, oy: box.oy });
+        cels.push({ key: machineFrame(kind, tier, pose, turn), pix, ox: box.ox, oy: box.oy });
       }
     }
   }

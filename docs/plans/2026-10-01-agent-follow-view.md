@@ -1,5 +1,16 @@
 # Agent Follow View Implementation Plan
 
+> **Status: finished and merged** — PR #3, commit `34e57d7`, 2026-10-01. There is
+> no remaining work in this plan. The checkboxes below were never ticked, and
+> they are left unticked on purpose: the steps ran, but not as a pass over this
+> document, so ticking them would record an execution nobody watched. The
+> deliverable was verified in the tree on 2026-10-02 instead — `ui/src/follow.ts`
+> (`FOLLOW_ZOOM`, `followZoom`), `labelVisible`'s fourth parameter
+> (`visibility.ts:87`), `workerLabelId` relocated to `visibility.ts:54`,
+> `followTick` (`scene.ts:1572`), `follow`/`unfollow` in the store, the crew rows
+> in `Hud.tsx`, and the `Follow` entry in `CONTEXT.md` with ADR-0022. Treat the
+> prose below as the record of what was decided, not as a checklist to run.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a reader pick one machine and watch it work — the camera follows it across the town at a legible zoom, its caption stays lit, and every live crew is named and followable from the panel.

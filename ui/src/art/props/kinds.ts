@@ -47,15 +47,50 @@ export interface Shade {
 }
 
 /**
- * A prop's cel box, in pixels.
+ * How many picture pixels a prop's one world unit is worth.
+ *
+ * The drawers are authored in world units and were drawn at 1:1, which measured
+ * at a median picture of 17 x 22 px with a third of every pixel spent on the 1px
+ * ink outline. That is the whole of the "machinery looks flat" complaint in
+ * numbers: at that size the outline is not an edge around a drawing, it is a
+ * grid across it. At 2 the same crane is 46 x 70 with the outline back to being
+ * an edge, and the top face — the thing that says *box* rather than *smudge* —
+ * gets four times the area.
+ *
+ * Integral, and it scales the world rather than the finished picture, so the
+ * projection stays exactly 2:1 and the ink stays exactly 1px
+ * (`ui/src/art/iso.ts`). Free in the atlas: the cell is 115 x 101 and set by the
+ * Chapel, so a 44 x 44 prop was using under 40% of the height it was given.
+ */
+export const PROP_SCALE = 2;
+
+/**
+ * A prop's cel box, in pixels — **not square**.
  *
  * Sized for the tallest prop — a ladder and a crane jib both reach about 26
  * world units — rather than per prop, because the scene places every prop with
- * the same subtraction and a per-prop box would need a per-prop origin. The
- * cost is a few hundred unused pixels per cel in a texture uploaded once at
- * boot, against a placement rule with one case instead of fifty-four.
+ * the same subtraction and a per-prop box would need a per-prop origin.
+ *
+ * **Solved, not guessed**, and solved per axis. The box and the origin below are
+ * the smallest pair that holds every prop at every turn and variant with a
+ * pixel to spare on each side. The pair before this change (44 x 44 at origin
+ * 22,28) was short by eleven pixels: a pipe stack at turn 3 and a shelving unit
+ * at turn 2 both drew outside it, and because `Pix.set` drops out-of-range
+ * writes silently, those pixels simply vanished — the "clears the border" test
+ * passed the whole time, since a clipped cel has nothing *on* its border to fail.
+ *
+ * The height is not the width, and that is the load-bearing part. The sheet
+ * holds `floor(8192 / cellH) × 16` cels, and `cellH` is the tallest cel on it
+ * (ADR-0021) — so rounding the box up to a square would take the height from 96
+ * to 107, lift `cellH` from 101 to 109, and spend **96 cels of the whole town's
+ * ceiling** (1296 → 1200) on eleven pixels of empty margin beside props. Two
+ * numbers the drawer never reads, bought with capacity every archetype after
+ * this one would have wanted.
  */
-export const CEL = 44;
+export const CEL_W = 107;
+
+/** The height half of `CEL_W`, which is not the same number. See above. */
+export const CEL_H = 96;
 
 /**
  * Where the cel's origin sits: the prop's own footprint origin, world (0, 0, 0).
@@ -64,10 +99,11 @@ export const CEL = 44;
  * placing any of them is the same subtraction — which is why this is one
  * constant and not a table. A prop overhanging its footprint (a barrow's
  * handles, a crane's jib, a sign's board) draws into negative world coordinates
- * instead, and the margins here are what give it room: 24 pixels of reach left,
- * right and upward, 19 downward.
+ * instead, and the margins here are what give it room: 53 pixels of reach left
+ * and right, 68 upward, 27 downward. Solved with the box above, by the same
+ * measure.
  */
-export const PROP_ORIGIN = { x: 22, y: 28 };
+export const PROP_ORIGIN = { x: 53, y: 68 };
 
 // --- The groups ------------------------------------------------------------
 //
