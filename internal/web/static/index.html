@@ -122,6 +122,16 @@
       }
       #town canvas:active { cursor: grabbing; }
 
+      /* `#solid` needs the same rules `#town` has, and for a sharper reason than
+         symmetry: the WebGL canvas is sized *from* its host's box, so a host
+         sized by its own content feeds back. Measured before this rule existed:
+         the canvas came out 1311x39125, because each resize grew the host, which
+         fired the ResizeObserver, which sized the canvas larger again. Absolute
+         positioning takes the host's size from `.stage` instead, which is what
+         `#town` was already relying on. */
+      #solid { position: absolute; inset: 0; }
+      #solid canvas { display: block; }
+
       .panel {
         width: 316px;
         flex: none;
@@ -666,7 +676,7 @@
         .crew .at { text-align: right; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-DDldYZxl.js"></script>
+    <script type="module" crossorigin src="/assets/index-aJ-0jGEe.js"></script>
   </head>
   <body>
     <div id="root"></div>

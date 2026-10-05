@@ -12,6 +12,7 @@ import { PLACE_INFO, PLACE_ORDER, placeInfoFor } from "./place";
 import { fetchProjects, fetchTown, subscribe } from "./api";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { TownCanvas } from "./TownCanvas";
+import { SolidView } from "./solid/SolidView";
 import { Hud } from "./Hud";
 
 /**
@@ -189,6 +190,7 @@ export function App() {
   const projects = useTown((s) => s.projects);
   const current = useTown((s) => s.current);
   const setProjects = useTown((s) => s.setProjects);
+  const renderer = useTown((s) => s.renderer);
   const selected = useTown((s) => s.selected);
   const live = useTown((s) => s.live);
   const rawEvents = useTown((s) => s.events);
@@ -288,9 +290,15 @@ export function App() {
       {/* The stage is the positioning context for the floating controls. It is
           its own element rather than `#town` itself, because `#town` is the
           element Phaser mounts the canvas into and two owners appending children
-          to one node is a race neither of them admits to. */}
+          to one node is a race neither of them admits to.
+
+          **Exactly one renderer is mounted at a time.** They are two canvases
+          with two frame loops, and leaving both alive would draw the flat town
+          under a solid one — and, worse, keep a WebGL context open for a view
+          nobody is looking at. `SolidView` tears its context down on unmount for
+          that reason. */}
       <div className="stage">
-        <TownCanvas />
+        {renderer === "solid" ? <SolidView /> : <TownCanvas />}
         <Hud />
       </div>
       <aside className="panel">

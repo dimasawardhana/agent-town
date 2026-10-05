@@ -2,4 +2,359 @@
 
 _Written by Seraph. Do not edit — this file is replaced on every change._
 
-No tasks yet.
+## Backlog
+
+### TASK-104 · 04 — One worker, and the sun
+
+> **Goal:** A worker walks to a building and works on it, lit by a real sun.
+- priority: medium
+- triage: ready-for-agent
+- claimed by: omp (session `01a0fc26-3999-7223-80fa-6a4418f9e46f`, until 2026-10-05T06:27:04Z)
+- updated: 2026-10-05T05:57:04Z
+
+> **Done when:** - [ ] A worker walks to its building before it works
+> **Done when:** - [ ] The gesture is animated rather than static
+> **Done when:** - [ ] The rhythm differs per action even where the pose does not
+> **Done when:** - [ ] One directional light, its direction independent of the turn
+> **Done when:** - [ ] The sun's direction differs across the three day phases
+
+> **Phase:** Phase 0 — the spike
+> **Blocked by:** Ticket 03
+> One machine kind, four poses, with the gesture animated procedurally rather than by a rig — the gesture is what names the kind and carries the pose. The rhythm differs per action even where the pose does not: a hammer blow is fast with a slow follow-through, and a reader relies on that. The light is a real directional light whose direction does not depend on the turn.
+
+### TASK-105 · 05 — The verdict
+
+> **Goal:** Whether a solid town is legible at a glance is answered, with evidence, before anything else is built.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-02T12:17:50Z
+
+> **Done when:** - [ ] Where is the agent? answered with a screenshot
+> **Done when:** - [ ] What is it doing? answered with a screenshot
+> **Done when:** - [ ] Did the building get better or worse? answered with a screenshot
+> **Done when:** - [ ] A rank advance and a damage state are told apart at the fitted view
+> **Done when:** - [ ] The verdict is recorded here, and Phase 1 does not start on a no
+
+> **Phase:** Phase 0 — the spike
+> **Blocked by:** Ticket 04
+> The milestone. Its entire deliverable is an answer to the three questions the product promises, each with a screenshot. If any answer is no, the rest of this roadmap is not built — a gap stated rather than hidden is the product's own principle, and the expensive part of this feature is geometry while the riskiest assumption is cheap to test.
+
+### TASK-106 · 06 — The kit
+
+> **Goal:** The eight operations exist, and every one is correct at every footprint and every turn.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-02T12:17:50Z
+
+> **Done when:** - [ ] All eight operations exist and each is footprint-relative
+> **Done when:** - [ ] The sweep produces the Chapel's spire, the Stadium's dome and the Library's gable from one operation
+> **Done when:** - [ ] Every operation is correct at footprints 44 and 100
+> **Done when:** - [ ] Every operation is correct from all four turns
+> **Done when:** - [ ] An operation that cannot be expressed footprint-relative is refused rather than added
+
+> **Phase:** Phase 1 — the building
+> **Blocked by:** Ticket 05
+> Only if the verdict is a go. The sweep carries three archetypes at once — a 2D profile carried across the footprint gives the Chapel's spire, the Stadium's dome and the Library's gable from one operation. The canopy exists because the Restaurant's flat roof cannot be a sweep: a gable's ridge is a line and nothing can be placed on one. Each operation must work at five footprints, in five materials, across three parts and from four turns, so the cost of an operation is not linear.
+
+### TASK-107 · 07 — Sixty forms
+
+> **Goal:** Every archetype in every material renders as a distinct building.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T03:36:29Z
+
+> **Done when:** - [ ] Every archetype renders in its default material
+> **Done when:** - [ ] Any archetype can take any material, and a stone Tower and a glass Tower both read correctly
+> **Done when:** - [ ] A glass building's form differs from a stone one's, not only its colour
+> **Done when:** - [ ] Mesh count is recorded and matches the expected 180
+> **Done when:** - [ ] One geometry per (archetype, material, part), instanced so draw calls stay flat
+
+> **Phase:** Phase 1 — the building
+> **Blocked by:** Ticket 06, and ticket 14 (a material must be selectable before 60 forms mean anything)
+> Material owns its geometry: a glass building is a curtain wall and a stone one is masonry, so they are different forms and not one form with a different surface. Twelve archetypes by five materials is sixty forms, each in three parts, for 180 building meshes. An archetype's material is a default rather than a fact — ticket 14 is what carries a declared material to the renderer, and without it 48 of these 60 forms have no selector.
+
+### TASK-108 · 08 — Damage, and the four turns
+
+> **Goal:** A failure is visible on the building that broke, and is never mistaken for an unfinished one.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-02T12:17:50Z
+
+> **Done when:** - [ ] Damage is distinguishable from every unfinished rank at the fitted view
+> **Done when:** - [ ] Damage never moves the building down the ladder
+> **Done when:** - [ ] The displacement is stable across a rebuild and a change of plot
+> **Done when:** - [ ] Two buildings of the same size damage differently
+> **Done when:** - [ ] Turn orbits the camera and the world and the sun do not move
+
+> **Phase:** Phase 1 — the building
+> **Blocked by:** Ticket 07
+> Damage is a material swap plus a deterministic displacement, hashed on the site's path so it is stable across turns, rebuilds and a change of plot — a walk keyed on footprint size would make every building of one size crack identically, which is the failure the archetype hash already exists to avoid. Damage never rolls the ladder back, because a failed command must not erase progress it did not cause. Turn becomes a camera orbit, and the world and the sun do not move with it.
+
+### TASK-110 · 10 — Follow, and picking
+
+> **Goal:** A reader can watch one worker, and can point at only what they can see.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-02T12:18:42Z
+
+> **Done when:** - [ ] Follow holds the camera close enough to read the pose
+> **Done when:** - [ ] Follow survives a turn and a project switch
+> **Done when:** - [ ] A target that disappears releases the follow rather than holding a stale point
+> **Done when:** - [ ] A worker behind a building is not pickable
+> **Done when:** - [ ] A drag on the map is never eaten by a label
+
+> **Phase:** Phase 3 — the places, camera, labels
+> **Blocked by:** Ticket 04
+> A follow is the same camera re-aimed — one worker at a time, close enough to read the pose, because the flat town's zoom floor exists for exactly that reason and distance expresses it here. A target that disappears releases the follow, since a camera holding a remembered coordinate sits over empty ground with full confidence. Picking is by raycast against real geometry, which also fixes a defect the flat town has where a hidden building's rectangle still catches the pointer.
+
+### TASK-111 · 11 — Labels
+
+> **Goal:** Every name the map letters is readable in the solid town, and typeset like the flat town's.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-02T12:17:50Z
+
+> **Done when:** - [ ] Hovering a building reveals its name; hovering away hides it
+> **Done when:** - [ ] Hovering a worker reveals what it is doing and to what
+> **Done when:** - [ ] Clicking pins a label and exactly one is pinned at a time
+> **Done when:** - [ ] A label tracks its building through a turn without drifting
+> **Done when:** - [ ] Both renderers typeset in the same face
+
+> **Phase:** Phase 3 — the places, camera, labels
+> **Blocked by:** Ticket 10
+> Labels are 2D DOM projected from a world point, because type in 3D space foreshortens and aliases while DOM type stays crisp at any zoom. The pixel font ships as a DOM webfont so both renderers typeset alike — it is the only hand-authored pixel art in the project and this is the last thing it buys. The label rules are unchanged: nothing wears its name at rest, and exactly one label is pinned at a time.
+
+### TASK-112 · 12 — The solid suite
+
+> **Goal:** The solid town's invariants are asserted, so a defect cannot ship invisible the way the drawing layer's did.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T05:28:47Z
+
+> **Done when:** The same layout produces the same world, twice
+> **Done when:** Stage distinctness, stage climbing, parts disjoint and footprint matching transfer and pass
+> **Done when:** Meshes are closed
+> **Done when:** The storey count equals what the daemon sent
+> **Done when:** The suite runs in the chain and the flat suite still passes
+> **Done when:** **Two defect classes found while running TASK-102, which the suite must catch rather than a browser:**
+> **Done when:** - [ ] **A wrong on-screen axis ratio fails a test.** The first `AXIS` compensation rendered a 1:1 picture where the projection is 2:1, and *every other assertion passed*, because a consistently wrong scale is still a consistent projection. The test must assert the finished on-screen ratio end to end, not a derived constant.
+> **Done when:** - [ ] **A host that sizes itself fails a test.** The solid canvas measured 1311x39125 because it was sized from a host the canvas itself grew, feeding back through the ResizeObserver. A layout-level guard cannot see this; it needs either a headless check that the drawn size is bounded, or an explicit rule that the render target's size never derives from its own subtree.
+> **Done when:** **And the general lesson, recorded because it cost two rounds:** a projection bug and a sizing bug both pass `tsc`, the unit suite, and a screenshot taken at a glance. Rendering tickets are not done until the buffer is read back and the numbers checked — see the TASK-102 verification, which read 13,438 non-clear pixels out of the GL buffer rather than trusting that the scene looked right.
+
+> **Phase:** Phase 4 — verification
+> **Blocked by:** Tickets 08, 09, 10 and 11
+> Determinism is the keystone: the same layout must produce the same world every time, because it is the invariant the flat renderer already promises and the solid one could silently break. Stage distinctness, stage climbing, parts disjoint and footprint matching transfer from the flat suite because they describe a building rather than a cel. What geometry breaks on that cels could not is added: a rendered cel and its neighbour physically cannot interpenetrate, and two meshes can. Tests assert what a reader would notice, never a vertex count or a mesh name.
+
+### TASK-113 · 13 — The look
+
+> **Goal:** The solid town reads as a place rather than as grey geometry, lit out of the palette that already describes it.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-02T12:17:50Z
+
+> **Done when:** - [ ] The key is the palette's horizon gold and the fill is its zenith blue
+> **Done when:** - [ ] Shadows are tinted by the sky rather than blackened
+> **Done when:** - [ ] Dusk is the default
+> **Done when:** - [ ] Distance fog uses the palette's haze tones
+> **Done when:** - [ ] Corner occlusion is derived from the kit at build time, not post-processed
+> **Done when:** - [ ] Overhang, recessed windows, plinth and chamfered corners are present and visible
+> **Done when:** - [ ] Bloom on lit windows only, and no other post-effect
+> **Done when:** - [ ] The sun and fog are exposed as knobs and tuned by looking
+
+> **Phase:** Parallel with Phase 1 — the look
+> **Blocked by:** Ticket 04
+> The palette is a lighting rig that was never allowed to light anything: its horizon gold is the key, its zenith blue is the fill, and shadows then go blue-violet by the palette's own stated rule arriving by physics instead of by drawing. Dusk stays the default because it is the light the palette was built for. Corner occlusion is derived from the kit rather than post-processed, because a set-back shades what is below it and the kit already knows that. This is the part that cannot be specified, only tuned — the sun and fog must be exposed as knobs rather than committed to numbers.
+
+### TASK-114 · 14 — Material travels on the wire
+
+> **Goal:** A repository can declare what a building is made of, and the solid town renders it.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T03:36:29Z
+
+> **Done when:** - [ ] A repository can declare a building's material in ai-town.json
+> **Done when:** - [ ] The material travels on the wire unvalidated, and an unknown name is ignored by the renderer rather than rejected
+> **Done when:** - [ ] The analyzer gains no vocabulary and does not check the name
+> **Done when:** - [ ] A building with nothing declared falls back to its archetype's default material
+> **Done when:** - [ ] Go tests cover a declared material travelling, and an unknown one being ignored
+> **Done when:** - [ ] All 60 forms are reachable, and the mesh count matches
+
+> **Phase:** Phase 1 — the building (inserted before 07)
+> **Blocked by:** Ticket 02
+> Round 12 decided any archetype may take any material — 12 archetypes x 5 materials = 60 forms — and that cannot be built today: Material does not cross the wire. The analyzer carries exactly one declaration channel, `Archetype`, and its own comment states the pattern this follows: this package has no vocabulary, so a declaration travels unvalidated and an unknown name is ignored by the renderer. Material travels the same way.
+> **This is the one place the plan's 'Go is untouched' constraint is relaxed, deliberately.** The relaxation is narrow: one field, no validation, no vocabulary in the analyzer. Without it 48 of the 60 forms have no selector and are dead code.
+
+### TASK-115 · 15 — The detail filter
+
+> **Goal:** A reader can hide deep directories in the solid town, and a container stands in for its subtree.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T03:45:33Z
+
+> **Done when:** - [ ] A depth filter control exists in the solid town
+> **Done when:** - [ ] A building is drawn while its own depth is within the filter
+> **Done when:** - [ ] A container is drawn exactly while the buildings it summarises are hidden, and never at the same time as them
+> **Done when:** - [ ] The same bytes are never shown twice
+> **Done when:** - [ ] The Yard, Workshop and Depot cannot be hidden by any filter
+> **Done when:** - [ ] Hiding a deep directory does not change the size of the ground
+> **Done when:** - [ ] CONTEXT.md disambiguates 'depth', which currently carries three meanings in code — path segments below root, the display filter, and draw order — and gains the spatial sense the solid town introduces
+
+> **Phase:** Phase 2 — the town (parallel with 04-08)
+> **Blocked by:** Ticket 03
+> The flat town lets a reader hide directories deeper than a threshold, and a container is drawn exactly while its own depth is within the filter and the buildings it summarises are not — never both at once, which would show the same bytes twice. The solid town needs the same control, and it matters more there: in a flat town a hidden building is simply not drawn, while in a solid one a tower occludes what is behind it whether or not the reader wants it seen.
+> The three special places carry depth 0 and no children, so no filter can hide them — an event must always have somewhere to land (ADR-0012).
+
+### TASK-116 · 16 — Phase from the system clock
+
+> **Goal:** The town takes its time of day from the reader's own clock, so a town worked on at 1am is a town at night.
+- priority: medium
+- triage: needs-triage
+- updated: 2026-10-05T04:14:16Z
+
+> **Done when:** - [ ] A phase can be derived from an injected clock rather than from the store alone
+> **Done when:** - [ ] No code reads the wall clock ambiently — the source is passed in, so a phase is a pure function of an input
+> **Done when:** - [ ] A reader may override the derived phase to a fixed one and the override wins
+> **Done when:** - [ ] A reader working through the night still sees a lit town if they choose to
+> **Done when:** - [ ] The flat town's existing three-phase control keeps working unchanged
+> **Done when:** - [ ] `ui/src/art/` is not modified
+
+> **Phase:** deferred — not part of the solid town roadmap
+> **Blocked by:** the solid town roadmap (specifically TASK-113, The look)
+> Deferred deliberately, and recorded so it is not rediscovered as a surprise. Two things make it a product decision rather than a lighting one:
+> 1. It changes what the phase *control* is — from a selection the reader makes into a default they may override. The control currently names all three phases and steps through them.
+> 2. A reader who works through the night would never see their town lit, which fights the stated purpose (legibility) for exactly the people who would use this most.
+> The groundwork specified in ADR-0026 is small when it is wanted: **inject the clock as a source rather than reading it ambiently**, so a phase stays a pure function of an input and the existing determinism guarantee survives. Do not read `Date.now()` inside the scene.
+> Out of scope for this ticket: choosing whether `auto` becomes the default for both renderers or the solid one only.
+
+### TASK-117 · 17 — Assert that baked art turns
+
+> **Goal:** A change that made the town's art stop answering to the turn would fail a test rather than be noticed by looking.
+- priority: medium
+- triage: needs-triage
+- updated: 2026-10-05T05:02:20Z
+
+> **Done when:** - [ ] A failing case exists: a drawer that ignores the turn fails the suite
+> **Done when:** - [ ] The property asserted is 'the drawing answers to the turn', per art family, not a pixel comparison against today's art
+> **Done when:** - [ ] The assertion does not encode any specific sprite's contents, so a legitimate redraw does not break it
+> **Done when:** - [ ] The half-turn relationship (turns 0 and 2 differing where a shape is asymmetric) is either asserted or explicitly declined with a reason
+> **Done when:** - [ ] The test runs in the chain
+
+> **Phase:** found while repairing the test chain (TASK-101)
+> **Blocked by:** None — can start immediately
+> Removing the orphaned `turndep` file exposed a gap it was hiding. That file was titled "measure turn dependence" and asserted **nothing** — it printed counts. Running it showed the claim its name makes is *true and currently unguarded*:
+> | family | total | differs by turn | same under a half turn |
+> |---|---|---|---|
+> | base | 160 | 148 | 12 |
+> | band | 80 | 50 | 30 |
+> | cap | 1920 | 1236 | 684 |
+> | shadow | 5 | 5 | 0 |
+> What *is* asserted today is the turn as a **transform** — order four, idempotence, rigidity, separation preserved, extents preserved (`turnalign.test.ts`, 23 assertions) and the projection's composition (`art.test.ts`). Nothing asserts that the **baked art** answers to the turn, which is a different claim: a drawer that ignored `turn` entirely would pass every existing turn test and put the same picture at all four quarter turns.
+> The reason this is a ticket rather than nothing: the old file could not become the test, because it has no expectations to assert — writing "base differs at turn 1" as a hard expectation would encode today's sprite contents and fail on every legitimate redraw. Whatever replaces it should assert the *property* (a turn changes the drawing, per family) without pinning pixels.
+
+### TASK-118 · 18 — A store subscription that misses some changes
+
+> **Goal:** Every subscriber of the town store is notified on every change, so no renderer has to poll to stay correct.
+- priority: medium
+- triage: needs-triage
+- updated: 2026-10-05T07:06:17Z
+
+> **Done when:** - [ ] A subscriber registered with useTown.subscribe is notified by every action in the store, including the day control
+> **Done when:** - [ ] A single subscriber registered from the console behaves identically to one registered in the app
+> **Done when:** - [ ] getState() and subscribe agree: a change visible in one is delivered to the other
+> **Done when:** - [ ] A failing case exists, so the fix can be proven rather than asserted
+> **Done when:** - [ ] The solid renderer can be driven by a subscription again, with the frame-loop diff kept or removed on the evidence
+> **Done when:** - [ ] A test covers the store's own notification behaviour, since this is a store bug and not a renderer one
+
+> **Phase:** found while building TASK-104
+> **Blocked by:** None — can start immediately
+> **Measured, not suspected.** A `useTown.subscribe` listener on the solid scene fired for some store changes and not others:
+> - `useTown.subscribe` on the scene: **never fired** after mount, across every UI interaction tried.
+> - A listener registered on the *same store object* from the page console: **not notified** by the day control's own action, but **notified** by a direct `store.setState({ day })`.
+> - `getState()` reported the new value in **both** cases.
+> - React's own selector subscriptions worked throughout — the HUD's pressed state tracked the store correctly.
+> So the state object is updated and the vanilla listener is not called, while React's `useSyncExternalStore` path is. That points at the subscription list rather than at the state, and it is **not** explained by two module instances: `window.__store` was captured from the scene and `getState()` on it tracked the UI.
+> **Why it matters beyond the solid town.** `TownScene` subscribes the same way, so whatever is dropping these notifications may be silently affecting the flat renderer too — it currently relights on any redraw, which would hide the problem entirely. The solid renderer sidestepped it by reading the store on its frame loop and diffing, which is correct and costs a few reference comparisons per frame, but it is a workaround and the next renderer will hit the same wall.
+> **Where to look:** the store is `ui/src/store.ts`, created with zustand's `create`. Check whether something calls `setState` in a way that replaces rather than notifies, whether a subscriber list is being replaced rather than appended to, and whether `set` inside the initializer is the same `setState` the hook exposes.
+
+
+## Done
+
+### TASK-101 · 01 — Repair the test chain
+
+> **Goal:** The UI suite reports green, so the solid town's tests can be added to a chain that works.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T05:02:20Z
+
+> **Done when:** [x] The step referencing a missing test file is removed, or the file restored — removed. Root cause: `a8c80e8` deleted `traffic.test.ts` (and `src/traffic.ts`) when import roads became a property of a building, but left the `test:traffic` script in the chain.
+> **Done when:** [x] The test file with no script is wired into the chain or deleted — deleted. It was not a test: zero assertions, `console.log` only, titled "measure turn dependence". Its claim is measured in TASK-117 rather than lost.
+> **Done when:** [x] `npm test` runs to completion and reports green — exit 0, all 24 suites pass
+> **Done when:** [x] The number of suites the chain runs is recorded on this ticket — **24** (was 25 steps, the last of which could not run)
+> **Done when:** [x] No test source is changed by this ticket — only `package.json` (a dead script and a dead chain step), `.gitignore` (a dead ignore entry) and the deletion of the non-test file itself
+
+> Phase: prefactor. Blocked by: None — can start immediately.
+> The chain's last step references a test file that does not exist, so `npm test` fails at its final step today, and one further test file exists with no script so it never runs. Adding the solid town's suites to a broken chain means debugging a new suite inside an old one. Both defects predate this work and neither belongs to the solid town.
+
+### TASK-102 · 02 — The renderer seam and the second canvas
+
+> **Goal:** A reader can flip between the flat town and an empty solid town, and the flat town is untouched by the flip.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T05:26:25Z
+
+> **Done when:** [x] A renderer control sits beside the turn and day controls and changes the view — a Flat/Solid pair in the View popover, above the plan control
+> **Done when:** [x] The solid town renders on its own canvas with its own frame loop — its own isometric camera and its own orthographic projection; `__solid.frameCount` advanced 16-20 frames per mount
+> **Done when:** [x] Switching back and forth 10 times leaves the flat town pixel-identical — camera identical (zoom 1, scroll -376/-139.25) and all 15 building sprite fingerprints byte-identical across round trips
+> **Done when:** [x] No WebGL context is leaked across repeated switches — **10 created, 10 lost** across 10 round trips, instruments installed before the first switch
+> **Done when:** [x] The model module imports neither three.js nor the flat renderer's art — `ui/src/solid/model.ts` imports one type-only symbol from the store
+> **Done when:** [x] The projection is pinned by test against the flat renderer's own numbers — asserted against `WorldView.project` across six points
+> **Done when:** [x] Switching to solid while the plan drawing is showing drops the plan and lands in the isometric town
+> **Done when:** [x] The plan control is offered only in the flat renderer, where it can do what it says — `planOffered: false` observed in solid
+> **Done when:** **Two defects found by running it, and fixed:**
+> **Done when:** 1. **The solid canvas sized itself into a feedback loop** — measured 1311x39125, because the WebGL canvas was sized from a host the canvas itself grew, firing the ResizeObserver again. `#solid` now carries the same `position: absolute; inset: 0` that `#town` was already relying on.
+> **Done when:** 2. **The axis compensation was inverted in direction** — the first version rendered a 1:1 picture where the projection is 2:1, and every other assertion in the suite still passed because a consistently wrong scale is still consistent. Caught by asserting the on-screen ratio end to end rather than a derived constant; `zoom` also divided where it had to multiply.
+> **Done when:** **The 2:1 rendering is proven at the pixel level, not inferred:** the GL buffer holds 13,438 non-clear pixels, and the marker's material colour appears alongside its lit and shadowed variants, so the directional light is shading real geometry.
+
+> **Phase:** Phase 0 — the spike
+> **Blocked by:** Ticket 01
+> The seam the whole feature is tested at, and the first thing that must exist. All drawing decisions live in a framework-free model module that imports neither three.js nor the flat renderer's art; a thin scene module above it translates into three.js and decides nothing. The projection must be pinned against the flat renderer's own numbers so the two renderers cannot silently drift, and the renderer choice is not a third ViewMode — it is a renderer.
+
+### TASK-103 · 03 — One building, all eight ranks
+
+> **Goal:** A building climbs the ladder one visible part at a time in the solid town.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T05:49:23Z
+
+> **Done when:** [x] Framing appears at FRAMED, walls at WALLED, cap at ROOFED, glazing at GLAZED, door at DOORED, trim at COMPLETED — driven through the real scene with a real 20-storey 100x100 building from the daemon's own layout
+> **Done when:** [x] No rank is skipped and no part appears early — the mesh count went 17, 18, 19, 20, 21, 22, 23, 24: exactly **+1 per rank**, eight times, with nothing removed. Structurally guaranteed rather than merely tested: the parts at a rank are a *prefix* of `PART_FOR_RANK`, so a skip is not expressible.
+> **Done when:** [x] A tower is exactly the storey count the daemon sent, clamped identically — 12 triangles per storey, counted in the suite at 1, 3 and 20 storeys; `clampFloors`/`STOREY`/`MAX_FLOORS` pinned by test against `art/stack.ts` across 9 inputs including NaN and Infinity
+> **Done when:** [x] The cap sits at the top of the topmost band — **topZ was exactly 400 = towerTop(20)** for both the frame and the walls, and the cap's base sits at 400 with only its ridge above (432.9). The finish ranks add nothing above the roof. Asserted in the suite at 1, 2, 5, 20 and 25 storeys (the last exercising the clamp)
+> **Done when:** [x] Kit operations are correct at both footprint extremes — every rank built at 44 and at 100 with finite, whole-triangle geometry; and the stronger property: the plan shape **scales by exactly 100/44** part by part, which is the fraction rule's real content
+> **Done when:** **Verified rendering, not inferred:** 45,782 non-clear pixels in a 1311x960 GL buffer across 14 distinct colours, from 76 meshes over 7 part roles.
+> **Done when:** **The repo's own comment-truth checker caught me**, which is worth recording because it is the check working as designed: a doc block opening `A rectangular plot…` was a defect because `A` is a real declaration in `kit.ts` (a corner vertex in `extrude`/`gable`), and the convention here is that a doc block names what is below it. Fixed. I also found a second defect the checker **cannot** see — a doc block reading `translate moves a part vertically` attached to a function named `lift` — and fixed that too.
+
+> **Phase:** Phase 0 — the spike
+> **Blocked by:** Ticket 02
+> The ladder's promise — one rank adds exactly one part, and a building is never seen to skip one — becomes structurally true here rather than merely drawn. One archetype in one material, as base, band and cap. Every kit measurement is a fraction of the footprint, never an absolute, which is what lets one form serve all five sizes.
+
+### TASK-109 · 09 — The ground and the three places
+
+> **Goal:** A worker is always standing somewhere nameable, and a district boundary is legible.
+- priority: medium
+- triage: ready-for-agent
+- updated: 2026-10-05T08:45:05Z
+
+> **Done when:** [x] The ground is sized from the layout's extent and does not shrink when a deep directory is hidden — measured the field's **widest span at 3028 units** against a 1044x634 layout, and asserted by laying the ground from two layouts differing only in their sites
+> **Done when:** [x] The seven ground kinds are visible as regions — the field, both district kinds and all three place surfaces are laid as separate patches, because each carries a colour and a reader has to tell the Yard's dirt from the Depot's stone
+> **Done when:** [x] Kerbs are raised geometry and legible at the fitted zoom — **all 18 ground meshes have height**; the six kerbs stand 0 to 3.5 units and read as 48 triangles each (four runs, corners owned once) against a district patch's 12
+> **Done when:** [x] Yard, Workshop and Depot are distinguishable at a glance — three different surfaces carried to three different colours: `#96784f` packed dirt, `#6d4c2c` boarded deck, `#7c858f` stone flags. Asserted pairwise distinct on the role, so a future change cannot quietly collapse two into one
+> **Done when:** [x] A worker is never on a surface mistakable for another place — each place's surface is lifted to 1-2 units above the district it may overlap, so it is visibly *on* the ground rather than z-fighting with it, and each place carries furniture hashed from its own id
+> **Done when:** **18 field meshes, 6 distinct colours, non-clear pixels in the GL buffer went from 45,782 to 1,254,545** — the town now has a floor, which is the difference between objects and a place.
+> **Done when:** **Two corrections carried over from the flat renderer, both recorded in `terrain.ts` and both easy to get wrong again:** the Depot's stone is `stone[2]` and not `stone[1]`, because the kerb's rim and lip come from the ramp's darkest step and a surface on that same step has an edge that draws nothing; and the field's apron is forward-only, because a symmetric one pushes the far corner above the frame into a picture with no sky.
+> **Done when:** **One test bug of mine, worth naming because it was a real question.** I asserted a zero-sized layout's field centre must be positive. It is 0, and that is correct — a field centred on the origin is a field. Only its *size* has to be positive. An empty layout is a real state, not an error: a daemon that answers with no districts has answered correctly.
+
+> **Phase:** Phase 3 — the places, camera, labels
+> **Blocked by:** Ticket 03
+> The ground is flat and sized from the layout's own extent, never from the sites, so hiding a deep directory never shrinks the world. Kerbs are raised geometry rather than painted lines — a lip of a few world units, which is what stops a flat plane under good buildings reading as a paper diorama. The Yard, Workshop and Depot carry a little furniture, because the Yard holds roughly half of every session and a worker on a bare plate is a figure on a field.
+

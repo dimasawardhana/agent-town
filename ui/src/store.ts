@@ -12,6 +12,13 @@ import { type DayPhase, normaliseDay, stepDay } from "./daylight";
 import { type ViewMode, isViewMode } from "./plan";
 import { workerLabelId } from "./visibility";
 
+// `Renderer` is the one thing the solid model exports that the store needs, and
+// the arrow points this way on purpose: the model imports `Layout` and `Site` as
+// *types* from here, which erases at build time, so this is not a runtime cycle.
+// The alternative — restating the union in the store — would be two spellings of
+// one fact, and the two would eventually disagree about what a renderer is.
+import { isRenderer, type Renderer } from "./solid/model";
+
 // SITE_ID_BUILDING_PREFIX mirrors analyzer.SiteIDBuildingPrefix.
 //
 // It is the join key between a worker's resolved Place and the building's
@@ -316,6 +323,21 @@ interface State {
    */
   day: DayPhase;
 
+  /**
+   * Which renderer draws the town: the flat pixel town, or the solid one.
+   *
+   * **Not a `ViewMode`, and the difference is not pedantry.** `view` means
+   * "which drawing of this layout" — two drawings inside one Phaser scene. A
+   * renderer is a different canvas, scene graph, frame loop and asset set, and
+   * folding it into `view` would bury a lifecycle difference inside a drawing
+   * difference (ADR-0025 §1).
+   *
+   * A view preference like `depth`, `turn` and `day`, and never sent to the
+   * daemon. The flat renderer is frozen (ADR-0024) and stays the default, so a
+   * reader who never touches this control is unaffected by the solid town.
+   */
+  renderer: Renderer;
+
   setProjects: (p: ProjectRef[], current: string) => void;
   setCurrent: (path: string) => void;
   setTown: (t: Town | null, l: Layout | null, live?: Live) => void;
@@ -330,6 +352,7 @@ interface State {
   /** unfollow releases the camera and unpins the caption following pinned. */
   unfollow: () => void;
   pushEvent: (e: AgentEvent) => void;
+  setRenderer: (r: Renderer) => void;
   setConnected: (c: boolean) => void;
   setError: (e: string | null) => void;
   /** setDepth changes how much of the town is drawn, by building depth. */
@@ -375,6 +398,9 @@ export const useTown = create<State>((set) => ({
   turn: 0,
   view: "iso" as ViewMode,
   day: "dusk" as DayPhase,
+  // Flat first: the flat renderer is finished, verified and the default, and the
+  // solid one has to earn that place rather than be given it (ADR-0024).
+  renderer: "flat" as Renderer,
   setTown: (town, layout, live) =>
     set({ town, layout, live: live ?? EMPTY_LIVE, error: null }),
   setProjects: (projects, current) => set({ projects, current }),
@@ -426,4 +452,15 @@ export const useTown = create<State>((set) => ({
   toggleView: () => set((s) => ({ view: s.view === "plan" ? "iso" : "plan" })),
   dayBy: (delta) => set((s) => ({ day: stepDay(s.day, delta) })),
   setDay: (day) => set({ day: normaliseDay(day) }),
+  // **Switching renderer can drop the plan drawing**, because the solid town has
+  // no plan: it is a flat drawing of a flat town. Dropping it here rather than at
+  // the control means the invariant holds however the renderer changes — a
+  // control, a stored preference, or a test — and the alternative (remembering
+  // the plan and restoring it on the way back) was declined, because a reader
+  // toggling to solid and back would find the flat town in a drawing they did not
+  // choose with nothing on screen having said so.
+  setRenderer: (renderer) => set((s) => ({
+    renderer: isRenderer(renderer) ? renderer : "flat",
+    view: isRenderer(renderer) && renderer === "solid" ? "iso" : s.view,
+  })),
 }));

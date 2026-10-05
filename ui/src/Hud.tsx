@@ -23,6 +23,7 @@
 // having none.
 
 import { useEffect, useRef, useState } from "react";
+import { RENDERERS } from "./solid/model";
 
 import { actionInfo, crewLabel, targetOf } from "./actions";
 import { DAYLIGHT, DAY_PHASES } from "./daylight";
@@ -134,6 +135,8 @@ function CameraControls({ open, onToggle }: { open: boolean; onToggle: () => voi
   const toggleView = useTown((s) => s.toggleView);
   const day = useTown((s) => s.day);
   const setDay = useTown((s) => s.setDay);
+  const renderer = useTown((s) => s.renderer);
+  const setRenderer = useTown((s) => s.setRenderer);
 
   if (!town) return null;
 
@@ -146,7 +149,9 @@ function CameraControls({ open, onToggle }: { open: boolean; onToggle: () => voi
     <div className={`hud-group right ${open ? "open" : ""}`}>
       <button type="button" className="hud-btn" aria-expanded={open} onClick={onToggle}>
         <span className="k">View</span>
-        <span className="v">{view === "plan" ? "From above" : "Isometric"}</span>
+        <span className="v">
+          {renderer === "solid" ? "Solid" : view === "plan" ? "From above" : "Isometric"}
+        </span>
       </button>
       {open && (
         <div className="hud-pop">
@@ -172,16 +177,39 @@ function CameraControls({ open, onToggle }: { open: boolean; onToggle: () => voi
             </section>
           )}
           <section className="view-control">
-            <div className="turn-row">
-              <button
-                className="bevel"
-                onClick={toggleView}
-                aria-pressed={view === "plan"}
-                title={view === "plan" ? "Back to the isometric town" : "Look at the town from directly above"}
-              >
-                {view === "plan" ? "Isometric" : "From above"}
-              </button>
+            <div className="turn-row" role="group" aria-label="Renderer">
+              {RENDERERS.map((r) => (
+                <button
+                  key={r}
+                  className="bevel"
+                  aria-pressed={renderer === r}
+                  onClick={() => setRenderer(r)}
+                  title={
+                    r === "solid"
+                      ? "The town as modelled geometry, with real light and depth"
+                      : "The pixel town, which is the default"
+                  }
+                >
+                  {r === "solid" ? "Solid" : "Flat"}
+                </button>
+              ))}
             </div>
+            {/* **The plan drawing is offered only in the flat renderer.** The
+                solid town has one drawing, and a control that appears to work and
+                does nothing is worse than one that is not there — the same reason
+                the detail slider hides itself on a town with nothing to filter. */}
+            {renderer === "flat" && (
+              <div className="turn-row">
+                <button
+                  className="bevel"
+                  onClick={toggleView}
+                  aria-pressed={view === "plan"}
+                  title={view === "plan" ? "Back to the isometric town" : "Look at the town from directly above"}
+                >
+                  {view === "plan" ? "Isometric" : "From above"}
+                </button>
+              </div>
+            )}
             <div className="turn-row">
               <button className="bevel" onClick={() => turnBy(-1)} title="Turn left">
                 Turn left

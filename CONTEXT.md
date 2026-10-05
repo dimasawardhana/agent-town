@@ -39,8 +39,14 @@ repository declares one in `ai-town.json`.
 **Material** — what a building is made of: stone, render, glass, timber,
 concrete. Five families in `ui/src/art/roof.ts`, and the *body*'s axis: base and
 band both draw from one family, deliberately, so a building is one material
-throughout. Every archetype maps to exactly one, so adding an archetype costs
-cels on the cap and nothing on the body.
+throughout.
+
+A building's material is its own fact and not a consequence of its archetype. An
+archetype has a *default* material — a Chapel is stone, a Tower glass — so a town
+reads sensibly with nothing declared, and any building may be declared otherwise,
+so a stone Tower and a glass Tower are both ordinary. That is a deliberate change
+from "every archetype maps to exactly one", which made the two axes one axis.
+_Avoid_: skin, surface, texture
 
 **Road** — a paved band between places, in three kinds. **Row** roads fill the gap
 the layout leaves between district rows; **containment** roads run from a nested
@@ -63,22 +69,32 @@ A container's height comes from **hand-written** bytes rather than its total, be
 _Avoid_: group, folder, parent, namespace, node
 
 **Turn**:
-Which way round the town is drawn, in quarter turns. A view preference like detail depth: the layout from the daemon is never changed, only turned on the way *out* of it, so a turn cannot change what the town says — only how the reader is looking at it. The turn is about the world origin and linear, which is what lets a building's art be plotted in its own frame and still land correctly. The light does not turn with the town: it is fixed at the picture's top-left, so the wall that catches it changes as the world turns under a fixed sun.
+Which way round the town is drawn, in quarter turns. A view preference like detail depth: the layout from the daemon is never changed, only turned on the way *out* of it, so a turn cannot change what the town says — only how the reader is looking at it. The turn is about the world origin and linear, which is what lets a building's art be plotted in its own frame and still land correctly. In the solid town the same preference is a camera orbit around that origin.
+
+The light follows the reader in neither renderer, but the two fix it differently and the difference is visible. The flat town pins the key to the *picture's* top-left, because a cel's shading is baked into its pixels and re-lighting the art is not affordable — so the world turns under a fixed key and the wall that catches it changes. The solid town fixes the key in the *world*, because its light is real — so a turn orbits the reader and re-lights the town, and a building is lit from a different side at each quarter turn. A shared rule would be the tidier sentence and would be false.
 _Avoid_: rotation angle, compass, orientation, bearing
 
 **Follow**:
 Which way the camera is pointed when it is following one worker, rather than
 framing the whole town. A view preference like Turn: the layout from the daemon
 is never changed, only aimed, so following cannot change what the town says —
-only what the reader is looking at. One worker at a time, and the zoom floors at
-three while it lasts. The follow ends when the reader stops it, when the view
-changes to the plan — a plan draws workers as marks, and there is nothing there
-to follow — and when the followed crew stops being reported, which is not the
-same as the session ending: a finished crew stands down and stays where it is.
+only what the reader is looking at. One worker at a time, and the camera stays
+close enough to read the pose: the flat town floors its zoom at three, and the
+solid town holds a minimum distance that means the same thing. The follow ends
+when the reader stops it, when the view changes to the plan — a plan draws
+workers as marks, and there is nothing there to follow, and only the flat town
+has one — and when the followed crew stops being reported, which is not the same
+as the session ending: a finished crew stands down and stays where it is.
 _Avoid_: third-person view, chase camera, lock-on, spectate
 
+**Solid**:
+The town drawn as modelled geometry rather than as pixel art, reached by the renderer control. It is a *renderer*, not a view preference: it has its own geometry, its own materials and its own tests, and shares with the flat town only the layout the daemon sends, the vocabulary, and the camera. Turn and Follow mean the same thing in it — the world never turns, only where the reader stands — but there a turn is an orbit and a follow is a distance, because there is no picture to aim a zoom at. It has no plan drawing, because a plan is a flat view of a flat town.
+
+Its buildings are read the same way as the flat town's: one material each, the same eight ranks, the same damage. What the solid renderer does *not* inherit is the rasteriser — it draws volumes where the flat town draws cels, and the two never share a drawing.
+_Avoid_: 3D mode, world view, three.js view, isometric (when the solid renderer is meant)
+
 **Land**:
-The field a town stands on, and the ground texture painted into one canvas. It is sized from the **layout's own extent**, never from the sites, because the field does not come and go with the detail filter — a deeper directory being hidden must not shrink the world. The canvas must cover the land: sizing it from the sites alone leaves the town's own fields cut off mid-tile.
+The field a town stands on. It is sized from the **layout's own extent**, never from the sites, because the field does not come and go with the detail filter — a deeper directory being hidden must not shrink the world. In the flat town it is a texture painted into one canvas, and that canvas must cover the land: sizing it from the sites alone leaves the town's own fields cut off mid-tile.
 _Avoid_: terrain, map, ground texture, background
 
 **Hover Label**:
@@ -253,6 +269,11 @@ _Avoid_: server, backend, collector, listener
 - ADR-0020: The view turns, the world does not
 - ADR-0021: Roofs are deliberate ornament, confined away from every measured channel
 - ADR-0022: A follow view is a camera, not a projection
+
+- ADR-0023: The solid town is authored geometry, not a port of the pixel art
+- ADR-0024: The flat renderer is frozen, and the pixel art is its alone
+- ADR-0025: The solid town is a renderer, not a view preference
+- ADR-0026: The sun is real, and it moves with the time of day
 
 ## Resolved Questions
 
