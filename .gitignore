@@ -35,7 +35,6 @@ ui-sky.test.mjs
 ui/ui-motion.test.mjs
 ui-commenttruth.test.mjs
 ui-selftest.test.mjs
-ui-traffic.test.mjs
 ui/ui-birds.test.mjs
 ui/ui-clouds.test.mjs
 ui/ui-land.test.mjs
