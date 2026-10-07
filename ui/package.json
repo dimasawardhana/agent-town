@@ -10,7 +10,7 @@
     "test:archetypes": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-archetypes.test.mjs test/archetypes.test.ts --log-level=warning && node --test ui-archetypes.test.mjs",
     "test:visibility": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-visibility.test.mjs test/visibility.test.ts --log-level=warning && node --test ui-visibility.test.mjs",
     "test:follow": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-follow.test.mjs test/follow.test.ts --log-level=warning && node --test ui-follow.test.mjs",
-    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:embers && npm run test:roads && npm run test:turnroads && npm run test:turnalign && npm run test:flagcorner && npm run test:daylight && npm run test:birds && npm run test:clouds && npm run test:land && npm run test:plan && npm run test:sky && npm run test:motion && npm run test:materials && npm run test:routing && npm run test:visibility && npm run test:follow && npm run test:light && npm run test:atlas && npm run test:commenttruth && npm run test:selftest",
+    "test": "npm run test:art && npm run test:blankcaps && npm run test:archetypes && npm run test:damage && npm run test:embers && npm run test:roads && npm run test:turnroads && npm run test:turnalign && npm run test:turn-dependence && npm run test:flagcorner && npm run test:daylight && npm run test:birds && npm run test:clouds && npm run test:land && npm run test:plan && npm run test:sky && npm run test:motion && npm run test:materials && npm run test:routing && npm run test:visibility && npm run test:follow && npm run test:light && npm run test:atlas && npm run test:commenttruth && npm run test:selftest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:light": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-light.test.mjs test/light.test.ts --log-level=warning && node --test ui-light.test.mjs",
     "test:atlas": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-atlas.test.mjs test/atlas.test.ts --log-level=warning && node --test ui-atlas.test.mjs",
@@ -31,7 +31,8 @@
     "test:birds": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-birds.test.mjs test/birds.test.ts --log-level=warning && node --test ui-birds.test.mjs",
     "test:clouds": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-clouds.test.mjs test/clouds.test.ts --log-level=warning && node --test ui-clouds.test.mjs",
     "test:land": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-land.test.mjs test/land.test.ts --log-level=warning && node --test ui-land.test.mjs",
-    "test:plan": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-plan.test.mjs test/plan.test.ts --log-level=warning && node --test ui-plan.test.mjs"
+    "test:plan": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-plan.test.mjs test/plan.test.ts --log-level=warning && node --test ui-plan.test.mjs",
+    "test:turn-dependence": "./node_modules/.bin/esbuild --bundle --format=esm --platform=node --outfile=ui-turn-dependence.test.mjs test/turn-dependence.test.ts --log-level=warning && node --test ui-turn-dependence.test.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.1",
