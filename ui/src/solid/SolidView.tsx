@@ -56,6 +56,28 @@ export function SolidView() {
     s.start();
 
     /**
+     * What a click landed on, answered by the scene and acted on here.
+     *
+     * A worker click toggles the follow — the same toggle the flat town's row
+     * offers — and a site click selects it and frames it, which is what the
+     * flat renderer's site click has always done. The scene reports; the store
+     * decides.
+     */
+    s.onPick = (kind, id): void => {
+      const st = useTown.getState();
+      if (kind === "worker") {
+        if (st.following === id) st.unfollow();
+        else st.follow(id);
+        return;
+      }
+      const site = st.layout?.sites.find((candidate) => candidate.path === id);
+      if (site) {
+        st.select(site);
+        st.focus(id);
+      }
+    };
+
+    /**
      * The store's snapshot as of the last time anything was applied, so a frame
      * with nothing to do costs a few reference comparisons.
      *
@@ -66,28 +88,51 @@ export function SolidView() {
      */
     let applied: Snapshot | null = null;
 
+    /**
+     * The layout the ground was last laid for, so it is laid once.
+     *
+     * **Declared outside `sync`, and that is not tidiness.** Inside, it was
+     * re-created as `null` on every frame, so the "laid once per layout" guard
+     * never held at all and the field — the largest meshes in the town, a plane
+     * spanning the whole town plus every plate and kerb — was torn down and
+     * rebuilt sixty times a second, on a town nothing was happening to.
+     */
+    let grounded: Snapshot["layout"] | null = null;
+
     const sync = (): void => {
       const st = useTown.getState();
       const was = applied;
       applied = st;
 
-      /** The layout the ground was last laid for, so it is laid once. */
-      let grounded: Snapshot["layout"] | null = null;
-
+      // The follow is aimed on the scene, not through React: a worker crossing
+      // the town is sixty frames of retargeting, and the frame loop is already
+      // the clock for everything the store changed.
+      s.setFollowing(st.following);
+      // A followed worker the town has stopped reporting — a finished session,
+      // a crashed daemon — releases the follow on the frame it disappears, so
+      // the reader is never watching an empty patch of ground.
+      if (st.following && st.live && !st.live.workers.some((w) => w.id === st.following)) {
+        useTown.getState().unfollow();
+      }
       if (st.layout) {
-        // A new layout re-frames the camera, which is the one thing that must not
-        // be skipped: the town may have grown.
-        if (was === null || st.layout !== was.layout) s.setLayout(st.layout);
-        // **Laid once per layout, not on every live update.** The ground does not
-        // move when a building climbs a rank, and rebuilding the field at the
-        // event rate would redraw the largest meshes in the town at the highest
-        // rate.
-        if (grounded !== st.layout) {
+        // **A new layout, or a new turn, re-frames the camera.** The turn moves
+        // the world rather than the camera, so the fit has to be taken again from
+        // the turned extent.
+        const refit = was === null || st.layout !== was.layout || st.turn !== was.turn;
+        if (refit) s.setLayout(st.layout, st.turn);
+        // Laid once per layout *and* per turn, because a turn moves every plate
+        // and kerb. The town ahead may have climbed a rank, which the ground does
+        // not care about — hence the two conditions rather than one.
+        if (refit || grounded !== st.layout) {
           s.setGround(st.layout);
           grounded = st.layout;
         }
-        if (was === null || st.layout !== was.layout || st.live !== was.live) {
-          s.setTown(st.layout, st.live);
+        // The detail filter redraws the town and nothing else: it hides buildings,
+        // it does not move the ground and it does not change the fit, so re-framing
+        // for it would throw away the reader's camera to answer a question about
+        // the tree.
+        if (refit || st.live !== was.live || st.depth !== was.depth) {
+          s.setTown(st.layout, st.live, st.depth);
           s.setWorkers(st.live.workers, st.layout);
         }
       }
@@ -96,29 +141,26 @@ export function SolidView() {
       if (was === null || st.day !== was.day) s.setDay(st.day);
     };
 
-    // Applied before the first frame rather than waiting for one, so a reader who
-    // switches renderers on a loaded town does not see an empty frame first.
+    // Apply the initial snapshot before subscribing so the scene never starts empty.
     sync();
+    const unsubscribe = useTown.subscribe(sync);
 
     // The canvas is sized from the host's box, so a window resize, a panel
     // opening or a stylesheet change has to re-fit the camera. `ResizeObserver`
     // rather than a window listener, because the thing that changes is the
     // element's box and the window may not have moved at all.
     const ro = new ResizeObserver(() => {
-      const l = useTown.getState().layout;
+      const { layout, turn } = useTown.getState();
       s.resize();
-      if (l) s.setLayout(l);
-      // Forces the next frame to re-apply against the new viewport.
-      applied = null;
+      // The turn is passed here too, because `setLayout` records it — a resize
+      // that omitted it would quietly reset the town to upright, and the reader
+      // would watch their orientation undo itself when a panel opened.
+      if (layout) s.setLayout(layout, turn);
+      sync();
     });
     ro.observe(host.current);
 
-    let raf = 0;
-    const tick = (): void => {
-      sync();
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
+    // Store notifications drive synchronization; rendering itself remains in the scene loop.
 
     // Exposed for verification, the same way `TownCanvas` exposes `__town`: a
     // headless probe can ask the scene how many frames it has drawn, how many
@@ -131,7 +173,7 @@ export function SolidView() {
     // and a WebGL context is the one resource here that cannot be reclaimed by
     // dropping a reference.
     return () => {
-      cancelAnimationFrame(raf);
+      unsubscribe();
       ro.disconnect();
       delete (window as unknown as { __solid?: SolidScene }).__solid;
       scene.current = null;
