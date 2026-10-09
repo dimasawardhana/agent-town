@@ -1,47 +1,31 @@
 {
   "tasks": [
     {
-      "id": "TASK-104",
-      "title": "04 — One worker, and the sun",
-      "goal": "A worker walks to a building and works on it, lit by a real sun.",
-      "description": "**Phase:** Phase 0 — the spike\n**Blocked by:** Ticket 03\n\nOne machine kind, four poses, with the gesture animated procedurally rather than by a rig — the gesture is what names the kind and carries the pose. The rhythm differs per action even where the pose does not: a hammer blow is fast with a slow follow-through, and a reader relies on that. The light is a real directional light whose direction does not depend on the turn.",
-      "acceptance": "- [ ] A worker walks to its building before it works\n- [ ] The gesture is animated rather than static\n- [ ] The rhythm differs per action even where the pose does not\n- [ ] One directional light, its direction independent of the turn\n- [ ] The sun's direction differs across the three day phases",
-      "status": "backlog",
+      "id": "TASK-113",
+      "title": "13 — The look",
+      "goal": "The solid town reads as a place rather than as grey geometry, lit out of the palette that already describes it.",
+      "description": "Implemented palette-derived phase lighting and fog; footprint-scaled architectural details; deterministic vertex shading; selectively emissive glazing. Repaired SolidView synchronization to poll/diff store snapshots in its frame loop because vanilla subscribe misses store action notifications, with RAF cancellation on teardown. Focused tests, typecheck, and production build pass. Live HUD buttons now propagate scene phase. Pixel-level visual tuning remains unverified: screenshot captured but configured vision model cannot inspect images. Selective bloom is not supported by available dependencies; only lit-window emissive lighting is used, with no global post-effects. Keep open until visual acceptance is inspected and tuning is actually evaluated by looking.",
+      "acceptance": "- [ ] The key is the palette's horizon gold and the fill is its zenith blue\n- [ ] Shadows are tinted by the sky rather than blackened\n- [ ] Dusk is the default\n- [ ] Distance fog uses the palette's haze tones\n- [ ] Corner occlusion is derived from the kit at build time, not post-processed\n- [ ] Overhang, recessed windows, plinth and chamfered corners are present and visible\n- [ ] Bloom on lit windows only, and no other post-effect\n- [ ] The sun and fog are exposed as knobs and tuned by looking",
+      "status": "in_progress",
       "triage": "ready-for-agent",
       "priority": "medium",
-      "claim": {
-        "harness": "omp",
-        "session": "01a0fc26-3999-7223-80fa-6a4418f9e46f",
-        "expires": "2026-10-05T06:27:04Z"
-      },
-      "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-05T05:57:04Z"
-    },
-    {
-      "id": "TASK-105",
-      "title": "05 — The verdict",
-      "goal": "Whether a solid town is legible at a glance is answered, with evidence, before anything else is built.",
-      "description": "**Phase:** Phase 0 — the spike\n**Blocked by:** Ticket 04\n\nThe milestone. Its entire deliverable is an answer to the three questions the product promises, each with a screenshot. If any answer is no, the rest of this roadmap is not built — a gap stated rather than hidden is the product's own principle, and the expensive part of this feature is geometry while the riskiest assumption is cheap to test.",
-      "acceptance": "- [ ] Where is the agent? answered with a screenshot\n- [ ] What is it doing? answered with a screenshot\n- [ ] Did the building get better or worse? answered with a screenshot\n- [ ] A rank advance and a damage state are told apart at the fitted view\n- [ ] The verdict is recorded here, and Phase 1 does not start on a no",
-      "status": "backlog",
-      "triage": "ready-for-agent",
-      "priority": "medium",
+      "references": [
+        "ui/src/solid/sun.ts",
+        "ui/src/solid/scene.ts",
+        "ui/test/solid-look.test.ts",
+        "npm run test:solid-look 14/14 passed",
+        "npm run test:solid 32/32 passed",
+        "npm run test:solid-winding 11/11 passed",
+        "npm run typecheck passed",
+        "npm run lint unavailable: missing script",
+        "npm run type-check unavailable: missing script",
+        "Fresh bundled-browser smoke: Solid mounted 79 meshes; day/night phase and fog changed; default dusk verified",
+        "Fresh screenshots: /tmp/omp-sshots-159e534cef522a81.webp (dusk), /tmp/omp-sshots-159e54fec3d22a85.webp (day), /tmp/omp-sshots-159e54eeca522a84.webp (night)",
+        "Visual acceptance remains unverified: configured vision model cannot accept images; TASK-113 remains open"
+      ],
       "claim": null,
       "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-02T12:17:50Z"
-    },
-    {
-      "id": "TASK-106",
-      "title": "06 — The kit",
-      "goal": "The eight operations exist, and every one is correct at every footprint and every turn.",
-      "description": "**Phase:** Phase 1 — the building\n**Blocked by:** Ticket 05\n\nOnly if the verdict is a go. The sweep carries three archetypes at once — a 2D profile carried across the footprint gives the Chapel's spire, the Stadium's dome and the Library's gable from one operation. The canopy exists because the Restaurant's flat roof cannot be a sweep: a gable's ridge is a line and nothing can be placed on one. Each operation must work at five footprints, in five materials, across three parts and from four turns, so the cost of an operation is not linear.",
-      "acceptance": "- [ ] All eight operations exist and each is footprint-relative\n- [ ] The sweep produces the Chapel's spire, the Stadium's dome and the Library's gable from one operation\n- [ ] Every operation is correct at footprints 44 and 100\n- [ ] Every operation is correct from all four turns\n- [ ] An operation that cannot be expressed footprint-relative is refused rather than added",
-      "status": "backlog",
-      "triage": "ready-for-agent",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-02T12:17:50Z"
+      "updated_at": "2026-10-08T15:38:08Z"
     },
     {
       "id": "TASK-107",
@@ -57,32 +41,6 @@
       "updated_at": "2026-10-05T03:36:29Z"
     },
     {
-      "id": "TASK-108",
-      "title": "08 — Damage, and the four turns",
-      "goal": "A failure is visible on the building that broke, and is never mistaken for an unfinished one.",
-      "description": "**Phase:** Phase 1 — the building\n**Blocked by:** Ticket 07\n\nDamage is a material swap plus a deterministic displacement, hashed on the site's path so it is stable across turns, rebuilds and a change of plot — a walk keyed on footprint size would make every building of one size crack identically, which is the failure the archetype hash already exists to avoid. Damage never rolls the ladder back, because a failed command must not erase progress it did not cause. Turn becomes a camera orbit, and the world and the sun do not move with it.",
-      "acceptance": "- [ ] Damage is distinguishable from every unfinished rank at the fitted view\n- [ ] Damage never moves the building down the ladder\n- [ ] The displacement is stable across a rebuild and a change of plot\n- [ ] Two buildings of the same size damage differently\n- [ ] Turn orbits the camera and the world and the sun do not move",
-      "status": "backlog",
-      "triage": "ready-for-agent",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-02T12:17:50Z"
-    },
-    {
-      "id": "TASK-110",
-      "title": "10 — Follow, and picking",
-      "goal": "A reader can watch one worker, and can point at only what they can see.",
-      "description": "**Phase:** Phase 3 — the places, camera, labels\n**Blocked by:** Ticket 04\n\nA follow is the same camera re-aimed — one worker at a time, close enough to read the pose, because the flat town's zoom floor exists for exactly that reason and distance expresses it here. A target that disappears releases the follow, since a camera holding a remembered coordinate sits over empty ground with full confidence. Picking is by raycast against real geometry, which also fixes a defect the flat town has where a hidden building's rectangle still catches the pointer.",
-      "acceptance": "- [ ] Follow holds the camera close enough to read the pose\n- [ ] Follow survives a turn and a project switch\n- [ ] A target that disappears releases the follow rather than holding a stale point\n- [ ] A worker behind a building is not pickable\n- [ ] A drag on the map is never eaten by a label",
-      "status": "backlog",
-      "triage": "ready-for-agent",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-02T12:18:42Z"
-    },
-    {
       "id": "TASK-111",
       "title": "11 — Labels",
       "goal": "Every name the map letters is readable in the solid town, and typeset like the flat town's.",
@@ -91,35 +49,13 @@
       "status": "backlog",
       "triage": "ready-for-agent",
       "priority": "medium",
-      "claim": null,
+      "claim": {
+        "harness": "omp",
+        "session": "01a0fc26-3999-7223-80fa-6a4418f9e46f",
+        "expires": "2026-10-07T19:09:02Z"
+      },
       "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-02T12:17:50Z"
-    },
-    {
-      "id": "TASK-112",
-      "title": "12 — The solid suite",
-      "goal": "The solid town's invariants are asserted, so a defect cannot ship invisible the way the drawing layer's did.",
-      "description": "**Phase:** Phase 4 — verification\n**Blocked by:** Tickets 08, 09, 10 and 11\n\nDeterminism is the keystone: the same layout must produce the same world every time, because it is the invariant the flat renderer already promises and the solid one could silently break. Stage distinctness, stage climbing, parts disjoint and footprint matching transfer from the flat suite because they describe a building rather than a cel. What geometry breaks on that cels could not is added: a rendered cel and its neighbour physically cannot interpenetrate, and two meshes can. Tests assert what a reader would notice, never a vertex count or a mesh name.",
-      "acceptance": "The same layout produces the same world, twice\nStage distinctness, stage climbing, parts disjoint and footprint matching transfer and pass\nMeshes are closed\nThe storey count equals what the daemon sent\nThe suite runs in the chain and the flat suite still passes\n\n**Two defect classes found while running TASK-102, which the suite must catch rather than a browser:**\n- [ ] **A wrong on-screen axis ratio fails a test.** The first `AXIS` compensation rendered a 1:1 picture where the projection is 2:1, and *every other assertion passed*, because a consistently wrong scale is still a consistent projection. The test must assert the finished on-screen ratio end to end, not a derived constant.\n- [ ] **A host that sizes itself fails a test.** The solid canvas measured 1311x39125 because it was sized from a host the canvas itself grew, feeding back through the ResizeObserver. A layout-level guard cannot see this; it needs either a headless check that the drawn size is bounded, or an explicit rule that the render target's size never derives from its own subtree.\n\n**And the general lesson, recorded because it cost two rounds:** a projection bug and a sizing bug both pass `tsc`, the unit suite, and a screenshot taken at a glance. Rendering tickets are not done until the buffer is read back and the numbers checked — see the TASK-102 verification, which read 13,438 non-clear pixels out of the GL buffer rather than trusting that the scene looked right.",
-      "status": "backlog",
-      "triage": "ready-for-agent",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-05T05:28:47Z"
-    },
-    {
-      "id": "TASK-113",
-      "title": "13 — The look",
-      "goal": "The solid town reads as a place rather than as grey geometry, lit out of the palette that already describes it.",
-      "description": "**Phase:** Parallel with Phase 1 — the look\n**Blocked by:** Ticket 04\n\nThe palette is a lighting rig that was never allowed to light anything: its horizon gold is the key, its zenith blue is the fill, and shadows then go blue-violet by the palette's own stated rule arriving by physics instead of by drawing. Dusk stays the default because it is the light the palette was built for. Corner occlusion is derived from the kit rather than post-processed, because a set-back shades what is below it and the kit already knows that. This is the part that cannot be specified, only tuned — the sun and fog must be exposed as knobs rather than committed to numbers.",
-      "acceptance": "- [ ] The key is the palette's horizon gold and the fill is its zenith blue\n- [ ] Shadows are tinted by the sky rather than blackened\n- [ ] Dusk is the default\n- [ ] Distance fog uses the palette's haze tones\n- [ ] Corner occlusion is derived from the kit at build time, not post-processed\n- [ ] Overhang, recessed windows, plinth and chamfered corners are present and visible\n- [ ] Bloom on lit windows only, and no other post-effect\n- [ ] The sun and fog are exposed as knobs and tuned by looking",
-      "status": "backlog",
-      "triage": "ready-for-agent",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-02T12:17:50Z",
-      "updated_at": "2026-10-02T12:17:50Z"
+      "updated_at": "2026-10-07T18:39:02Z"
     },
     {
       "id": "TASK-114",
@@ -161,32 +97,6 @@
       "updated_at": "2026-10-05T04:14:16Z"
     },
     {
-      "id": "TASK-117",
-      "title": "17 — Assert that baked art turns",
-      "goal": "A change that made the town's art stop answering to the turn would fail a test rather than be noticed by looking.",
-      "description": "**Phase:** found while repairing the test chain (TASK-101)\n**Blocked by:** None — can start immediately\n\nRemoving the orphaned `turndep` file exposed a gap it was hiding. That file was titled \"measure turn dependence\" and asserted **nothing** — it printed counts. Running it showed the claim its name makes is *true and currently unguarded*:\n\n| family | total | differs by turn | same under a half turn |\n|---|---|---|---|\n| base | 160 | 148 | 12 |\n| band | 80 | 50 | 30 |\n| cap | 1920 | 1236 | 684 |\n| shadow | 5 | 5 | 0 |\n\nWhat *is* asserted today is the turn as a **transform** — order four, idempotence, rigidity, separation preserved, extents preserved (`turnalign.test.ts`, 23 assertions) and the projection's composition (`art.test.ts`). Nothing asserts that the **baked art** answers to the turn, which is a different claim: a drawer that ignored `turn` entirely would pass every existing turn test and put the same picture at all four quarter turns.\n\nThe reason this is a ticket rather than nothing: the old file could not become the test, because it has no expectations to assert — writing \"base differs at turn 1\" as a hard expectation would encode today's sprite contents and fail on every legitimate redraw. Whatever replaces it should assert the *property* (a turn changes the drawing, per family) without pinning pixels.",
-      "acceptance": "- [ ] A failing case exists: a drawer that ignores the turn fails the suite\n- [ ] The property asserted is 'the drawing answers to the turn', per art family, not a pixel comparison against today's art\n- [ ] The assertion does not encode any specific sprite's contents, so a legitimate redraw does not break it\n- [ ] The half-turn relationship (turns 0 and 2 differing where a shape is asymmetric) is either asserted or explicitly declined with a reason\n- [ ] The test runs in the chain",
-      "status": "backlog",
-      "triage": "needs-triage",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-05T05:02:20Z",
-      "updated_at": "2026-10-05T05:02:20Z"
-    },
-    {
-      "id": "TASK-118",
-      "title": "18 — A store subscription that misses some changes",
-      "goal": "Every subscriber of the town store is notified on every change, so no renderer has to poll to stay correct.",
-      "description": "**Phase:** found while building TASK-104\n**Blocked by:** None — can start immediately\n\n**Measured, not suspected.** A `useTown.subscribe` listener on the solid scene fired for some store changes and not others:\n\n- `useTown.subscribe` on the scene: **never fired** after mount, across every UI interaction tried.\n- A listener registered on the *same store object* from the page console: **not notified** by the day control's own action, but **notified** by a direct `store.setState({ day })`.\n- `getState()` reported the new value in **both** cases.\n- React's own selector subscriptions worked throughout — the HUD's pressed state tracked the store correctly.\n\nSo the state object is updated and the vanilla listener is not called, while React's `useSyncExternalStore` path is. That points at the subscription list rather than at the state, and it is **not** explained by two module instances: `window.__store` was captured from the scene and `getState()` on it tracked the UI.\n\n**Why it matters beyond the solid town.** `TownScene` subscribes the same way, so whatever is dropping these notifications may be silently affecting the flat renderer too — it currently relights on any redraw, which would hide the problem entirely. The solid renderer sidestepped it by reading the store on its frame loop and diffing, which is correct and costs a few reference comparisons per frame, but it is a workaround and the next renderer will hit the same wall.\n\n**Where to look:** the store is `ui/src/store.ts`, created with zustand's `create`. Check whether something calls `setState` in a way that replaces rather than notifies, whether a subscriber list is being replaced rather than appended to, and whether `set` inside the initializer is the same `setState` the hook exposes.",
-      "acceptance": "- [ ] A subscriber registered with useTown.subscribe is notified by every action in the store, including the day control\n- [ ] A single subscriber registered from the console behaves identically to one registered in the app\n- [ ] getState() and subscribe agree: a change visible in one is delivered to the other\n- [ ] A failing case exists, so the fix can be proven rather than asserted\n- [ ] The solid renderer can be driven by a subscription again, with the frame-loop diff kept or removed on the evidence\n- [ ] A test covers the store's own notification behaviour, since this is a store bug and not a renderer one",
-      "status": "backlog",
-      "triage": "needs-triage",
-      "priority": "medium",
-      "claim": null,
-      "created_at": "2026-10-05T07:06:17Z",
-      "updated_at": "2026-10-05T07:06:17Z"
-    },
-    {
       "id": "TASK-101",
       "title": "01 — Repair the test chain",
       "goal": "The UI suite reports green, so the solid town's tests can be added to a chain that works.",
@@ -226,6 +136,69 @@
       "updated_at": "2026-10-05T05:49:23Z"
     },
     {
+      "id": "TASK-104",
+      "title": "04 — One worker, and the sun",
+      "goal": "A worker walks to a building and works on it, lit by a real sun.",
+      "description": "Implemented and verified the solid worker/sun milestone. Worker travel is destination-driven and interpolated before action pose activation; procedural boom/track gestures animate per frame; action cadences remain distinct within shared poses; one world-fixed directional light is relit without turn rotation; phase bearings differ across day, dusk, and night. Evidence: test:solid-worker 18/18, test:daylight 40/40, test:light 1/1, typecheck passed, production build passed. Live browser smoke switched to Solid, observed __solid and active canvas/frame loop, and captured /tmp/omp-sshots-159d1ac0ab1210a3.webp. npm run lint is unavailable because ui/package.json has no lint script.",
+      "acceptance": "[x] A worker walks to a building before it works\n[x] The gesture is animated rather than static\n[x] The rhythm differs per action even where the pose does not\n[x] One directional light, its direction independent of the turn\n[x] The sun's direction differs across the three day phases",
+      "status": "done",
+      "triage": "ready-for-agent",
+      "priority": "medium",
+      "claim": null,
+      "created_at": "2026-10-02T12:17:50Z",
+      "updated_at": "2026-10-07T16:32:45Z"
+    },
+    {
+      "id": "TASK-105",
+      "title": "05 — The verdict",
+      "goal": "Whether a solid town is legible at a glance is answered, with evidence, before anything else is built.",
+      "description": "The milestone. Its entire deliverable is an answer to the three questions the product promises, each with a screenshot. If any answer is no, the rest of this roadmap is not built — a gap stated rather than hidden is the product's own principle, and the expensive part of this feature is geometry while the riskiest assumption is cheap to test.\n\nVERDICT — Phase 1 does not start. All evidence at the fitted view, no camera cheats, day phase unless said; pixels verified by PIL, never by glance. Fresh daemon serving the new bundle (go:embed static — the old binary hid the damage work entirely; rebuilt cmd/townd, hub process townd-probe on :7899).\n\nQ1 WHERE IS THE AGENT — partly yes. On open ground: yes (verdict-H, Yard in day light). On its own building site: no — the worker is invisible precisely where the story says it works, because standPoint puts it inside the footprint behind its own walls at this camera.\n\nQ2 WHAT IS IT DOING — partly yes. Presence and movement: yes. The gesture: no at the fitted view — the machine is ~10x30 CSS px, mid-walk it crosses shaded streets where all paint drops near-black, and at dusk (the shipped default) the cab e6bb38 reads (43,38,27), effectively invisible off open sunlit ground. Pose reading needs the follow camera (TASK-110); dusk invisibility feeds TASK-113 tuning.\n\nQ3 BETTER OR WORSE — yes, proven. Same-rank pairs D/E and F/G show damage (one dark rubble chunk beside the ladder, +1 mesh); A/B show rank advance (a lit palette part on the building, +1 mesh). Told apart by colour, place and light; the ladder never moves down on damage.\n\nGAP STATED, NOT HIDDEN: the rubble itself is subtle at the fitted view. Its visible faces are the sun-averted walls (ambient-only, ~(30,30,26)-(50,50,48)); the sun-lit top faces exactly self-occlude at 27° elevation, and the worker stands on its own rubble until it walks away (measured: chunk pixels zero-diff until the walker moved). It reads as a dark patch, not a pile. TASK-108 should taller/tilt the chunks or brighten the damage colour; the pixel-diff method here is the check.\n\nEvidence (all /tmp, upscaled 1600x900): verdict-A-before (dusk 76 meshes), verdict-B-glazed (77, +glazing+worker), verdict-C-damaged (78), verdict-C-day (day relight), verdict-D-doored (78 clean), verdict-E-doored-damaged (79), verdict-F-clean-foundations (78), verdict-G-foundation-damaged (79), verdict-H-rubble-exposed (rubble visible once walker left), verdict-I-midwalk, verdict-J-midwalk2. Mesh counts and histograms read from __solid.built at each capture.",
+      "acceptance": "- [x] Where is the agent? answered with a screenshot — yes on open ground: worker visible on the Yard in day light, warm cab (e6bb38 x day sun) against green, /tmp/verdict-H-rubble-exposed.png; no on building sites: standPoint (ui/src/solid/machine.ts) stands the machine inside the footprint at plate level and the fitted camera's ~27° elevation hides it behind the near wall (measured pixel scans near-black while the wire says the worker is present)\n- [x] What is it doing? answered with a screenshot — presence and movement yes (appears on first event, walks between sites, celebrates, leaves; events seq 1-14 through __solid.crew + wire); the gesture no at the fitted view: the machine is ~10x30 CSS px and both mid-walk catches (/tmp/verdict-I-midwalk.png, /tmp/verdict-J-midwalk2.png) landed in shaded streets where all paint drops near-black; at dusk, the shipped default, the cab reads (43,38,27) — effectively invisible off open sunlit ground\n- [x] Did the building get better or worse? answered with a screenshot — yes: same-rank pairs, doored clean -> damaged adds one dark rubble chunk beside the ladder, mesh 78 -> 79 (/tmp/verdict-D-doored.png vs /tmp/verdict-E-doored-damaged.png); foundation pair likewise (/tmp/verdict-F-clean-foundations.png vs /tmp/verdict-G-foundation-damaged.png); rank advance is the opposite sign, a lit palette part on the building (glazing a5aeb8, mesh 76 -> 77, /tmp/verdict-A-before.png vs /tmp/verdict-B-glazed.png)\n- [x] A rank advance and a damage state are told apart at the fitted view — proven by mesh deltas 76 -> 77 (lit part ON the building) vs 78 -> 79 (dark chunk BESIDE the ladder on the ground); they differ in colour (a5aeb8 vs 3a2c1e), in place (on the building vs beside it) and in light (sun-lit vs ambient-only); the ladder never moves down on damage, rubble is a pure overlay rubbleFor(site, rank) outside solidFor\n- [x] The verdict is recorded here, and Phase 1 does not start on a no — verdict recorded in the description; Q1 (building sites) and Q2 (the gesture) each contain a no, so Phase 1 does not start; the gaps are input to TASK-110 (follow, picking), TASK-108 (damage legibility) and TASK-113 (dusk tuning)",
+      "status": "done",
+      "triage": "ready-for-agent",
+      "priority": "medium",
+      "claim": null,
+      "created_at": "2026-10-02T12:17:50Z",
+      "updated_at": "2026-10-07T05:51:29Z"
+    },
+    {
+      "id": "TASK-106",
+      "title": "06 — The kit",
+      "goal": "The eight operations exist, and every one is correct at every footprint and every turn.",
+      "description": "**Phase:** Phase 1 — the building\n**Blocked by:** Ticket 05\n\nOnly if the verdict is a go. The sweep carries three archetypes at once — a 2D profile carried across the footprint gives the Chapel's spire, the Stadium's dome and the Library's gable from one operation. The canopy exists because the Restaurant's flat roof cannot be a sweep: a gable's ridge is a line and nothing can be placed on one. Each operation must work at five footprints, in five materials, across three parts and from four turns, so the cost of an operation is not linear.",
+      "acceptance": "- [ ] All eight operations exist and each is footprint-relative\n- [ ] The sweep produces the Chapel's spire, the Stadium's dome and the Library's gable from one operation\n- [ ] Every operation is correct at footprints 44 and 100\n- [ ] Every operation is correct from all four turns\n- [ ] An operation that cannot be expressed footprint-relative is refused rather than added",
+      "status": "done",
+      "triage": "ready-for-agent",
+      "priority": "medium",
+      "references": [
+        "ui/src/solid/kit.ts",
+        "ui/src/solid/forms.ts",
+        "ui/test/solid-winding.test.ts",
+        "test:solid-winding 11/11",
+        "test:solid 32/32",
+        "typecheck passed",
+        "build passed",
+        "lint unavailable: no script",
+        "type-check unavailable: no script"
+      ],
+      "claim": null,
+      "created_at": "2026-10-02T12:17:50Z",
+      "updated_at": "2026-10-08T00:31:13Z"
+    },
+    {
+      "id": "TASK-108",
+      "title": "08 — Damage, and the four turns",
+      "goal": "A failure is visible on the building that broke, and is never mistaken for an unfinished one.",
+      "description": "Damage remains a separate rubble overlay beside rank geometry. Added solid contract coverage for deterministic path-specific displacement, plot translation, same-size variation, planned-site exclusion, and fitted-view legibility. The legibility test failed against the original 10% primary rubble chunk, then passed after the minimal change to a 16% primary chunk. Existing scene wiring preserves daemon status and adds rubble only for damaged sites; turnLayout and world-space sun placement preserve all four turns. Verification: test:solid 32/32, test:solid-winding 10/10, test:solid-ground 19/19, test:solid-worker 18/18, test:solid-follow 6/6, test:turnalign 8/8, typecheck passed, production build passed. npm run lint is unavailable because ui/package.json has no lint script. The full npm test chain was started but exceeded the 300-second command deadline during the long art suite; no failure was reported before timeout.",
+      "acceptance": "[x] Damage is distinguishable from every unfinished rank at the fitted view — contract threshold and prior live pixel evidence.\n[x] Damage never moves the building down the ladder — rubble remains outside solidFor and daemon status is preserved.\n[x] The displacement is stable across a rebuild and a change of plot — deterministic path hash plus translation test.\n[x] Two buildings of the same size damage differently — different paths produce different rubble.\n[x] Turn orbits the camera and the world and the sun do not move — turnLayout and turn suites pass; scene keeps world-space sun placement.",
+      "status": "done",
+      "triage": "ready-for-agent",
+      "priority": "medium",
+      "claim": null,
+      "created_at": "2026-10-02T12:17:50Z",
+      "updated_at": "2026-10-07T14:57:09Z"
+    },
+    {
       "id": "TASK-109",
       "title": "09 — The ground and the three places",
       "goal": "A worker is always standing somewhere nameable, and a district boundary is legible.",
@@ -237,6 +210,69 @@
       "claim": null,
       "created_at": "2026-10-02T12:17:50Z",
       "updated_at": "2026-10-05T08:45:05Z"
+    },
+    {
+      "id": "TASK-110",
+      "title": "10 — Follow, and picking",
+      "goal": "A reader can watch one worker, and can point at only what they can see.",
+      "description": "Follow camera and click-to-pick shipped in the solid renderer (ui/src/solid/scene.ts, SolidView.tsx). Follow re-aims the same isometric camera: pure policy in model.ts (FOLLOW_SCALE 3, followScale = max(current, FOLLOW_SCALE), followFraming), the scene only applies it; release restores the scale and leaves the camera at the last followed point (no jump cut). Picking is first-hit raycast against real geometry: walker parts map up the parent chain to the walker group, site meshes carry siteId in userData, ground and untagged meshes pick nothing; a click on the followed walker unfollows. Results flow to the store through onPick; the scene stays store-free.\nThis closes the TASK-105 verdict's open questions as far as the camera can: Q2's gesture is readable at the follow view (measured above); Q1's worker-behind-own-walls remains a TASK-108/113 standing-point problem — the follow view shows the pose wherever the worker stands, but a worker hidden behind its own building still needs the standing point or the look to change.\nDefect found and fixed during verification: effectiveScale (scene.ts) computed the inverse scale; live-verified 3.000 px/unit after the fix, fit 0.95 at release.\nEvidence: in-page event posts walked a real worker across the town (9/10 probes walking, world slides under the locked camera, 61k-181k changed px between consecutive captures); picks exercised via dispatched PointerEvents on the solid canvas with an onPick recorder.",
+      "acceptance": "[x] Follow holds the camera close enough to read the pose — follow scale is exactly 3.0 px/unit (camera.bottom 141.42135623730954 = 900·(√2/3)/3); the walker stays pinned at NDC (0,0); the lit cab reads (189,148,38) at frame centre with a warm cluster ~75 px tall on the 968x900 canvas, versus ~30 px at the fitted view (0.95 px/unit) — the TASK-105 Q2 gap (gesture unreadable at the fitted view) is answered at the follow view. Found and fixed during verification: effectiveScale was inverted; the px-per-unit scale is (viewport.height · AXIS.y) / camera.bottom. The inverted version widened a reader already past the follow scale (violating \"never widens\") and corrupted the release restore by scale².\n[x] Follow survives a turn and a project switch — three consecutive turn-right clicks with follow active: worker still NDC (0,0), bottom still 141.42, HUD Watching throughout. A project switch releases the follow by design (store setCurrent clears following — store.ts:425, \"a live id resolves to a real machine in the town being opened only by accident\"), the scene releases exactly as in the vanish test, and the arriving layout refits the camera; the release path is live-verified, the click-through against a second live project is not.\n[x] A target that disappears releases the follow rather than holding a stale point — with follow active (bottom 141.42), the daemon was restarted; 2.7 s later the store had unfollowed, walkers 0, HUD Watching → Agents, camera restored 141.42 → 445.22 (the fit). Note for the next reader: session.end does NOT remove a worker — EndSession stands them down to celebrate / \"session complete\" (town.go:414, TestEndSessionKeepsWhatWasBuilt), so the vanish guard covers daemon restart/crash, which is the disappearance that actually happens.\n[x] A worker behind a building is not pickable — the walker standing behind its own building from the camera: the click lands on the site (ui/src/solid, then internal/analyzer on a second building), never the worker — first-hit raycast, verified twice. The converse gap is real and left stated: a genuinely occluded worker cannot be picked by the map at all; the HUD crew list is the way to follow them, and any x-ray picking is a product decision for TASK-108/113.\n[x] A drag on the map is never eaten by a label — pointerdown + pointerup displaced 30 px produces no pick (5 px drag gate); a drag while following is the reader taking the camera back (unfollow on drag, scene.ts:1574-1577). Corner clicks (10,10) pick nothing.",
+      "status": "done",
+      "triage": "ready-for-agent",
+      "priority": "medium",
+      "claim": null,
+      "created_at": "2026-10-02T12:17:50Z",
+      "updated_at": "2026-10-07T11:15:33Z"
+    },
+    {
+      "id": "TASK-112",
+      "title": "12 — The solid suite",
+      "goal": "The solid town's invariants are asserted, so a defect cannot ship invisible the way the drawing layer's did.",
+      "description": "Completed invariant coverage for the solid renderer. Added a red-green host sizing test asserting the solid host is independently bounded and cannot be sized by its canvas; registered it in the test chain. Existing end-to-end axis-ratio coverage remains in solid.test.ts. Verification: test:solid 32/32, test:solid-host 1/1, typecheck passed, build passed. lint and type-check aliases are unavailable because package scripts do not define them.",
+      "acceptance": "The same layout produces the same world, twice\nStage distinctness, stage climbing, parts disjoint and footprint matching transfer and pass\nMeshes are closed\nThe storey count equals what the daemon sent\nThe suite runs in the chain and the flat suite still passes\n\n**Two defect classes found while running TASK-102, which the suite must catch rather than a browser:**\n- [ ] **A wrong on-screen axis ratio fails a test.** The first `AXIS` compensation rendered a 1:1 picture where the projection is 2:1, and *every other assertion passed*, because a consistently wrong scale is still a consistent projection. The test must assert the finished on-screen ratio end to end, not a derived constant.\n- [ ] **A host that sizes itself fails a test.** The solid canvas measured 1311x39125 because it was sized from a host the canvas itself grew, feeding back through the ResizeObserver. A layout-level guard cannot see this; it needs either a headless check that the drawn size is bounded, or an explicit rule that the render target's size never derives from its own subtree.\n\n**And the general lesson, recorded because it cost two rounds:** a projection bug and a sizing bug both pass `tsc`, the unit suite, and a screenshot taken at a glance. Rendering tickets are not done until the buffer is read back and the numbers checked — see the TASK-102 verification, which read 13,438 non-clear pixels out of the GL buffer rather than trusting that the scene looked right.",
+      "status": "done",
+      "triage": "ready-for-agent",
+      "priority": "medium",
+      "claim": null,
+      "created_at": "2026-10-02T12:17:50Z",
+      "updated_at": "2026-10-08T00:22:18Z"
+    },
+    {
+      "id": "TASK-117",
+      "title": "17 — Assert that baked art turns",
+      "goal": "A change that made the town's art stop answering to the turn would fail a test rather than be noticed by looking.",
+      "description": "**Phase:** found while repairing the test chain (TASK-101)\n**Blocked by:** None — can start immediately\n\nRemoving the orphaned `turndep` file exposed a gap it was hiding. That file was titled \"measure turn dependence\" and asserted **nothing** — it printed counts. Running it showed the claim its name makes is *true and currently unguarded*:\n\n| family | total | differs by turn | same under a half turn |\n|---|---|---|---|\n| base | 160 | 148 | 12 |\n| band | 80 | 50 | 30 |\n| cap | 1920 | 1236 | 684 |\n| shadow | 5 | 5 | 0 |\n\nWhat *is* asserted today is the turn as a **transform** — order four, idempotence, rigidity, separation preserved, extents preserved (`turnalign.test.ts`, 23 assertions) and the projection's composition (`art.test.ts`). Nothing asserts that the **baked art** answers to the turn, which is a different claim: a drawer that ignored `turn` entirely would pass every existing turn test and put the same picture at all four quarter turns.\n\nThe reason this is a ticket rather than nothing: the old file could not become the test, because it has no expectations to assert — writing \"base differs at turn 1\" as a hard expectation would encode today's sprite contents and fail on every legitimate redraw. Whatever replaces it should assert the *property* (a turn changes the drawing, per family) without pinning pixels.",
+      "acceptance": "- [x] A failing case exists: a drawer that ignores the turn fails the suite\n- [x] The property asserted is 'the drawing answers to the turn', per art family, not a pixel comparison against today's art\n- [x] The assertion does not encode any specific sprite's contents, so a legitimate redraw does not break it\n- [x] The half-turn relationship (turns 0 and 2 differing where a shape is asymmetric) is asserted for the asymmetric works cap\n- [x] The test runs in the chain",
+      "status": "done",
+      "triage": "needs-triage",
+      "priority": "medium",
+      "references": [
+        "ui/test/turn-dependence.test.ts",
+        "ui/package.json",
+        "Focused verification: npm run test:turn-dependence (4 passed); npm run test:art (73 passed); npm run test:turnalign (8 passed); npm run typecheck passed. The new suite fingerprints baked Pix output across turns for building base/band/cap/shadow families, every machine kind, and representative asymmetric props; it requires non-empty output, turn variation, and cap turn 0 vs 2 difference. Registered in npm test chain. npm run lint is unavailable because no lint script exists. Full npm test was not rerun because prior run exceeded 300 seconds."
+      ],
+      "claim": null,
+      "created_at": "2026-10-05T05:02:20Z",
+      "updated_at": "2026-10-07T18:04:21Z"
+    },
+    {
+      "id": "TASK-118",
+      "title": "18 — A store subscription that misses some changes",
+      "goal": "Every subscriber of the town store is notified on every change, so no renderer has to poll to stay correct.",
+      "description": "**Phase:** found while building TASK-104\n**Blocked by:** None — can start immediately\n\n**Measured, not suspected.** A `useTown.subscribe` listener on the solid scene fired for some store changes and not others:\n\n- `useTown.subscribe` on the scene: **never fired** after mount, across every UI interaction tried.\n- A listener registered on the *same store object* from the page console: **not notified** by the day control's own action, but **notified** by a direct `store.setState({ day })`.\n- `getState()` reported the new value in **both** cases.\n- React's own selector subscriptions worked throughout — the HUD's pressed state tracked the store correctly.\n\nSo the state object is updated and the vanilla listener is not called, while React's `useSyncExternalStore` path is. That points at the subscription list rather than at the state, and it is **not** explained by two module instances: `window.__store` was captured from the scene and `getState()` on it tracked the UI.\n\n**Why it matters beyond the solid town.** `TownScene` subscribes the same way, so whatever is dropping these notifications may be silently affecting the flat renderer too — it currently relights on any redraw, which would hide the problem entirely. The solid renderer sidestepped it by reading the store on its frame loop and diffing, which is correct and costs a few reference comparisons per frame, but it is a workaround and the next renderer will hit the same wall.\n\n**Where to look:** the store is `ui/src/store.ts`, created with zustand's `create`. Check whether something calls `setState` in a way that replaces rather than notifies, whether a subscriber list is being replaced rather than appended to, and whether `set` inside the initializer is the same `setState` the hook exposes.",
+      "acceptance": "- [ ] A subscriber registered with useTown.subscribe is notified by every action in the store, including the day control\n- [ ] A single subscriber registered from the console behaves identically to one registered in the app\n- [ ] getState() and subscribe agree: a change visible in one is delivered to the other\n- [ ] A failing case exists, so the fix can be proven rather than asserted\n- [ ] The solid renderer can be driven by a subscription again, with the frame-loop diff kept or removed on the evidence\n- [ ] A test covers the store's own notification behaviour, since this is a store bug and not a renderer one",
+      "status": "done",
+      "triage": "needs-triage",
+      "priority": "medium",
+      "references": [
+        "ui/test/store.test.ts",
+        "ui/src/solid/SolidView.tsx",
+        "ui/package.json",
+        "Verification: test:store 2/2; typecheck passed; test:solid 32/32; test:solid-follow 6/6; test:solid-worker 18/18; test:solid-ground 19/19; test:solid-winding 10/10"
+      ],
+      "claim": null,
+      "created_at": "2026-10-05T07:06:17Z",
+      "updated_at": "2026-10-07T18:14:35Z"
     }
   ]
 }

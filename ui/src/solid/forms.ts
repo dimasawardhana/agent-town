@@ -12,7 +12,9 @@
 // the store's own comment describes, now enforced on the solid side too.
 
 import type { BuildingState, Site } from "../store";
-import { band, extrude, gable, inset, lift, merge, setBack, type Foot, type SolidPart } from "./kit";
+import { band, chamfer, extrude, inset, lift, merge, roofOverhang, setBack, sweep, windowReveal, type Foot, type SolidPart, type SweepProfilePoint } from "./kit";
+import { DISTRICT_TOP } from "./ground";
+import { stableOffset } from "./machine";
 
 /** A rank of the construction ladder, taken from the wire's own vocabulary. */
 export type Rank = BuildingState["status"];
@@ -89,6 +91,7 @@ export const MAX_FLOORS = 20;
  * because a building with no wall is not a building.
  */
 export function clampFloors(floors: number): number {
+
   if (!Number.isFinite(floors)) return 1;
   return Math.min(MAX_FLOORS, Math.max(1, Math.floor(floors)));
 }
@@ -105,14 +108,62 @@ export function towerTop(floors: number): number {
   return clampFloors(floors) * STOREY;
 }
 
+/**
+ * The roof's pitch, as a fraction of the shorter side, so the cap keeps its shape
+ * as the footprint changes.
+ */
+export const ROOF_RIDGE = 0.35;
+
+const GABLE_PROFILE: readonly SweepProfilePoint[] = [
+  { across: -0.5, height: 0 },
+  { across: 0, height: ROOF_RIDGE },
+  { across: 0.5, height: 0 },
+];
+
+/**
+ * towerReach is an upper bound on how high a building reaches, in world units.
+ *
+ * **A bound rather than the exact apex, and the direction matters.** This feeds the
+ * camera's fit, and a fit that is slightly too tall only adds margin while a fit
+ * that is slightly too short crops a roof off the top of the town. The closed form
+ * is the top storey plus a full roof on the *un-inset* footprint, which is a little
+ * above the real apex because the cap is inset — too tall, which is the safe way to
+ * be wrong.
+ *
+ * It exists because the fit was computed from the ground alone, and a town's
+ * footprint says nothing about its height. Measured on this town: the tallest
+ * building is 20 storeys, so its roof sits 400 world units up, and the camera —
+ * fitted to the ground — put it outside the frustum entirely. The building was
+ * `building:ui` at 29 files, and two of its meshes drew **zero** pixels from any
+ * camera angle. A reader whose largest project is missing from the view is the
+ * exact failure the whole spike exists to avoid.
+ */
+export function towerReach(site: Site): number {
+  return towerTop(site.floors ?? 1) + Math.min(site.w, site.h) * ROOF_RIDGE;
+}
 /** The role a part plays, which is what picks its colour. */
 export type PartRole = "ground" | "stone" | "wall" | "frame" | "roof" | "glass" | "trim";
 
-/** A part of a building, ready to become a mesh. */
 export interface BuiltPart {
   readonly name: PartName;
   readonly role: PartRole;
   readonly geometry: SolidPart;
+  /** One deterministic shade factor per non-indexed vertex, derived from part height and footprint corners. */
+  readonly shade?: readonly number[];
+}
+function cornerShade(geometry: SolidPart, foot: Foot): readonly number[] {
+  const x0 = foot.cx - foot.w / 2, x1 = foot.cx + foot.w / 2;
+  const y0 = foot.cy - foot.d / 2, y1 = foot.cy + foot.d / 2;
+  const shade: number[] = [];
+  for (let i = 0; i < geometry.positions.length; i += 3) {
+    const x = geometry.positions[i], y = geometry.positions[i + 1], z = geometry.positions[i + 2];
+    const cornerX = Math.min(Math.abs(x - x0), Math.abs(x - x1));
+    const cornerY = Math.min(Math.abs(y - y0), Math.abs(y - y1));
+    const nearCorner = cornerX < foot.w * 0.12 && cornerY < foot.d * 0.12;
+    const low = z < STOREY * 1.1;
+    shade.push(nearCorner && low ? 0.78 : 1);
+  }
+  return shade;
 }
 
 /** The plot a site occupies, in world units. */
@@ -144,7 +195,6 @@ export function solidFor(site: Site, rank: Rank): BuiltPart[] {
   for (const name of parts) {
     switch (name) {
       // The staked plot: a thin course of ground, slightly larger than the
-      // building, so a planned site is visible without pretending to be a wall.
       case "plot":
         out.push({
           name,
@@ -153,16 +203,17 @@ export function solidFor(site: Site, rank: Rank): BuiltPart[] {
         });
         break;
 
-      // The plinth. Steps *out* rather than in — the one part that grows, which is
-      // what makes the wall above it read as standing on something.
+      // A raised low base band makes the wall visibly sit on the plinth.
       case "footings":
         out.push({
           name,
           role: "stone",
-          geometry: extrude({ ...foot, w: foot.w + short * 0.1, d: foot.d + short * 0.1 }, 0, 5),
+          geometry: merge([
+            extrude({ ...foot, w: foot.w + short * 0.1, d: foot.d + short * 0.1 }, 0, 2),
+            chamfer({ ...foot, w: foot.w + short * 0.1, d: foot.d + short * 0.1 }, 2, 5, 0.025),
+          ]),
         });
         break;
-
       // The frame: four corner posts and a ring of beams. Visible before the walls
       // arrive, so FRAMED is a building you can see through.
       case "frame": {
@@ -207,13 +258,12 @@ export function solidFor(site: Site, rank: Rank): BuiltPart[] {
         break;
       }
 
-      // The cap, at the top of the topmost storey. `ridge` is a fraction of the
-      // shorter side, so the roof keeps its pitch as the footprint changes.
+      // The cap, at the top of the topmost storey.
       case "cap":
         out.push({
           name,
           role: "roof",
-          geometry: gable(inset(foot, floors > 1 ? 0.03 : 0.02), top, 0.35),
+          geometry: roofOverhang(inset(foot, floors > 1 ? 0.03 : 0.02), top, short * ROOF_RIDGE, 0.045),
         });
         break;
 
@@ -231,10 +281,8 @@ export function solidFor(site: Site, rank: Rank): BuiltPart[] {
             const paneW = side.w / frames * 0.55;
             const z0 = f * STOREY + STOREY * 0.25;
             const z1 = z0 + STOREY * 0.45;
-            // The two faces a fixed sun lights and shadows: this is the pair the
-            // flat renderer calls the lit and shadow walls.
-            panes.push(extrude({ cx, cy: side.cy + side.d / 2, w: paneW, d: short * 0.04 }, z0, z1));
-            panes.push(extrude({ cx: side.cx + side.w / 2, cy: side.cy + side.d / 2 - side.d * t, w: short * 0.04, d: paneW }, z0, z1));
+            panes.push(windowReveal({ cx, cy: side.cy + side.d / 2 - short * 0.025, w: paneW, d: short * 0.04 }, z0, z1, 0.5));
+            panes.push(windowReveal({ cx: side.cx + side.w / 2 - short * 0.025, cy: side.cy + side.d / 2 - side.d * t, w: short * 0.04, d: paneW }, z0, z1, 0.5));
           }
         }
         out.push({ name, role: "glass", geometry: merge(panes) });
@@ -266,5 +314,37 @@ export function solidFor(site: Site, rank: Rank): BuiltPart[] {
     }
   }
 
-  return out;
+  return out.map((part) => ({ ...part, shade: cornerShade(part.geometry, foot) }));
+}
+
+/**
+ * rubbleFor is a damaged building's mark, laid **beside** the ladder, never on
+ * it.
+ *
+ * ADR-0018 makes damage a condition: `solidFor` takes a rank and nothing else
+ * (asserted in `solid.test.ts`), so the rubble cannot arrive through the parts
+ * list — it is extra geometry laid at the base, the way `buildBaseDamageCel`
+ * piles it in the flat town, and it takes no part away. The mark waits for a
+ * mass to pile against, as the flat one does: a staked plot draws none.
+ *
+ * The pile is **a pure function of the site**, hashed through `stableOffset` —
+ * the same FNV mixer that keeps a worker on its spot across a rebuild — so the
+ * same broken building does not shift its rubble every time the daemon speaks.
+ * Every measurement is a fraction of the footprint, per the kit's rule, and the
+ * pile never reaches a storey: rubble is what a building lost, and must never
+ * read as a part it gained.
+ */
+export function rubbleFor(site: Site, rank: Rank): SolidPart {
+  if (rank === "planned" || !site.path) return { positions: [] };
+  const foot = footOf(site);
+  const short = Math.min(foot.w, foot.d);
+  const at = stableOffset(site.path);
+  const cx = foot.cx + at.x * foot.w * 0.28;
+  const cy = foot.cy + at.y * foot.d * 0.28;
+  const w = short * 0.22;
+  const d = short * 0.16;
+  return merge([
+    extrude({ cx, cy, w, d }, DISTRICT_TOP, DISTRICT_TOP + short * 0.16),
+    extrude({ cx: cx + w * 0.4, cy: cy - d * 0.5, w: w * 0.55, d: d * 0.5 }, DISTRICT_TOP, DISTRICT_TOP + short * 0.1),
+  ]);
 }

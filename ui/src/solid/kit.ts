@@ -168,3 +168,96 @@ export function gable(foot: Foot, zEave: number, ridge: number): SolidPart {
   quad(p, A, D, C, B); // the underside, so the roof is closed
   return { positions: p };
 }
+/** A footprint-relative 2D section, ordered around its outside boundary. */
+export interface SweepProfilePoint {
+  readonly across: number;
+  readonly height: number;
+}
+
+/**
+ * sweep carries a normalized profile across the footprint's depth.
+ *
+ * `across` is measured from -0.5 to 0.5 of the footprint width and `height`
+ * is measured from the eave as a fraction of the footprint's shorter side.
+ */
+export function sweep(
+  foot: Foot,
+  zEave: number,
+  profile: readonly SweepProfilePoint[],
+): SolidPart {
+  const short = Math.min(foot.w, foot.d);
+  if (profile.length < 3) throw new RangeError("sweep profile needs at least three points");
+  for (const point of profile) {
+    if (!Number.isFinite(point.across) || !Number.isFinite(point.height)) {
+      throw new RangeError("sweep profile must be finite");
+    }
+    if (point.across < -0.5 || point.across > 0.5 || point.height < 0) {
+      throw new RangeError("sweep profile must be footprint-relative");
+    }
+  }
+  const p: number[] = [];
+  const near = profile.map(({ across, height }) => [
+    foot.cx + across * foot.w,
+    foot.cy - foot.d / 2,
+    zEave + height * short,
+  ]);
+  const far = profile.map(({ across, height }) => [
+    foot.cx + across * foot.w,
+    foot.cy + foot.d / 2,
+    zEave + height * short,
+  ]);
+  for (let i = 0; i < profile.length; i += 1) {
+    const next = (i + 1) % profile.length;
+    quad(p, near[i], near[next], far[next], far[i]);
+  }
+  const first = near[0];
+  for (let i = 1; i < profile.length - 1; i += 1) tri(p, first, near[i + 1], near[i]);
+  const farFirst = far[0];
+  for (let i = 1; i < profile.length - 1; i += 1) tri(p, farFirst, far[i], far[i + 1]);
+  return { positions: p };
+}
+/** chamfer clips each corner by a fraction of the shorter footprint side. */
+export function chamfer(foot: Foot, z0: number, z1: number, fraction: number): SolidPart {
+  const cut = Math.min(foot.w, foot.d) * fraction;
+  const x0 = foot.cx - foot.w / 2, x1 = foot.cx + foot.w / 2;
+  const y0 = foot.cy - foot.d / 2, y1 = foot.cy + foot.d / 2;
+  const outline = [
+    [x0 + cut, y0], [x1 - cut, y0], [x1, y0 + cut], [x1, y1 - cut],
+    [x1 - cut, y1], [x0 + cut, y1], [x0, y1 - cut], [x0, y0 + cut],
+  ];
+  const p: number[] = [];
+  const bottom = outline.map(([x, y]) => [x, y, z0]);
+  const top = outline.map(([x, y]) => [x, y, z1]);
+  for (let i = 0; i < outline.length; i += 1) {
+    const next = (i + 1) % outline.length;
+    quad(p, bottom[i], bottom[next], top[next], top[i]);
+  }
+  for (let i = 1; i < outline.length - 1; i += 1) {
+    tri(p, bottom[0], bottom[i + 1], bottom[i]);
+    tri(p, top[0], top[i], top[i + 1]);
+  }
+  return { positions: p };
+}
+
+/** windowReveal is a shallow recessed opening-sized solid on a wall. */
+export function windowReveal(foot: Foot, z0: number, z1: number, fraction: number): SolidPart {
+  const side = inset(foot, fraction);
+  return extrude({ cx: side.cx, cy: side.cy + side.d / 2, w: side.w * 0.2, d: Math.min(side.w, side.d) * fraction, }, z0, z1);
+}
+
+/** roofOverhang expands a gabled cap by a footprint-relative rim. */
+export function roofOverhang(foot: Foot, zEave: number, ridge: number, fraction: number): SolidPart {
+  const overhang = Math.min(foot.w, foot.d) * fraction;
+  return gable({ ...foot, w: foot.w + overhang * 2, d: foot.d + overhang * 2 }, zEave, ridge);
+}
+
+/** parapet is the low closed rim around a flat roof. */
+export function parapet(foot: Foot, z0: number, z1: number, fraction: number): SolidPart {
+  return band(foot, z0, z1, Math.min(foot.w, foot.d) * fraction);
+}
+
+/** canopy is a projecting closed slab, sized from the footprint. */
+export function canopy(foot: Foot, z0: number, z1: number, fraction: number): SolidPart {
+  const overhang = Math.min(foot.w, foot.d) * fraction;
+  return extrude({ ...foot, w: foot.w + overhang * 2, d: foot.d + overhang * 2 }, z0, z1);
+}

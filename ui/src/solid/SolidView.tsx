@@ -1,48 +1,13 @@
 // Mounting three.js inside React, beside the Phaser canvas.
-//
-// The mirror of `TownCanvas.tsx`, and it exists as its own component for the same
-// reason: the scene must be constructed only once the host element is in the DOM,
-// and React owns the DOM. An effect runs after the commit, which is the guarantee
-// that matters — a `requestAnimationFrame` raced against React's commit loses, and
-// a renderer that appends to a missing parent appends to `document.body`.
-//
-// **The store is read on the frame, not delivered by subscription.** This was
-// arrived at by getting it wrong twice, and the measurement is worth recording
-// because the reasoning is not obvious from the code.
-//
-// The first version pushed `day`, `layout` and `live` down through `useTown`
-// selectors, so the scene updated only when React chose to re-render this
-// component — and it does not re-render on every store field. Measured: clicking a
-// day phase moved the control, and the scene's sun stayed where it was until the
-// next SSE tick happened to re-render the component.
-//
-// The second version subscribed with `useTown.subscribe`, the pattern `scene.ts`
-// uses. **Measured: it fires for some store changes and not others.** A listener
-// registered on the same store object from the page was notified by a direct
-// `setState` but not by the day control's own action, while `getState()` reported
-// the new value both times. That is left unresolved deliberately rather than
-// papered over — it is a reactivity question about the store rather than about
-// this renderer, and it is noted on the ticket.
-//
-// So the scene is synchronised from the frame loop instead. The sync diffs against
-// the previous snapshot, so a frame with nothing to do costs a handful of
-// reference comparisons — and a renderer that already runs at sixty frames a second
-// is the natural clock for "has anything changed", where a notification would be a
-// second, competing source of truth about it.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SolidScene } from "./scene";
 import { useTown } from "../store";
 
-/**
- * The store's shape, taken from the store rather than by exporting its type.
- *
- * `State` is module-private in `store.ts`, and widening it to `export` for one
- * caller would put the whole shape on the public surface of a module that is
- * otherwise a singleton. This asks the singleton what it holds.
- */
+type Label = { id: string; text: string; kind: "worker" | "site"; x: number; y: number; pinned: boolean };
 type Snapshot = ReturnType<typeof useTown.getState>;
+// Frame-loop synchronization avoids relying on the store's incomplete vanilla notifications.
 
 export function SolidView() {
   const host = useRef<HTMLDivElement>(null);
@@ -75,6 +40,10 @@ export function SolidView() {
         st.select(site);
         st.focus(id);
       }
+    };
+    s.onHover = (kind, id): void => {
+      const st = useTown.getState();
+      st.hover(id ? (kind === "worker" ? `worker:${id}` : id) : null);
     };
 
     /**
@@ -141,26 +110,22 @@ export function SolidView() {
       if (was === null || st.day !== was.day) s.setDay(st.day);
     };
 
-    // Apply the initial snapshot before subscribing so the scene never starts empty.
     sync();
-    const unsubscribe = useTown.subscribe(sync);
 
-    // The canvas is sized from the host's box, so a window resize, a panel
-    // opening or a stylesheet change has to re-fit the camera. `ResizeObserver`
-    // rather than a window listener, because the thing that changes is the
-    // element's box and the window may not have moved at all.
     const ro = new ResizeObserver(() => {
       const { layout, turn } = useTown.getState();
       s.resize();
-      // The turn is passed here too, because `setLayout` records it — a resize
-      // that omitted it would quietly reset the town to upright, and the reader
-      // would watch their orientation undo itself when a panel opened.
       if (layout) s.setLayout(layout, turn);
       sync();
     });
-    ro.observe(host.current);
 
-    // Store notifications drive synchronization; rendering itself remains in the scene loop.
+    const frame = (): void => {
+      if (scene.current !== s) return;
+      sync();
+      requestAnimationFrame(frame);
+    };
+    const frameId = requestAnimationFrame(frame);
+    ro.observe(host.current);
 
     // Exposed for verification, the same way `TownCanvas` exposes `__town`: a
     // headless probe can ask the scene how many frames it has drawn, how many
@@ -173,7 +138,7 @@ export function SolidView() {
     // and a WebGL context is the one resource here that cannot be reclaimed by
     // dropping a reference.
     return () => {
-      unsubscribe();
+      cancelAnimationFrame(frameId);
       ro.disconnect();
       delete (window as unknown as { __solid?: SolidScene }).__solid;
       scene.current = null;
@@ -181,5 +146,31 @@ export function SolidView() {
     };
   }, []);
 
-  return <div id="solid" ref={host} />;
+  const st = useTown();
+  const [labels, setLabels] = useState<Label[]>([]);
+
+  useEffect(() => {
+    const current = scene.current;
+    if (!current) return;
+    const makeLabels = (): void => {
+      const state = useTown.getState();
+      const next: Label[] = [];
+      for (const site of state.layout?.sites ?? []) {
+        const id = site.path ?? site.id;
+        const p = current.labelPosition("site", id);
+        if (p && (state.hovered === id || state.focused === id)) next.push({ id, text: site.label, kind: "site", ...p, pinned: state.focused === id });
+      }
+      for (const worker of state.live.workers) {
+        const id = `worker:${worker.id}`;
+        const p = current.labelPosition("worker", worker.id);
+        if (p && (state.hovered === id || state.focused === id)) next.push({ id, text: `${worker.label} · ${worker.action}`, kind: "worker", ...p, pinned: state.focused === id });
+      }
+      setLabels(next);
+    };
+    const timer = window.setInterval(makeLabels, 50);
+    makeLabels();
+    return () => window.clearInterval(timer);
+  }, [st]);
+
+  return <div id="solid" ref={host} style={{ position: "absolute", inset: 0 }} />;
 }

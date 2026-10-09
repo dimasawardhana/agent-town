@@ -163,6 +163,89 @@ function kerbFor(foot: Foot): SolidPart {
   };
 }
 
+/** The top of a district's plate, in world units. */
+export const DISTRICT_TOP = 1;
+
+/** The top of a place's plate, in world units — deliberately above a district's. */
+export const PLACE_TOP = 2;
+
+/**
+ * How tall a piece of furniture may stand, in world units.
+ *
+ * **A fixed measure, not a fraction of the place, and that is the whole point.**
+ * The first version scaled with the plate, which on the Depot produced a stack 35
+ * units tall — taller than a storey and four times a machine. The camera looks
+ * down, so a tall prop standing in front of a worker projects onto the same pixels
+ * and, being nearer, covers it. Measured: the worker contributed **zero** pixels
+ * to the frame, and hiding one Depot prop restored 234 of them.
+ *
+ * Eight is chosen against the machine rather than against the plate: a machine
+ * stands about nine units at the cab, so furniture at eight cannot hide one from
+ * this camera. It also reads as furniture — a bench, a stack of pallets — where
+ * 35 units read as a building someone forgot to roof.
+ */
+export const PROP_H = 8;
+
+/**
+ * How far from the centre of a place a worker may stand, as a fraction of it.
+ *
+ * The counterpart to `PROP_H`, and the two together are what keep a worker visible:
+ * furniture is short (so it cannot occlude) **and** out of this band (so it is not
+ * standing where the worker is). `standPoint` puts a worker within this reach, so
+ * furniture placed outside it can never be in the way.
+ */
+export const WORKER_REACH = 0.3;
+
+/**
+ * surfaceZ is the height a thing standing on this ground is standing at.
+ *
+ * **Owned here rather than guessed at the worker, because this module is what
+ * decides the heights.** A district is a thin plate on the field and a place is a
+ * thicker plate again, so the top of a place is a world unit above a district's. A
+ * machine placed at zero — which is where its group's origin naturally sits — is
+ * therefore *inside* the Depot's stone, and the plate's top face draws in front of
+ * it.
+ *
+ * Measured, not reasoned about: with the worker at zero, hiding the crews changed
+ * **zero pixels** of a 1311x960 buffer. The agent was rendering, inside the
+ * frustum, at full opacity — and completely invisible.
+ */
+export function surfaceZ(site: Site): number {
+  if (site.kind === "yard" || site.kind === "workshop" || site.kind === "depot") return PLACE_TOP;
+  return DISTRICT_TOP;
+}
+
+/**
+ * fieldPlane is the ground as a single flat quad, not a slab.
+ *
+ * A slab is the obvious thing to reach for and it is **wrong here, for a reason
+ * that has nothing to do with drawing it**. The town is 3028 by 2434 world units
+ * and the camera looks down at it, so a slab's near wall has a top edge that
+ * projects far up the picture — across the entire viewport.
+ *
+ * Measured, not reasoned about: with the field drawn as a slab the buffer held
+ * 1,254,545 non-clear pixels and the agent contributed **zero** of them; hiding
+ * the field dropped the count to 164,697 and the agent appeared. A ground that
+ * hides the town it carries is not a ground.
+ */
+function fieldPlane(foot: Foot, z: number): SolidPart {
+  const x0 = foot.cx - foot.w / 2, x1 = foot.cx + foot.w / 2;
+  const y0 = foot.cy - foot.d / 2, y1 = foot.cy + foot.d / 2;
+  // **Wound so the normal points up, and the winding is load-bearing — twice now.**
+  // A quad wound the other way has a downward normal and is culled away entirely
+  // by `FrontSide`, which does not look like a missing ground: it looks like
+  // *working* ground, because the town floats above nothing and the field simply
+  // stops occluding anything. Measured on the first attempt: the plane reported
+  // **0 drawn pixels** while every unit test still passed, and the agent was
+  // invisible because the ground had stopped hiding it.
+  //
+  // Both triangles are counter-clockwise seen from above (+z), which is the side
+  // the camera is on.
+  return {
+    positions: [x0, y0, z, x1, y0, z, x1, y1, z, x0, y0, z, x1, y1, z, x0, y1, z],
+  };
+}
+
 /**
  * groundFor is everything under the town: the field, the districts, and the three
  * places, each with its own kerb.
@@ -179,8 +262,9 @@ export function groundFor(l: Layout): { patches: GroundPatch[]; kerbs: Kerb[] } 
   const patches: GroundPatch[] = [];
   const kerbs: Kerb[] = [];
 
-  // The field. Thin, and below everything, so it is the plane rather than a step.
-  patches.push({ kind: "grass", geometry: extrude(fieldRect(l), -KERB_H, 0) });
+  // The field, as a plane at z 0 so everything that stands on it is above it by
+  // construction — see `fieldPlane` for why it cannot be a slab.
+  patches.push({ kind: "grass", geometry: fieldPlane(fieldRect(l), 0) });
 
   for (const d of l.districts) {
     const foot: Foot = { cx: d.x + d.w / 2, cy: d.y + d.h / 2, w: d.w, d: d.h };
@@ -230,36 +314,69 @@ function unitFrom(key: string): number[] {
  * what tells a reader where a worker is — the caption is — but a worker on a bare
  * plate is a figure on a field, and the Yard holds roughly half of every session.
  *
+ * **A prop is furniture, and that is a constraint rather than a description.** The
+ * first version scaled height with the plate — `2 + u * 1.4` where `u` is a
+ * fraction of the place — which on the 340-unit Depot produced a stack **35 world
+ * units tall**, taller than a storey and four times a machine. The camera looks down
+ * at 2:1, so a tall prop standing 40 units in front of a worker projects onto
+ * almost the same pixel and, being nearer, covers it.
+ *
+ * Measured, and it is the whole reason this is written the way it is: the worker
+ * contributed **zero** pixels to the frame, and hiding exactly one Depot prop
+ * restored **234**. The agent had been standing behind its own depot's shelving.
+ * So height is capped by `PROP_H`, which is a fixed world measure rather than a
+ * fraction, because furniture does not get taller when a place gets bigger — a
+ * bench is a bench.
+ *
  * Positions are hashed from the place's own id, so the same place is furnished the
- * same way every time a reader looks at it.
+ * same way every time a reader looks at it, and they stay **out of the middle** —
+ * `WORKER_REACH` is where a worker may stand, and furniture is kept clear of it.
  */
 export function furnitureFor(site: Site): Prop[] {
   if (site.kind !== "yard" && site.kind !== "workshop" && site.kind !== "depot") return [];
 
   const [a, b] = unitFrom(site.id);
-  const foot: Foot = { cx: site.x + site.w / 2, cy: site.y + site.h / 2, w: site.w, d: site.h };
-  // A third of the plate's smaller side, so the furniture reads at the fitted zoom
-  // without a prop becoming a building.
-  const u = Math.min(foot.w, foot.d) * 0.16;
   const out: Prop[] = [];
+  const top = PLACE_TOP + PROP_H;
+
+  // **Placed from the band's own edges rather than from a fraction of the plate.**
+  // A fraction looks reasonable and is not: the band a worker may stand in is
+  // `WORKER_REACH` either side of centre, so the margin left for furniture is
+  // whatever the plate has outside it — and on a 420-by-150 Yard that margin is 30
+  // units deep however wide the plate is. A prop sized as a fraction of *area*
+  // then overflowed the margin, and the test caught a Yard stack sitting in the
+  // band. Sizing from the margin is correct at any plate shape, including the very
+  // wide and very shallow one this town actually builds.
+  const marginX = site.w * (0.5 - WORKER_REACH);
+  const marginY = site.h * (0.5 - WORKER_REACH);
+  const strip = 0.6; // how much of a margin a prop may take, leaving a walkway
+  const maxW = marginX * strip;
+  const maxD = marginY * strip;
+
+  /** The centre of the left/right margin, and of the near/far one. */
+  const left = site.x + marginX / 2;
+  const right = site.x + site.w - marginX / 2;
+  const near = site.y + marginY / 2;
+  const far = site.y + site.h - marginY / 2;
 
   if (site.kind === "yard") {
-    // Stacked material, in the Yard's own dirt tones — two stacks, placed by the
-    // hash so they are never in the same place twice.
-    out.push({ role: "earth", geometry: extrude({ cx: foot.cx - foot.w * 0.25 + a * u, cy: foot.cy + foot.d * 0.2, w: u * 1.6, d: u * 1.2 }, 2, 2 + u * 0.5) });
-    out.push({ role: "road", geometry: extrude({ cx: foot.cx + foot.w * 0.28 - b * u, cy: foot.cy - foot.d * 0.22, w: u * 1.2, d: u * 1.6 }, 2, 2 + u * 0.7) });
+    // Two stacks, in opposite corners of the margin, with the hash nudging each
+    // within its strip so the same place is furnished the same way every time.
+    out.push({ role: "earth", geometry: extrude({ cx: left + a * (marginX - maxW) * 0.5, cy: far - b * (marginY - maxD) * 0.5, w: maxW, d: maxD }, PLACE_TOP, top) });
+    out.push({ role: "road", geometry: extrude({ cx: right - b * (marginX - maxW) * 0.5, cy: near + a * (marginY - maxD) * 0.5, w: maxW, d: maxD }, PLACE_TOP, top) });
     return out;
   }
 
   if (site.kind === "workshop") {
     // A bench along the far edge, on the deck's own timber.
-    out.push({ role: "deck", geometry: extrude({ cx: foot.cx, cy: foot.cy + foot.d * 0.3, w: foot.w * 0.35, d: u * 0.8 }, 2, 2 + u * 0.9) });
+    out.push({ role: "deck", geometry: extrude({ cx: site.x + site.w / 2, cy: far, w: Math.min(maxW * 1.2, site.w * 0.3), d: maxD }, PLACE_TOP, top) });
     return out;
   }
 
-  // The Depot: stacked and inventoried, on stone.
-  out.push({ role: "flags", geometry: extrude({ cx: foot.cx - foot.w * 0.22 + a * u * 0.5, cy: foot.cy, w: u * 0.7, d: foot.d * 0.4 }, 2, 2 + u * 1.4) });
-  out.push({ role: "road", geometry: extrude({ cx: foot.cx + foot.w * 0.24 - b * u * 0.5, cy: foot.cy + foot.d * 0.12, w: u * 1.1, d: u * 1.1 }, 2, 2 + u * 0.8) });
+  // The Depot: stacked and inventoried, on stone. Both stacks in the margin,
+  // because this is the place a worker is most likely to be standing in.
+  out.push({ role: "flags", geometry: extrude({ cx: left + a * (marginX - maxW) * 0.5, cy: site.y + site.h / 2, w: maxW * 0.8, d: maxD * 1.4 }, PLACE_TOP, top) });
+  out.push({ role: "road", geometry: extrude({ cx: right - b * (marginX - maxW) * 0.5, cy: near + a * (marginY - maxD) * 0.5, w: maxW, d: maxD }, PLACE_TOP, top) });
   return out;
 }
 

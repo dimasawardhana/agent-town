@@ -15,6 +15,9 @@ import {
   KERB_T,
   LAND_APRON,
   LAND_BACK,
+  PLACE_TOP,
+  PROP_H,
+  WORKER_REACH,
   fieldRect,
   furnitureFor,
   groundFor,
@@ -140,6 +143,50 @@ test("all seven kinds are reachable and each is drawable", () => {
     assert.equal(p.geometry.positions.length % 9, 0, `${p.kind} is not whole triangles`);
     assert.ok(GROUND_KINDS.includes(p.kind), `${p.kind} is not one of the seven`);
   }
+});
+
+test("the field is a plane, not a slab, so it cannot hide the town", () => {
+  // **The defect this catches, and it is the reason this test exists.** The field
+  // was an `extrude` — a slab — three and a half units thick, spanning 3028 by
+  // 2434 world units. The camera looks *down* at the town, so the slab's near wall
+  // has a top edge that projects across the whole viewport and hides everything
+  // behind it.
+  //
+  // Measured: with the slab the buffer held 1,254,545 non-clear pixels and the
+  // agent contributed **zero** of them; hiding the field dropped it to 164,697 and
+  // the agent appeared. Every other test passed throughout, because a slab is
+  // perfectly valid geometry — it is only wrong *under this camera*.
+  //
+  // Asserted as a property rather than a pixel count, because the property is what
+  // has to hold: **the field has no thickness at all.**
+  const { patches } = groundFor(layout);
+  const field = patches[0]!;
+  assert.equal(field.kind, "grass", "the first patch is not the field");
+
+  const b = bounds(field.geometry.positions);
+  assert.equal(
+    b.minZ,
+    b.maxZ,
+    `the field is ${b.maxZ - b.minZ} units thick — a slab's near wall projects over the whole town`,
+  );
+
+  // Two triangles, no more: a quad, not a box.
+  assert.equal(
+    field.geometry.positions.length / 9,
+    2,
+    "the field is not a flat quad",
+  );
+
+  // And it still spans the layout's own extent, which is what makes it a field
+  // rather than a patch.
+  assert.ok(
+    b.maxX - b.minX >= layout.width,
+    "the field is narrower than the town it carries",
+  );
+  assert.ok(
+    b.maxY - b.minY >= layout.height,
+    "the field is shallower than the town it carries",
+  );
 });
 
 test("the field is under everything and everything else is above it", () => {
@@ -270,12 +317,62 @@ test("a place is furnished the same way every time it is looked at", () => {
   assert.deepEqual(b, a, "the same place furnished two ways");
 });
 
-test("furniture sits on its place and is smaller than it", () => {
-  const yard = layout.sites.find((s) => s.id === "yard")!;
-  for (const p of furnitureFor(yard)) {
-    const b = bounds(p.geometry.positions);
-    assert.ok(b.minX >= yard.x && b.maxX <= yard.x + yard.w, "a prop is outside its place");
-    assert.ok(b.minY >= yard.y && b.maxY <= yard.y + yard.h, "a prop is outside its place");
-    assert.ok(b.maxZ < Math.max(yard.w, yard.h), "a prop is as tall as its place is wide");
+test("furniture sits on its place and stays inside it", () => {
+  for (const id of ["yard", "workshop", "depot"]) {
+    const site = layout.sites.find((s) => s.id === id)!;
+    for (const p of furnitureFor(site)) {
+      const b = bounds(p.geometry.positions);
+      assert.ok(b.minX >= site.x && b.maxX <= site.x + site.w, `a ${id} prop is outside its place`);
+      assert.ok(b.minY >= site.y && b.maxY <= site.y + site.h, `a ${id} prop is outside its place`);
+      assert.ok(b.minZ >= PLACE_TOP, `a ${id} prop is buried in the ground`);
+    }
+  }
+});
+
+test("furniture is short enough that it cannot hide a worker", () => {
+  // **The defect this catches, and it shipped.** Height was scaled with the plate
+  // — `2 + u * 1.4` — which on the 340-unit Depot produced a stack **35 world
+  // units tall**, taller than a storey and four times a machine.
+  //
+  // The camera looks down at 2:1, so a tall prop standing 40 units in front of a
+  // worker projects onto almost the same pixel and, being nearer the camera,
+  // covers it. Measured: the worker contributed **zero** pixels to the frame, and
+  // hiding exactly one Depot prop restored **234**. The agent had been standing
+  // behind its own depot's shelving, and every unit test passed throughout,
+  // because a 35-unit crate is perfectly valid geometry.
+  for (const id of ["yard", "workshop", "depot"]) {
+    const site = layout.sites.find((s) => s.id === id)!;
+    for (const p of furnitureFor(site)) {
+      const b = bounds(p.geometry.positions);
+      assert.ok(
+        b.maxZ <= PLACE_TOP + PROP_H + 1e-6,
+        `a ${id} prop reaches z ${b.maxZ}, above the ${PLACE_TOP + PROP_H} a prop may stand`,
+      );
+    }
+  }
+});
+
+test("no prop is standing where a worker may stand", () => {
+  // The other half of the same guarantee: furniture is short **and** out of the
+  // way. `standPoint` puts a worker within `WORKER_REACH` of a place's centre, so
+  // a prop placed inside that band could still be walked into — and a worker
+  // inside a crate is invisible whatever the crate's height.
+  for (const id of ["yard", "workshop", "depot"]) {
+    const site = layout.sites.find((s) => s.id === id)!;
+    // The whole band a worker can occupy, not one sampled point.
+    const band = {
+      x0: site.x + site.w * (0.5 - WORKER_REACH),
+      x1: site.x + site.w * (0.5 + WORKER_REACH),
+      y0: site.y + site.h * (0.5 - WORKER_REACH),
+      y1: site.y + site.h * (0.5 + WORKER_REACH),
+    };
+    for (const p of furnitureFor(site)) {
+      const b = bounds(p.geometry.positions);
+      const overlaps = b.minX < band.x1 && b.maxX > band.x0 && b.minY < band.y1 && b.maxY > band.y0;
+      assert.ok(
+        !overlaps,
+        `a ${id} prop covers the worker band — a worker standing there would be inside it`,
+      );
+    }
   }
 });

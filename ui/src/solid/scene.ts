@@ -12,9 +12,10 @@
 
 import * as THREE from "three";
 
-import { CAMERA_BASIS, CAMERA_UP, framingFor, worldExtent } from "./model";
-import { solidFor, type PartRole, type Rank } from "./forms";
-import { GROUND_ROLE, furnitureFor, groundFor, placesOf, type GroundRole } from "./ground";
+import { AXIS, CAMERA_BASIS, CAMERA_UP, followFraming, followScale, framingFor, townReach, worldExtent, type Framing } from "./model";
+import { rubbleFor, solidFor, type PartRole, type Rank } from "./forms";
+import { GROUND_ROLE, furnitureFor, groundFor, placesOf, surfaceZ, type GroundRole } from "./ground";
+import { solidMaterial, litWindowMaterial } from "./material";
 import {
   cyclePhase,
   gestureFor,
@@ -26,16 +27,46 @@ import {
   type WorkerState,
 } from "./machine";
 import { aimBoom, machineGroup } from "./machineArt";
-import { fillFor, sunFor } from "./sun";
+import {
+  fillFor,
+  fogFor,
+  lookKnobs,
+  sunFor,
+} from "./sun";
 import { P } from "../art/palette";
 import type { DayPhase } from "../daylight";
 import type { Layout, Live, Site, Worker } from "../store";
 
-/** The colour the canvas is cleared to — the palette's `void`. */
-const CLEAR = 0x0e141c;
+import { normaliseTurn, turnLayout } from "../view";
+import type { Turn } from "../view";
+import { visibleAt } from "../visibility";
+
+/** The solid renderer has no postprocessing dependency; emissive windows are the selective channel. */
+export const sceneLookPolicy = Object.freeze({
+  selectiveBloomSupported: false,
+  bloomTarget: "lit-window",
+  excludesGlobalBloom: true,
+  excludesVignette: true,
+  excludesDepthOfField: true,
+  excludesAmbientOcclusion: true,
+});
 
 /** `#rrggbb` to the number three.js wants. */
 const hex = (s: string): number => parseInt(s.replace("#", ""), 16);
+
+/** The colour the canvas is cleared to — the palette's `void`. */
+const CLEAR = hex(P.void);
+
+/** Stable, path-derived selection: only a subset of glazing receives emissive material. */
+export const litWindowFor = (sitePath: string | undefined): boolean => {
+  if (!sitePath) return false;
+  let hash = 2166136261;
+  for (let i = 0; i < sitePath.length; i += 1) hash = Math.imul(hash ^ sitePath.charCodeAt(i), 16777619);
+  return (hash >>> 0) % 3 === 0;
+};
+
+export const phaseWindowIntensity = (phase: DayPhase): number => phase === "night" ? 1.5 : phase === "dusk" ? 0.65 : 0;
+
 
 /**
  * The base colour for each role a part can play.
@@ -58,6 +89,19 @@ const ROLE_COLOUR: Record<PartRole, number> = {
   glass: hex(P.glass[2]),
   trim: hex(P.stone[3]),
 };
+
+/**
+ * DAMAGE_COLOUR is the rubble's tone, and it is deliberately **not** a
+ * `PartRole`.
+ *
+ * The palette's darkest earth — the flat renderer's own rubble tone — two steps
+ * below the plot it piles on. `PartRole` is the vocabulary of parts a rank
+ * earns, and rubble is earned by nothing: putting it in that union would let a
+ * future `solidFor` emit damage as a part, which is the one thing ADR-0018
+ * forbids. It stays a scene-level constant for the same reason the pile is laid
+ * beside the parts rather than among them.
+ */
+const DAMAGE_COLOUR = hex(P.earth[0]);
 
 /**
  The ground's colours, from the palette ramps `terrain.ts` names for each kind.
@@ -94,6 +138,15 @@ interface Walker {
   ms: number;
   /** What the daemon says it is doing, for when it is not walking. */
   action: WorkerState;
+  /**
+   * The height of the ground it stands on, in world units.
+   *
+   * Carried per walker rather than read at draw time, because a worker changes
+   * place over its life: a machine that walked from the Yard to the Depot has to
+   * rise onto the Depot's plate on arrival, and a z fixed once at creation would
+   * leave it buried in the stone for good.
+   */
+  ground: number;
 }
 
 /**
@@ -133,7 +186,56 @@ export class SolidScene {
   private raf = 0;
   private frames = 0;
   private day: DayPhase = "dusk";
+  /**
+   * Which way round the town is drawn — a quarter turn, 0 to 3.
+   *
+   * Held here rather than applied as a rotation to the groups, because the turn
+   * is **a second derivation of the layout**, not a camera move: `turnLayout`
+   * moves the sites and then the pinned projection puts them where they land.
+   * Rotating the scene would re-project through the same camera and give a
+   * different picture from the flat renderer's at the same turn, which is the
+   * disagreement `solid.test.ts` exists to prevent.
+   */
+  private turn: Turn = 0;
   private disposed = false;
+  /**
+   * The follow camera's state, mirroring the flat renderer's `followTick`
+   * field for field: the scale captured before the follow began, the scale the
+   * follow is currently drawing at, the id it is aimed at, and whether
+   * `setLayout` has re-framed since the last frame consumed it.
+   */
+  private followScaleBefore: number | null = null;
+  private followScaleActive: number | null = null;
+  private followingId: string | null = null;
+  private reframed = false;
+  /** The viewport in CSS pixels, kept by `resize` for the follow's framing math. */
+  private viewport = { width: 0, height: 0 };
+  onPick?: (kind: "worker" | "site", id: string) => void;
+  onHover?: (kind: "worker" | "site", id: string | null) => void;
+  private readonly walkerByObject = new Map<THREE.Object3D, string>();
+  private pointerDown: { x: number; y: number } | null = null;
+  private hovered: { kind: "worker" | "site"; id: string } | null = null;
+  private readonly onPointerDown = (e: PointerEvent): void => {
+    this.pointerDown = { x: e.clientX, y: e.clientY };
+  };
+  private readonly onPointerMove = (e: PointerEvent): void => {
+    if (this.pointerDown) {
+      this.pointerDown = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    this.hoverAt(e.clientX, e.clientY);
+  };
+  private readonly onPointerLeave = (): void => {
+    if (this.hovered) this.onHover?.(this.hovered.kind, null);
+    this.hovered = null;
+  };
+  private readonly onPointerUp = (e: PointerEvent): void => {
+    const start = this.pointerDown;
+    this.pointerDown = null;
+    if (!start) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) >= 5) return;
+    this.pickAt(e.clientX, e.clientY);
+  };
 
   constructor(private readonly host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -148,13 +250,20 @@ export class SolidScene {
     this.camera.up.set(CAMERA_UP[0], CAMERA_UP[1], CAMERA_UP[2]);
     this.scene.add(this.camera);
 
-    this.sun = new THREE.DirectionalLight(0xffffff, 1);
-    this.fill = new THREE.AmbientLight(0xffffff, 0.5);
+    this.sun = new THREE.DirectionalLight(0xffffff, lookKnobs.keyIntensity);
+    this.fill = new THREE.AmbientLight(0xffffff, lookKnobs.fillIntensity);
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
     this.scene.add(this.fill);
+    this.canvas.addEventListener("pointerdown", this.onPointerDown);
+    this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("pointerleave", this.onPointerLeave);
     // Dusk, because the palette was built for it and it is the store's default.
     this.setDay("dusk");
+    // The gate is the scene's own: a click is a press that never travelled,
+    // and a drag is everything else — registered here so picking works without
+    // the view knowing about pointer coordinates.
+    this.canvas.addEventListener("pointerup", this.onPointerUp);
   }
 
   /** The canvas this scene owns, so a caller can attach its own listeners. */
@@ -165,6 +274,17 @@ export class SolidScene {
   /** How many frames have been drawn, so a probe can tell the loop is running. */
   get frameCount(): number {
     return this.frames;
+  }
+
+  labelPosition(kind: "worker" | "site", id: string): { x: number; y: number } | null {
+    const object = kind === "worker"
+      ? this.walkers.get(id)?.group
+      : this.built.find((mesh) => mesh.userData.siteId === id);
+    if (!object) return null;
+    const point = object.getWorldPosition(new THREE.Vector3());
+    if (kind === "site") point.z += 20;
+    point.project(this.camera);
+    return { x: (point.x + 1) * this.viewport.width / 2, y: (1 - point.y) * this.viewport.height / 2 };
   }
 
   /** How many meshes the town is currently made of, for a verification probe. */
@@ -195,11 +315,18 @@ export class SolidScene {
     this.day = phase;
     const sun = sunFor(phase);
     const fill = fillFor(phase);
+    const fog = fogFor(phase);
     this.sun.color.set(hex(sun.colour));
     this.sun.intensity = sun.intensity;
     this.fill.color.set(hex(fill.colour));
     this.fill.intensity = fill.intensity;
+    this.scene.fog = new THREE.Fog(hex(fog.colour), fog.near, fog.far);
+    this.renderer.setClearColor(hex(fog.colour), 1);
     this.placeSun();
+    for (const mesh of this.built) {
+      if (!mesh.userData.litWindow) continue;
+      (mesh.material as THREE.MeshLambertMaterial).emissiveIntensity = phaseWindowIntensity(phase);
+    }
   }
 
   /** placeSun aims the key at the town, along the hour's own direction. */
@@ -217,22 +344,44 @@ export class SolidScene {
    * daemon's and does not move, so a fit that ran every frame would recompute a
    * constant.
    */
-  setLayout(layout: Layout): void {
-    const extent = worldExtent(layout);
+  setLayout(layout: Layout, turn: number = 0): void {
+    // **The turn is applied to the layout, not to the camera.** A turned town is
+    // the same town seen from another quarter, and the flat renderer draws it by
+    // moving the world (`turnLayout`) and then projecting — so a solid town that
+    // rotated its camera instead would put every building somewhere the flat town
+    // does not, at the very turn a reader is comparing the two renderers by.
+    const turned = turnLayout(turn, layout);
+    const extent = worldExtent(turned);
     const { width, height } = this.resize();
-    const f = framingFor(extent, width, height);
-
+    // The tallest building's reach, so the fit clears the town's roof and not only
+    // its footprint — a ground-only fit crops a 20-storey tower off the top of the
+    // frame, which is how the largest project in this town came to draw nothing.
+    const f = framingFor(extent, width, height, 1, townReach(turned));
     this.camera.position.set(f.position[0], f.position[1], f.position[2]);
     this.camera.up.set(f.up[0], f.up[1], f.up[2]);
     this.camera.lookAt(f.target[0], f.target[1], f.target[2]);
     this.camera.left = -f.halfWidth;
     this.camera.right = f.halfWidth;
-    this.camera.top = f.halfHeight;
-    this.camera.bottom = -f.halfHeight;
+    // **The handedness of the picture, and it comes from the model rather than
+    // from here.** `f.halfTop` is negative and `f.halfBottom` positive, which
+    // flips the frustum's vertical axis so that world `+z` moves a point *up* the
+    // screen. With the conventional positive `top` the whole town is drawn
+    // mirrored: buildings grow downward, world `+y` moves up the screen instead of
+    // down, and a quarter turn flips left for right while leaving up as up — which
+    // is what a reader sees as the town being upside down. See `Framing.halfTop`
+    // for the derivation; the value is asserted in `solid.test.ts` so this
+    // decision cannot live in a module that has no tests.
+    this.camera.top = f.halfTop;
+    this.camera.bottom = f.halfBottom;
     this.camera.near = -100_000;
     this.camera.far = 100_000;
     this.camera.updateProjectionMatrix();
     this.placeSun();
+    this.turn = normaliseTurn(turn);
+    // A re-fit would otherwise paint over the follow's zoom for a frame: the
+    // flag makes the next tick re-apply it, which is the flat follow's own
+    // re-frame dance.
+    this.reframed = true;
   }
 
   /**
@@ -246,7 +395,7 @@ export class SolidScene {
    *
    * Places are not drawn: the Yard, Workshop and Depot are TASK-109.
    */
-  setTown(layout: Layout, live: Live): void {
+  setTown(layout: Layout, live: Live, depth = Number.POSITIVE_INFINITY): void {
     for (const mesh of this.built) {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
@@ -255,24 +404,72 @@ export class SolidScene {
     this.town.clear();
 
     const rankByPath = new Map<string, Rank>();
-    for (const b of live.buildings) rankByPath.set(b.path, b.status);
+    const damagedByPath = new Map<string, boolean>();
+    for (const b of live.buildings) {
+      rankByPath.set(b.path, b.status);
+      damagedByPath.set(b.path, b.damaged);
+    }
 
-    for (const site of layout.sites) {
+    // **Turned, then filtered.** Both are the same two steps the flat renderer
+    // takes, and in the same order: the depth filter is a statement about the
+    // repository's tree and is turn-free, while the turn moves geometry. Applying
+    // the filter to the turned layout would be applying it to the same numbers
+    // either way, but reading it from the source layout keeps the one thing the
+    // filter means — depth below the repo root — visible at the call site.
+    // The ground is turned with the town, or a turned town would stand on an
+    // unturned field — every place plate and kerb in the wrong quarter.
+    const turned = turnLayout(this.turn, layout);
+    for (const site of turned.sites) {
       if (site.kind !== "building" && site.kind !== "container") continue;
+      // The same rule the flat renderer draws by, taken from the same module
+      // rather than restated: a building while `depth <= filter`, a container
+      // only until the buildings it stands for appear beside it.
+      if (!visibleAt(site, depth)) continue;
       // The daemon's rank, or PLANNED when it has not mentioned this building —
       // an unmentioned building is one nothing has happened to, and drawing it
       // further along would claim work that did not land.
       const rank: Rank = (site.path && rankByPath.get(site.path)) || "planned";
       for (const part of solidFor(site, rank)) {
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.Float32BufferAttribute(part.geometry.positions.slice(), 3));
-        // Vertices are unshared, so these normals are per face: one tone per face,
-        // which is what the palette's ramps were built for.
+        const positions = part.geometry.positions;
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions.slice(), 3));
+        const colour = ROLE_COLOUR[part.role];
+        const colors: number[] = [];
+        const red = ((colour >> 16) & 0xff) / 255;
+        const green = ((colour >> 8) & 0xff) / 255;
+        const blue = (colour & 0xff) / 255;
+        for (const shade of part.shade ?? Array<number>(positions.length / 3).fill(1)) colors.push(red * shade, green * shade, blue * shade);
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
         geometry.computeVertexNormals();
         geometry.computeBoundingSphere();
-        const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color: ROLE_COLOUR[part.role] }));
+        const isLitWindow = part.name === "glazing" && litWindowFor(site.path);
+        const material = isLitWindow
+          ? litWindowMaterial(colour, phaseWindowIntensity(this.day))
+          : solidMaterial(colour, true);
+        const mesh = new THREE.Mesh(geometry, material);
+        if (isLitWindow) mesh.userData.litWindow = true;
+        if (site.path) mesh.userData.siteId = site.path;
         this.built.push(mesh);
         this.town.add(mesh);
+      }
+      // Rubble is a condition, so it rides **beside** the parts, never among
+      // them: `solidFor` still returned exactly the rank's prefix above, and the
+      // pile is added — never swapped, never merged into a part — which is what
+      // keeps "damage is not a rank" true in the drawn town and not only in the
+      // model. `rubbleFor` itself withholds the pile from a staked plot, so the
+      // guard here is only about not building empty geometry.
+      if (site.path && damagedByPath.get(site.path)) {
+        const pile = rubbleFor(site, rank);
+        if (pile.positions.length > 0) {
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute(pile.positions.slice(), 3));
+          geometry.computeVertexNormals();
+          geometry.computeBoundingSphere();
+          const rubble = new THREE.Mesh(geometry, solidMaterial(DAMAGE_COLOUR));
+          if (site.path) rubble.userData.siteId = site.path;
+          this.built.push(rubble);
+          this.town.add(rubble);
+        }
       }
     }
     this.placeSun();
@@ -294,10 +491,11 @@ export class SolidScene {
     this.groundBuilt.length = 0;
     this.field.clear();
 
-    const { patches, kerbs } = groundFor(layout);
+    const laid = turnLayout(this.turn, layout);
+    const { patches, kerbs } = groundFor(laid);
     for (const patch of patches) this.field.add(this.meshFor(GROUND_ROLE_COLOUR[GROUND_ROLE[patch.kind]], patch.geometry.positions));
     for (const kerb of kerbs) this.field.add(this.meshFor(GROUND_ROLE_COLOUR[kerb.role], kerb.geometry.positions));
-    for (const place of placesOf(layout)) {
+    for (const place of placesOf(laid)) {
       for (const prop of furnitureFor(place)) {
         this.field.add(this.meshFor(GROUND_ROLE_COLOUR[prop.role], prop.geometry.positions));
       }
@@ -324,7 +522,7 @@ export class SolidScene {
     // face, which is what the palette's ramps were built for.
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
-    const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color: colour }));
+    const mesh = new THREE.Mesh(geometry, solidMaterial(colour));
     this.groundBuilt.push(mesh);
     return mesh;
   }
@@ -342,7 +540,10 @@ export class SolidScene {
    * leaving its machines behind would misrepresent the town.
    */
   setWorkers(workers: readonly Worker[], layout: Layout): void {
-    const byId = new Map(layout.sites.map((s) => [s.id, s]));
+    // A crew stands on the town the reader is looking at, so its places are read
+    // from the turned layout — otherwise a turned town's machines all walk to
+    // where the places used to be.
+    const byId = new Map(turnLayout(this.turn, layout).sites.map((s) => [s.id, s]));
     const seen = new Set<string>();
 
     for (const w of workers) {
@@ -354,6 +555,7 @@ export class SolidScene {
       if (!site) continue;
 
       const to = standPoint(site, stableOffset(w.id));
+      const ground = surfaceZ(site);
       const existing = this.walkers.get(w.id);
 
       if (existing) {
@@ -366,6 +568,9 @@ export class SolidScene {
           existing.startedAt = this.now();
           existing.ms = walkMs(existing.from, existing.to);
         }
+        // Re-read on every update, not only when the destination moves: a worker
+        // can stay in one place while the ground under it is re-laid.
+        existing.ground = ground;
         continue;
       }
 
@@ -373,7 +578,8 @@ export class SolidScene {
       // A new figure appears **already at its place** rather than walking in from
       // the origin. A machine strolling out of the corner on first sight would be
       // the town animating a journey nobody took.
-      group.position.set(to.x, to.y, 0);
+      group.position.set(to.x, to.y, ground);
+      this.walkerByObject.set(group, w.id);
       this.crew.add(group);
       this.walkers.set(w.id, {
         group,
@@ -383,6 +589,7 @@ export class SolidScene {
         startedAt: this.now(),
         ms: 1,
         action: w.action,
+        ground,
       });
     }
 
@@ -397,6 +604,7 @@ export class SolidScene {
         else material?.dispose();
       });
       this.walkers.delete(id);
+      this.walkerByObject.delete(walker.group);
     }
   }
 
@@ -435,7 +643,7 @@ export class SolidScene {
       // The one line that makes a worker walk: the group is moved along the
       // journey, and `pointAlong` clamps, so an arrived worker stays put rather
       // than walking through its building.
-      walker.group.position.set(at.x, at.y, 0);
+      walker.group.position.set(at.x, at.y, walker.ground);
 
       // **Walking overrides the action.** It is a fact about the figure rather
       // than about the work: a worker fetching a file is still doing its action,
@@ -452,10 +660,125 @@ export class SolidScene {
     }
   }
 
-  /** resize matches the drawing buffer to the host's box. */
+  /**
+   * setFollowing points the camera at one worker, or releases it with `null`.
+   *
+   * Releasing restores the scale the reader had before the follow captured it —
+   * their zoom outlives the follow — but leaves the camera where the last frame
+   * put it, because a camera that teleports home on release is a jump cut the
+   * reader did not choose. The scale restore is the only thing that changes on
+   * release.
+   */
+  setFollowing(id: string | null): void {
+    if (id === null) {
+      this.followingId = null;
+      if (this.followScaleBefore !== null) {
+        this.applyFollowScale(this.followScaleBefore);
+      }
+      this.followScaleBefore = null;
+      this.followScaleActive = null;
+      return;
+    }
+    this.followingId = id;
+    this.reframed = false;
+  }
+
+  /** The camera's current screen pixels per picture unit, from its own frustum. */
+  private effectiveScale(): number {
+    return (this.viewport.height * AXIS.y) / this.camera.bottom;
+  }
+
+  /** Rewrites the frustum to a scale about the camera's current target. */
+  private applyFollowScale(scale: number): void {
+    const f = followFraming(this.cameraTarget(), this.viewport.width, this.viewport.height, scale);
+    this.applyFraming(f);
+  }
+
+  private cameraTarget(): [number, number, number] {
+    const p = this.camera.position;
+    const z = CAMERA_BASIS.z;
+    return [p.x - z[0] * 1000, p.y - z[1] * 1000, p.z - z[2] * 1000];
+  }
+
+  /** Writes a framing onto the camera, the same write `setLayout` makes. */
+  private applyFraming(f: Framing): void {
+    this.camera.position.set(f.position[0], f.position[1], f.position[2]);
+    this.camera.up.set(f.up[0], f.up[1], f.up[2]);
+    this.camera.lookAt(f.target[0], f.target[1], f.target[2]);
+    this.camera.left = -f.halfWidth;
+    this.camera.right = f.halfWidth;
+    this.camera.top = f.halfTop;
+    this.camera.bottom = f.halfBottom;
+    this.camera.near = -100_000;
+    this.camera.far = 100_000;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * followTick aims the camera at its walker, after `advance` has moved them.
+   *
+   * The scale captured **before** is read off the camera's own frustum on the
+   * first follow frame, not from the fit — a reader who zoomed before following
+   * deserves their zoom back, and only the frustum knows what they had.
+   */
+  private followTick(): void {
+    const id = this.followingId;
+    if (!id) return;
+    const walker = this.walkers.get(id);
+    if (!walker) return;
+    if (this.followScaleBefore === null) {
+      this.followScaleBefore = this.effectiveScale();
+    }
+    this.followScaleActive = followScale(this.effectiveScale());
+    const at = walker.group.position;
+    this.applyFraming(followFraming([at.x, at.y, at.z], this.viewport.width, this.viewport.height, this.followScaleActive));
+    this.reframed = false;
+  }
+
+  private hoverAt(clientX: number, clientY: number): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), this.camera);
+    const hit = ray.intersectObjects([this.town, this.crew], true)[0];
+    let found: { kind: "worker" | "site"; id: string } | null = null;
+    if (hit) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o) {
+        const workerId = this.walkerByObject.get(o);
+        if (workerId) { found = { kind: "worker", id: workerId }; break; }
+        if ("siteId" in o.userData) { found = { kind: "site", id: o.userData.siteId }; break; }
+        o = o.parent === this.crew || o.parent === this.town ? null : o.parent;
+      }
+    }
+    if (found?.kind === this.hovered?.kind && found?.id === this.hovered?.id) return;
+    if (this.hovered) this.onHover?.(this.hovered.kind, null);
+    this.hovered = found;
+    if (found) this.onHover?.(found.kind, found.id);
+  }
+
+  private pickAt(clientX: number, clientY: number): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const nx = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(nx, ny), this.camera);
+    const hits = ray.intersectObjects([this.town, this.crew, this.field], true);
+    for (const hit of hits) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o) {
+        const workerId = this.walkerByObject.get(o);
+        if (workerId) { this.onPick?.("worker", workerId); return; }
+        if ("siteId" in o.userData) { this.onPick?.("site", o.userData.siteId); return; }
+        o = o.parent === this.crew || o.parent === this.town || o.parent === this.field ? null : o.parent;
+      }
+      return;
+    }
+  }
+
   resize(): { width: number; height: number } {
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
+    this.viewport = { width, height };
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(width, height, false);
     return { width, height };
@@ -469,10 +792,10 @@ export class SolidScene {
    * scene it is not allowed to import (ADR-0024).
    */
   start(): void {
-    if (this.raf !== 0 || this.disposed) return;
     const tick = (): void => {
       if (this.disposed) return;
       this.advance();
+      this.followTick();
       this.renderer.render(this.scene, this.camera);
       this.frames += 1;
       this.raf = requestAnimationFrame(tick);
@@ -488,17 +811,16 @@ export class SolidScene {
 
   /**
    * dispose gives the context back, and gives the GPU's buffers back with it.
-   *
-   * `renderer.dispose()` alone frees the context but not the geometry and material
-   * buffers, so a reader switching renderers repeatedly would grow the driver's
-   * allocations until the tab died. `forceContextLoss` is the part that actually
-   * returns the context; without it the canvas keeps it until the browser
-   * garbage-collects, which is long after the limit is hit.
    */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.stop();
+
+    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+    this.canvas.removeEventListener("pointermove", this.onPointerMove);
+    this.canvas.removeEventListener("pointerup", this.onPointerUp);
+    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
 
     this.scene.traverse((o) => {
       const mesh = o as Partial<THREE.Mesh>;

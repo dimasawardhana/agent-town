@@ -17,6 +17,8 @@ import { extrude, type Foot, type SolidPart } from "./kit";
 import { P } from "../art/palette";
 import type { Gesture } from "./machine";
 
+import { solidMaterial } from "./material";
+
 /** `#rrggbb` to the number three.js wants. */
 const hex = (s: string): number => parseInt(s.replace("#", ""), 16);
 
@@ -107,7 +109,7 @@ export function machineGroup(tier: "chief" | "sub"): { group: THREE.Group; pivot
     [parts.cab, TIER_COLOUR[tier]],
     [parts.boom, BOOM_COLOUR],
   ] as const) {
-    group.add(new THREE.Mesh(soupGeometry(soup), new THREE.MeshLambertMaterial({ color: colour })));
+    group.add(new THREE.Mesh(soupGeometry(soup), solidMaterial(colour)));
   }
 
   // The boom is the third child, held so the gesture can aim it without searching

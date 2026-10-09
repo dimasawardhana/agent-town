@@ -13,6 +13,8 @@
 
 import type { Action, Site } from "../store";
 
+import { WORKER_REACH } from "./ground";
+
 /**
  * What a worker is doing, as the renderer needs it.
  *
@@ -208,13 +210,15 @@ export function stableOffset(id: string): { x: number; y: number } {
  * refinement, it is what makes multi-agent work legible at all (ADR-0004).
  *
  * The spread reaches just inside the plot, so a worker stands *on* its building
- * rather than beside or inside it.
+ * rather than beside or inside it — and it is bounded by `WORKER_REACH`, which is
+ * the same constant furniture is kept clear of, so a prop can never be standing
+ * where a worker stands. Two spellings of that number is a worker that
+ * periodically ends up inside the depot's shelving.
  */
 export function standPoint(site: Site, offset: { x: number; y: number }): { x: number; y: number } {
-  const reach = 0.3;
   return {
-    x: site.x + site.w * (0.5 + offset.x * reach),
-    y: site.y + site.h * (0.5 + offset.y * reach),
+    x: site.x + site.w * (0.5 + offset.x * WORKER_REACH),
+    y: site.y + site.h * (0.5 + offset.y * WORKER_REACH),
   };
 }
 

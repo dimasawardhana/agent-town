@@ -640,13 +640,16 @@ func TestTheRuleRemovesExactlyTheArtefactDirectoryFromThisRepo(t *testing.T) {
 		}
 	}
 	// Measured on this tree, so a change in what the analyzer counts is visible
-	// rather than silent: 15 directories, 14 buildings, one dropped.
-	if len(town.Buildings) != 14 {
+	// rather than silent: 16 directories, 15 buildings, one dropped. Last moved
+	// when the solid town's `ui/src/solid` became a directory of hand-written
+	// source (574393e); the count moves when the tree does, and that is the point
+	// of recording it.
+	if len(town.Buildings) != 15 {
 		var got []string
 		for _, b := range town.Buildings {
 			got = append(got, b.Path)
 		}
-		t.Errorf("buildings = %d (%v), want 14 — re-record what this repository measures", len(town.Buildings), got)
+		t.Errorf("buildings = %d (%v), want 15 — re-record what this repository measures", len(town.Buildings), got)
 	}
 }
 

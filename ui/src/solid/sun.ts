@@ -13,9 +13,8 @@
 // everything above and below it, which is why the palette's role narrows here to
 // base colours (ADR-0026 §1).
 //
-// TASK-113 owns the final rig — fog, bloom, contact shadows and the exact key and
-// fill. What is here is the direction and the hour, because two of TASK-104's
-// criteria are about nothing else.
+// TASK-113 owns the phase-specific fog and lighting rig.
+
 
 import { P } from "../art/palette";
 import type { DayPhase } from "../daylight";
@@ -48,7 +47,7 @@ function fromBasis(up: number, left: number, toward: number): number[] {
   return unit([
     CAMERA_BASIS.y[0] * up - CAMERA_BASIS.x[0] * left + CAMERA_BASIS.z[0] * toward,
     CAMERA_BASIS.y[1] * up - CAMERA_BASIS.x[1] * left + CAMERA_BASIS.z[1] * toward,
-    CAMERA_BASIS.y[2] * up - CAMERA_BASIS.x[2] * left + CAMERA_BASIS.z[2] * toward,
+    -CAMERA_BASIS.y[2] * up - CAMERA_BASIS.x[2] * left + CAMERA_BASIS.z[2] * toward,
   ]);
 }
 
@@ -94,7 +93,7 @@ export function sunFor(phase: DayPhase): Sun {
     case "day":
       // Overhead and near-white: the hour with the least to say, which is why it
       // is not the default.
-      return { toSun, intensity: 2.6, colour: "#fff4e2" };
+      return { toSun, intensity: 2.6, colour: P.paper };
     case "night":
       // Dim and blue. The zenith key as a *light* is almost black, which is what a
       // town after dark is lit by — the windows are doing the work, not the sky.
@@ -115,3 +114,21 @@ export function fillFor(phase: DayPhase): { intensity: number; colour: string } 
       return { intensity: 0.48, colour: P.skyMid };
   }
 }
+
+/** Phase-specific atmospheric haze, derived only from the town palette. */
+export function fogFor(phase: DayPhase): { colour: string; near: number; far: number } {
+  switch (phase) {
+    case "day":
+      return { colour: P.skyHaze, near: 180, far: 900 };
+    case "night":
+      return { colour: P.skyZenith, near: 150, far: 860 };
+    default:
+      return { colour: P.skyMid, near: 165, far: 880 };
+  }
+}
+
+/** Fixed lighting intensities shared by the solid scene. */
+export const lookKnobs = Object.freeze({
+  keyIntensity: 2.2,
+  fillIntensity: 0.48,
+});

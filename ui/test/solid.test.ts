@@ -22,6 +22,7 @@ import {
   framingFor,
   isRenderer,
   project,
+  townReach,
   worldExtent,
 } from "../src/solid/model";
 import {
@@ -31,7 +32,9 @@ import {
   STOREY,
   clampFloors,
   partsThrough,
+  rubbleFor,
   solidFor,
+  towerReach,
   towerTop,
   type PartName,
 } from "../src/solid/forms";
@@ -54,6 +57,10 @@ const minX = (p: Soup): number => Math.min(...axis(p, 0));
 const maxX = (p: Soup): number => Math.max(...axis(p, 0));
 const minZ = (p: Soup): number => Math.min(...axis(p, 2));
 const maxZ = (p: Soup): number => Math.max(...axis(p, 2));
+
+/** The x and y runs of a triangle soup, with the z helpers the other tests share. */
+const minY = (p: Soup): number => Math.min(...axis(p, 1));
+const maxY = (p: Soup): number => Math.max(...axis(p, 1));
 
 /** A site with only the fields the extent reads, typed rather than cast. */
 const site = (x: number, y: number, w: number, h: number): Site =>
@@ -433,5 +440,183 @@ test("damage is not a rank, so it cannot change the geometry", () => {
   assert.deepEqual(
     parts.map((p) => p.geometry.positions.length),
     again.map((p) => p.geometry.positions.length),
+  );
+});
+
+test("rubble is a condition's mark beside the ladder, never a part on it", () => {
+  // ADR-0018, held in the drawn town: a damaged building keeps exactly the
+  // parts its rank earns, and the damage arrives as extra geometry at its
+  // feet. Were the pile allowed to reach upward, it would read as a storey
+  // the building gained rather than mass it lost.
+  const site = building(86, 6);
+  const parts = solidFor(site, "glazed");
+  const pile = rubbleFor(site, "glazed");
+  const again = solidFor(site, "glazed");
+  assert.deepEqual(
+    parts.map((p) => [p.name, p.geometry.positions.length]),
+    again.map((p) => [p.name, p.geometry.positions.length]),
+    "drawing rubble changed the building's parts",
+  );
+  assert.ok(pile.positions.length > 0, "a damaged built site drew no rubble");
+  assert.ok(maxZ(pile) < STOREY, "the rubble stands as tall as a storey, reading as a part");
+});
+
+test("rubble does not lean, and the same broken building piles the same", () => {
+  // The hash behind the pile is the worker's own, so a rebuild — the daemon
+  // speaking again, a view refit — must not make the rubble jump. A pile that
+  // leaned would read as one too.
+  const site = building(58, 3);
+  const a = rubbleFor(site, "walled");
+  const b = rubbleFor(site, "walled");
+
+  // The pile is loose mass: its faces stand up or lie down, none of them
+  // points into the ground, which is what a flipped chunk would do.
+  const zs = axis(a, 2);
+  assert.ok(Math.min(...zs) >= 0, "a rubble chunk dips below the ground plane");
+  assert.deepEqual(a.positions, b.positions, "the same damaged site piled differently");
+});
+
+test("a staked plot draws no rubble, damage waits for mass", () => {
+  // The pile is a mark on a built thing; a bare plot has nothing to break,
+  // and rubble there would read as the plan itself collapsing.
+  const site = building(44, 1);
+  const planned = rubbleFor(site, "planned");
+  assert.equal(planned.positions.length, 0, "a planned site drew rubble");
+});
+
+test("rubble holds to its own footprint, never spilling into the street", () => {
+  // The pile is sized and offset as fractions of the plot, so a wide yard of a
+  // site and a narrow one keep the pile inside their own bounds — the street
+  // grid stays legible.
+  const small = rubbleFor(building(44, 2), "framed");
+  const wide = rubbleFor(building(100, 2), "framed");
+  const foot = { x: 0, y: 0, w: 44, h: 44 };
+  assert.ok(maxX(small) <= foot.x + foot.w, "the small site's rubble spills east");
+  assert.ok(minX(small) >= foot.x, "the small site's rubble spills west");
+  assert.ok(maxX(wide) <= foot.x + 100, "the wide site's rubble spills east");
+  assert.ok(minX(wide) >= foot.x, "the wide site's rubble spills west");
+});
+test("same-size damaged buildings use path-specific rubble and keep plot placement", () => {
+  const first = building(58, 3);
+  const second = { ...building(58, 3), path: "other" };
+  const moved = { ...first, x: 140, y: 90 };
+  const a = rubbleFor(first, "walled");
+  const b = rubbleFor(second, "walled");
+  const c = rubbleFor(moved, "walled");
+  assert.notDeepEqual(a.positions, b.positions, "same-size paths share one damage displacement");
+  assert.equal(c.positions[0]! - a.positions[0]!, 140, "moving the plot changed rubble's local x offset");
+  assert.equal(c.positions[1]! - a.positions[1]!, 90, "moving the plot changed rubble's local y offset");
+});
+
+test("damage rubble is tall enough to remain distinct at the fitted view", () => {
+  const site = building(44, 2);
+  const pile = rubbleFor(site, "foundation");
+  assert.ok(maxZ(pile) >= 44 * 0.15, "damage rubble is too flat to distinguish from unfinished ground");
+});
+
+test("the fit clears the town's roof, not only its footprint", () => {
+  // **The defect this catches shipped, and it is the worst kind: a building that
+  // is simply not in the picture.** The extent is a ground rectangle, and a
+  // rectangle says nothing about height — so a fit taken from it put this town's
+  // tallest building outside the frustum. Measured: `camera.top` was 362 picture
+  // units while the tower's roof reached 435, and the cap and cornice meshes drew
+  // **zero** pixels from every camera angle. It was the project with the most
+  // files in the town.
+  const tall: Layout = {
+    width: 400,
+    height: 400,
+    sites: [{ id: "building:tall", kind: "building", label: "tall", files: 1, bytes: 1, depth: 1, floors: MAX_FLOORS, x: 100, y: 100, w: 60, h: 60 }],
+    districts: [],
+  };
+  const e = worldExtent(tall);
+  const reach = townReach(tall);
+  assert.ok(reach > 0, "a town holding a tall building reports no height");
+
+  const f = framingFor(e, 800, 600, 1, reach);
+  const low = framingFor(e, 800, 600, 1, 0);
+  assert.ok(f.scale < low.scale, "the fit did not shrink to make room for the roof");
+
+  // Every corner, at ground and at roof height, must land inside the viewport. The
+  // roof corners are what a ground-only fit fails on.
+  const t = project(f.target[0], f.target[1]);
+  for (const [x, y] of [[e.minX, e.minY], [e.maxX, e.minY], [e.minX, e.maxY], [e.maxX, e.maxY]] as const) {
+    for (const z of [0, reach]) {
+      const p = project(x, y, z);
+      const dx = Math.abs(p.x - t.x) * f.scale;
+      const dy = Math.abs(p.y - t.y) * f.scale;
+      assert.ok(dx <= 800 / 2 + 1e-6, `a corner at z ${z} escapes the viewport in x`);
+      assert.ok(dy <= 600 / 2 + 1e-6, `a corner at z ${z} escapes the viewport in y by ${dy - 600 / 2}px`);
+    }
+  }
+});
+
+test("townReach measures buildings and ignores flat ground", () => {
+  // A district has no height of its own, and letting a wide district widen the
+  // reach would shrink the town for nothing. Only buildings rise.
+  const withPark: Layout = {
+    width: 900, height: 900,
+    sites: [{ id: "building:one", kind: "building", label: "one", files: 1, bytes: 1, depth: 1, floors: 1, x: 10, y: 10, w: 50, h: 50 }],
+    districts: [{ name: "big", kind: "source", x: 0, y: 0, w: 880, h: 880 }],
+  };
+  assert.equal(townReach(withPark), towerReach(withPark.sites[0]!), "a district changed the town's height");
+  assert.equal(townReach({ width: 0, height: 0, sites: [], districts: [] }), 0, "an empty town has height");
+});
+
+test("the fit degrades continuously rather than collapsing to the floor", () => {
+  // **The second bug this pairing caught, and it was introduced by the fix for
+  // the first.** With height in the extent a town can overrun the viewport, and a
+  // `Math.floor` — carried over from the flat fit, which needs whole-number zoom
+  // for square art pixels — floors a scale just below 1 down to **0**. The guard
+  // against a zero divisor then turned it into `1e-6`, which is not a slightly
+  // small frustum but one ten to the sixth times too large: the entire town
+  // rendered as a sub-pixel speck and every mesh reported zero drawn pixels.
+  //
+  // So the scale is asserted continuous here, which is what the doc block has
+  // always claimed and what the old implementation contradicted.
+  const e = { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
+  const reach = 20000; // absurd on purpose: guarantees the fit wants scale < 1
+  const f = framingFor(e, 800, 600, 1, reach);
+  assert.ok(f.scale > 1e-3, `the scale collapsed to ${f.scale} — the fit rounded down to the floor`);
+  assert.ok(f.halfWidth < 1e6, "the frustum exploded, so the town is a speck");
+});
+
+test("raising a point moves it up the screen, not down", () => {
+  // **The handedness of the picture, which nothing asserted and which shipped
+  // wrong.** The projection tests above assert *magnitudes* — that a world step
+  // lands `scale/2` across and `scale/4` down — and every one of them passed
+  // while the renderer drew the town mirrored, because a mirrored picture has the
+  // same magnitudes with two of the three directions negated.
+  //
+  // What it looked like: buildings grew **downward** from their plots, world `+y`
+  // moved a point up the screen instead of down, and `Turn` read as a flip rather
+  // than a rotation — left for right, with up still up.
+  //
+  // The camera applies its frustum in camera space, so the screen displacement of
+  // a world step is `(step · basis) / half-extent`, with the vertical one divided
+  // by the **signed** `halfTop`. This is the assertion that makes the sign
+  // load-bearing instead of a convention in an untested module.
+  const e = { minX: 0, minY: 0, maxX: 200, maxY: 200 };
+  const f = framingFor(e, 800, 600, 1, 300);
+  assert.ok(f.halfTop < 0, `halfTop is ${f.halfTop}; the frustum is not flipped, so the town is mirrored`);
+  assert.ok(f.halfBottom > 0, "halfBottom is not positive, so the two edges are the same sign");
+  assert.equal(f.halfTop, -f.halfBottom, "the frustum's vertical extent is not symmetric");
+
+  const screenY = (step: readonly number[]): number => {
+    const dot = step[0] * CAMERA_BASIS.y[0] + step[1] * CAMERA_BASIS.y[1] + step[2] * CAMERA_BASIS.y[2];
+    // Positive `dot` is up the screen, and in NDC up is `+y`.
+    return dot / f.halfTop;
+  };
+
+  // A storey of height (world +z) rises. This is the assertion that fails when
+  // the frustum is not flipped, and it is the one that matters most: it is the
+  // property the whole stacking model rests on.
+  assert.ok(screenY([0, 0, 1]) > 0, "raising a point moved it down the screen");
+  // And world `+y` goes *down* the picture, the fact `project` states as `+1/4`.
+  assert.ok(screenY([0, 1, 0]) < 0, "world +y moved up the screen, so the picture is mirrored");
+  // World `+x` also goes down, by half as much — this is the 2:1 skew itself.
+  assert.ok(screenY([1, 0, 0]) < 0, "world +x moved up the screen");
+  assert.ok(
+    Math.abs(screenY([1, 0, 0]) * 2 - screenY([0, 1, 0]) * 2) < 1e-9,
+    "x and y do not fall at the same rate, so the skew is wrong",
   );
 });
